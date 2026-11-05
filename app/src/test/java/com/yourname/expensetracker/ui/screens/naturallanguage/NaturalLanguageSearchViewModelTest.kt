@@ -91,8 +91,14 @@ class NaturalLanguageSearchViewModelTest {
             cursor: SearchCursor?
         ): List<NaturalLanguageExpense> {
             failure?.let { throw it }
-            return if (cursor == null) rows else emptyList()
+            if (cursor != null) return emptyList()
+            // First-page calls are numbered from 0 so a test can hold one search open and let a later one finish.
+            val callIndex = firstPageCalls++
+            return queryHook?.invoke(callIndex) ?: rows
         }
+
+        var firstPageCalls = 0
+        var queryHook: (suspend (callIndex: Int) -> List<NaturalLanguageExpense>)? = null
     }
 
     /**
@@ -580,6 +586,105 @@ class NaturalLanguageSearchViewModelTest {
         runCurrent()
 
         coVerify(exactly = 0) { engine.interpretQuery(any()) }
+        assertEquals(SearchState.Idle, vm.searchState.value)
+    }
+
+    @Test
+    fun `R3 abc then ab then abc inside the 300 ms debounce window searches again after a finished abc search`() =
+        runTest(dispatcher) {
+            val repo = FakeRepo().apply { rows = listOf(row(1, 40.0, 40.0)) }
+            val (vm, engine) = spiedViewModel(repo)
+            search(vm, "abc")
+            assertEquals(SearchState.Results, vm.searchState.value)
+
+            vm.updateQuery("ab")
+            advanceTimeBy(100)
+            vm.updateQuery("abc")
+            advanceTimeBy(100)
+            // Still inside the debounce window of the second abc: nothing ran yet.
+            coVerify(exactly = 1) { engine.interpretQuery("abc") }
+            advanceTimeBy(301)
+            runCurrent()
+
+            coVerify(exactly = 2) { engine.interpretQuery("abc") }
+            assertEquals(SearchState.Results, vm.searchState.value)
+        }
+
+    @Test
+    fun `R3 a slow older search cannot overwrite the results of a newer query`() = runTest(dispatcher) {
+        val gateOld = kotlinx.coroutines.CompletableDeferred<List<NaturalLanguageExpense>>()
+        val repo = FakeRepo().apply {
+            queryHook = { index -> if (index == 0) gateOld.await() else listOf(row(2, 20.0, 20.0)) }
+        }
+        val vm = viewModel(repo, converter())
+        search(vm, queryOne)
+        assertEquals(SearchState.Interpreting, vm.searchState.value)
+
+        search(vm, queryTwo)
+        assertEquals(listOf(2L), vm.results.value.map { it.expense.id })
+
+        gateOld.complete(listOf(row(1, 999.0, 999.0)))
+        runCurrent()
+
+        assertEquals(listOf(2L), vm.results.value.map { it.expense.id })
+        assertEquals(SearchTotal.Available(20.0, 0), vm.total.value)
+        assertEquals(SearchState.Results, vm.searchState.value)
+    }
+
+    @Test
+    fun `R3 a slow older search cannot overwrite a clear`() = runTest(dispatcher) {
+        val gateOld = kotlinx.coroutines.CompletableDeferred<List<NaturalLanguageExpense>>()
+        val repo = FakeRepo().apply { queryHook = { gateOld.await() } }
+        val vm = viewModel(repo, converter())
+        search(vm, queryOne)
+        assertEquals(SearchState.Interpreting, vm.searchState.value)
+
+        vm.clearQuery()
+        gateOld.complete(listOf(row(1, 999.0, 999.0)))
+        runCurrent()
+        advanceTimeBy(301)
+        runCurrent()
+
+        assertEquals(SearchState.Idle, vm.searchState.value)
+        assertTrue(vm.results.value.isEmpty())
+        assertEquals(SearchTotal.Unavailable, vm.total.value)
+        assertNull(vm.interpretation.value)
+    }
+
+    @Test
+    fun `R3 a slow older search cannot overwrite a newer retry and cancellation shows no error state`() =
+        runTest(dispatcher) {
+            val gateOld = kotlinx.coroutines.CompletableDeferred<List<NaturalLanguageExpense>>()
+            val repo = FakeRepo().apply {
+                queryHook = { index -> if (index == 0) gateOld.await() else listOf(row(2, 20.0, 20.0)) }
+            }
+            val vm = viewModel(repo, converter())
+            search(vm, "abc")
+            assertEquals(SearchState.Interpreting, vm.searchState.value)
+
+            vm.retrySearch()
+            runCurrent()
+            assertEquals(listOf(2L), vm.results.value.map { it.expense.id })
+
+            // The superseded search is cancelled; failing it afterwards must not surface as an error either.
+            gateOld.completeExceptionally(IllegalStateException("synthetic late failure"))
+            runCurrent()
+
+            assertEquals(listOf(2L), vm.results.value.map { it.expense.id })
+            assertEquals(SearchState.Results, vm.searchState.value)
+            assertEquals(SearchTotal.Available(20.0, 0), vm.total.value)
+        }
+
+    @Test
+    fun `R3 cancelling an in-flight search by clearing never produces the Error state`() = runTest(dispatcher) {
+        val gate = kotlinx.coroutines.CompletableDeferred<List<NaturalLanguageExpense>>()
+        val repo = FakeRepo().apply { queryHook = { gate.await() } }
+        val vm = viewModel(repo, converter())
+        search(vm, "abc")
+
+        vm.updateQuery("ab")
+        runCurrent()
+
         assertEquals(SearchState.Idle, vm.searchState.value)
     }
 

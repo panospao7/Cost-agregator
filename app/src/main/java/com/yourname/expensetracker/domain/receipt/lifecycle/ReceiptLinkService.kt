@@ -630,6 +630,17 @@ class ReceiptLinkService @Inject constructor(
                 if (affectedRows > 0) {
                     val sourceType = receipt?.sourceType ?: "UNKNOWN"
                     val documentType = receipt?.documentType ?: "UNKNOWN"
+                    // Ids and fixed codes only; no raw text.
+                    val warrantyOutcome = if (remainingPrimaryExpenseId != null) {
+                        "repointed to expense $remainingPrimaryExpenseId"
+                    } else {
+                        "cleared"
+                    }
+                    val returnWindowOutcome = if (returnWindowTargetExpenseId != null) {
+                        "repointed to expense $returnWindowTargetExpenseId"
+                    } else {
+                        "cleared"
+                    }
                     receiptLifecycleEventWriter.write(
                         ctx,
                         ReceiptLifecycleEvent(
@@ -638,7 +649,8 @@ class ReceiptLinkService @Inject constructor(
                             documentType = documentType,
                             eventType = "RECEIPT_UNLINKED_FROM_EXPENSE",
                             actor = "system",
-                            message = "Receipt unlinked from expense $expenseId. Warranty/return expenseId cleared."
+                            message = "Receipt unlinked from expense $expenseId. " +
+                                "Warranty expenseId $warrantyOutcome; return window expenseId $returnWindowOutcome."
                         )
                     )
                 }

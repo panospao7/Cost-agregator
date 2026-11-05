@@ -187,7 +187,16 @@ class CloudWarrantyExtractionService @Inject constructor(
         // whole prompt fits the DefaultCloudPayloadRedactor 3000-char limit (which truncates the tail, and
         // would otherwise cut the schema off). The schema uses placeholders that the PII sanitizer leaves
         // untouched, so redaction neither rewrites nor expands the instructions.
-        val merchant = input.merchant?.trim()?.take(WARRANTY_PROMPT_MERCHANT_MAX_CHARS) ?: "Unknown"
+        val merchant = input.merchant?.trim()?.let { raw ->
+            val (cut, atBoundary) = cutAtWhitespace(raw, WARRANTY_PROMPT_MERCHANT_MAX_CHARS)
+            // A single long token has no whitespace to back up to; drop it if the fragment could be
+            // a partial email or number that the redaction regexes would no longer match.
+            if (!atBoundary && (cut.contains('@') || MERCHANT_DIGIT_RUN_REGEX.containsMatchIn(cut))) {
+                null
+            } else {
+                cut.trimEnd()
+            }
+        }?.takeIf { it.isNotEmpty() } ?: "Unknown"
 
         val header = """
             Analyze this receipt and extract warranty information.
@@ -229,13 +238,9 @@ class CloudWarrantyExtractionService @Inject constructor(
         // The receipt text is appended after trimIndent so its own line indentation cannot alter the header.
         val receiptBudget = (WARRANTY_PROMPT_MAX_CHARS - header.length).coerceAtLeast(0)
         val cutLimit = minOf(AppConfig.Ai.MAX_RECEIPT_OCR_CHARS_FOR_AI, receiptBudget)
-        var receiptText = input.receiptText.take(cutLimit)
         // If the cut lands mid-token (e.g. "john@exam"), back up to the previous whitespace so no
         // partial value escapes the redaction regexes. Only when whitespace exists in the cut text.
-        if (input.receiptText.length > cutLimit && !input.receiptText[cutLimit].isWhitespace()) {
-            val lastWs = receiptText.indexOfLast { it.isWhitespace() }
-            if (lastWs >= 0) receiptText = receiptText.substring(0, lastWs)
-        }
+        val receiptText = cutAtWhitespace(input.receiptText, cutLimit).first
         return header + receiptText
     }
 
@@ -292,10 +297,8 @@ class CloudWarrantyExtractionService @Inject constructor(
                 warrantyType = parseWarrantyType(warrantyJson.optString("warrantyType", "MANUFACTURER")),
                 warrantyMonths = warrantyMonths,
                 // A value starting with '<' is an echoed schema placeholder, not extracted data.
-                supportPhone = warrantyJson.optString("supportPhone").trim()
-                    .takeIf { it.isNotBlank() && !it.startsWith("<") },
-                supportEmail = warrantyJson.optString("supportEmail").trim()
-                    .takeIf { it.isNotBlank() && !it.startsWith("<") },
+                supportPhone = optSupportField(warrantyJson, "supportPhone"),
+                supportEmail = optSupportField(warrantyJson, "supportEmail"),
                 returnDays = returnDays,
                 returnConditions = returnConditions,
                 confidence = warrantyJson.optDouble("confidence", 0.0).toFloat()
@@ -312,6 +315,26 @@ class CloudWarrantyExtractionService @Inject constructor(
             )
             null
         }
+    }
+
+    /** JSON null (which optString renders as "null"), a literal "null", blank, or '<' placeholder -> null. */
+    private fun optSupportField(json: JSONObject, key: String): String? {
+        if (json.isNull(key)) return null
+        return json.optString(key).trim().takeIf {
+            it.isNotBlank() && !it.equals("null", ignoreCase = true) && !it.startsWith("<")
+        }
+    }
+
+    /**
+     * Cuts [text] to [limit]; if the cut lands mid-token, backs up to the previous whitespace.
+     * Returns the cut text and whether a whitespace boundary was found (or no cut was needed).
+     */
+    private fun cutAtWhitespace(text: String, limit: Int): Pair<String, Boolean> {
+        if (text.length <= limit) return text to true
+        val cut = text.take(limit)
+        if (text[limit].isWhitespace()) return cut to true
+        val lastWs = cut.indexOfLast { it.isWhitespace() }
+        return if (lastWs >= 0) cut.substring(0, lastWs) to true else cut to false
     }
 
     private fun sanitizeMerchant(rawMerchant: String?, shouldRedact: Boolean): String {
@@ -400,6 +423,7 @@ class CloudWarrantyExtractionService @Inject constructor(
         /** Mirrors DefaultCloudPayloadRedactor.MAX_TEXT_CHARS_RECEIPT (WARRANTY_EXTRACTION); policy is unchanged. */
         private const val WARRANTY_PROMPT_MAX_CHARS = 3000
         private const val WARRANTY_PROMPT_MERCHANT_MAX_CHARS = 80
+        private val MERCHANT_DIGIT_RUN_REGEX = Regex("\\d{3,}")
         private val JSON_FENCE_REGEX = Regex("""```(?:json)?\s*([\s\S]*?)\s*```""", RegexOption.IGNORE_CASE)
         private val EMAIL_REGEX = Regex("""\b[\w._%+-]+@[\w.-]+\.[A-Za-z]{2,}\b""")
         private val IBAN_REGEX = Regex("""\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b""")

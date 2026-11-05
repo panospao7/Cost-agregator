@@ -370,6 +370,106 @@ class CloudWarrantyExtractionServiceTest {
     }
 
     @Test
+    fun `R4 single 90 char email-like merchant token with no whitespace becomes Unknown`() {
+        val token = "x@" + "y".repeat(88)
+        val captured = runAndCapture(
+            WarrantyExtractionInput("Short receipt", token, 10.0, 1_700_000_000_000, "EUR")
+        )
+        val raw = requireNotNull(captured.rawPrompt)
+
+        org.junit.Assert.assertTrue(raw.contains("Merchant: Unknown\n"))
+        org.junit.Assert.assertFalse(raw.contains("x@"))
+        org.junit.Assert.assertFalse(raw.contains("yyyy"))
+    }
+
+    @Test
+    fun `R4 merchant cut mid email token backs up to the previous word boundary`() {
+        // "Acme " + 69 b's + " " is 75 chars, so the 80 char cut lands inside "john@example.com" after "john@".
+        val merchant = "Acme " + "b".repeat(69) + " john@example.com"
+        val captured = runAndCapture(
+            WarrantyExtractionInput("Short receipt", merchant, 10.0, 1_700_000_000_000, "EUR")
+        )
+        val raw = requireNotNull(captured.rawPrompt)
+
+        org.junit.Assert.assertTrue(raw.contains("Merchant: Acme " + "b".repeat(69) + "\n"))
+        org.junit.Assert.assertFalse(raw.contains("john"))
+        org.junit.Assert.assertFalse(raw.contains("@"))
+    }
+
+    @Test
+    fun `R4 normal long merchant is preserved up to a word boundary`() {
+        val merchant = List(20) { "abcdefghi" }.joinToString(" ")
+        val captured = runAndCapture(
+            WarrantyExtractionInput("Short receipt", merchant, 10.0, 1_700_000_000_000, "EUR")
+        )
+        val raw = requireNotNull(captured.rawPrompt)
+
+        val expected = List(8) { "abcdefghi" }.joinToString(" ")
+        org.junit.Assert.assertTrue(raw.contains("Merchant: $expected\n"))
+        org.junit.Assert.assertFalse(raw.contains("Merchant: Unknown"))
+    }
+
+    private fun extractWithModelJson(modelJson: String): com.yourname.expensetracker.domain.ai.model.WarrantyExtractionResult? {
+        val escaped = modelJson.replace("\\", "\\\\").replace("\"", "\\\"")
+        val body = """{"candidates":[{"content":{"parts":[{"text":"$escaped"}]}}]}"""
+        val client = OkHttpClient.Builder()
+            .addInterceptor { chain ->
+                Response.Builder()
+                    .request(chain.request())
+                    .protocol(Protocol.HTTP_1_1)
+                    .code(200)
+                    .message("OK")
+                    .body(body.toResponseBody("application/json".toMediaType()))
+                    .build()
+            }
+            .build()
+        val service = CloudWarrantyExtractionService(
+            secureKeyStorage = createMockKeyStorage(apiKey = "test-key"),
+            client = client,
+            privacyGate = mockk<PrivacyGate>(relaxed = true),
+            cloudPayloadPolicy = com.yourname.expensetracker.data.privacy.DefaultCloudPayloadPolicy(
+                com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver.failClosedNoAi(),
+                com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor()
+            )
+        )
+        return runBlocking { service.extractWarranty(sampleInput()) }
+    }
+
+    @Test
+    fun `R5 JSON null support fields give null and not the text null`() {
+        val result = extractWithModelJson(
+            """{"hasWarranty":true,"productName":"TV","warrantyMonths":12,"supportPhone":null,"supportEmail":null,"confidence":0.9}"""
+        )
+
+        assertNotNull(result)
+        assertNull(result?.supportPhone)
+        assertNull(result?.supportEmail)
+    }
+
+    @Test
+    fun `R5 string null in any case gives null for phone and email`() {
+        listOf("null", "NULL", "Null", "nULl", " null ").forEach { text ->
+            val result = extractWithModelJson(
+                """{"hasWarranty":true,"productName":"TV","warrantyMonths":12,"supportPhone":"$text","supportEmail":"$text","confidence":0.9}"""
+            )
+
+            assertNotNull(result)
+            assertNull("phone for '$text'", result?.supportPhone)
+            assertNull("email for '$text'", result?.supportEmail)
+        }
+    }
+
+    @Test
+    fun `R5 a real support value is still stored beside a null sibling`() {
+        val result = extractWithModelJson(
+            """{"hasWarranty":true,"productName":"TV","warrantyMonths":12,"supportPhone":"+30 210 000 0000","supportEmail":null,"confidence":0.9}"""
+        )
+
+        assertEquals("+30 210 000 0000", result?.supportPhone)
+        assertNull(result?.supportEmail)
+    }
+
+    @Test
     fun `short receipt is passed in full`() {
         val receipt = "Laptop X1\n24 months manufacturer warranty\nTotal 199.99 EUR"
         val captured = runAndCapture(

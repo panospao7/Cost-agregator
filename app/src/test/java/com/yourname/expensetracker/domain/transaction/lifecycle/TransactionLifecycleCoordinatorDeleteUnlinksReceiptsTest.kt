@@ -83,9 +83,20 @@ class TransactionLifecycleCoordinatorDeleteUnlinksReceiptsTest {
     private lateinit var realLinkService: ReceiptLinkService
 
     private class NoopPostCommitRunner : PostCommitActionRunner {
-        override suspend fun run(batch: PostCommitActionBatch): SideEffectBatchResult =
-            SideEffectBatchResult("test", 0, 0, 0, 0, 0, emptyList())
+        var runCalls = 0
+        override suspend fun run(batch: PostCommitActionBatch): SideEffectBatchResult {
+            runCalls++
+            return SideEffectBatchResult("test", 0, 0, 0, 0, 0, emptyList())
+        }
     }
+
+    private val postCommitRunner = NoopPostCommitRunner()
+
+    /** Rows in transaction_events whose type names a delete; read straight from the real table. */
+    private fun deleteEventCount(): Int =
+        database.openHelper.readableDatabase
+            .query("SELECT COUNT(*) FROM transaction_events WHERE eventType LIKE '%DELETE%'")
+            .use { cursor -> cursor.moveToFirst(); cursor.getInt(0) }
 
     private class NoopSourceLinkWriter : SourceLinkWriter {
         override suspend fun linkExpense(
@@ -174,7 +185,7 @@ class TransactionLifecycleCoordinatorDeleteUnlinksReceiptsTest {
             currencyConverter = mockk(relaxed = true),
             sideEffectDispatcher = mockk(relaxed = true),
             planner = mockk(relaxed = true),
-            runner = NoopPostCommitRunner(),
+            runner = postCommitRunner,
             recurringLifecycleCoordinator = mockk(relaxed = true),
             writeBarrier = writeBarrier,
             currencySettingsRepository = currencySettings,
@@ -444,6 +455,9 @@ class TransactionLifecycleCoordinatorDeleteUnlinksReceiptsTest {
         assertTrue("delete must fail", result.isFailure)
         assertEquals("RECEIPT_UNLINK_FAILED", result.exceptionOrNull()?.message)
         assertNotNull("expense still present after rollback", database.expenseDao().getById(expense.id))
+        // R8: a failed unlink must leave no DELETED event behind and must not run any post-commit plan.
+        assertEquals("no DELETED event after rollback", 0, deleteEventCount())
+        assertEquals("no post-commit plan after a failed delete", 0, postCommitRunner.runCalls)
         assertEquals(1, database.receiptExpenseLinkDao().getLinksForReceipt(receiptA).size)
         assertEquals(1, database.receiptExpenseLinkDao().getLinksForReceipt(receiptB).size)
         assertEquals(

@@ -12,6 +12,7 @@ import com.yourname.expensetracker.domain.naturallanguage.SearchResult
 import com.yourname.expensetracker.domain.naturallanguage.SpeechInputGateway
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.*
@@ -72,14 +73,31 @@ class NaturalLanguageSearchViewModel @Inject constructor(
     
     init {
         // Debounce search queries
+        // Replaces distinctUntilChanged: the distinct key is cleared by cancelSearch(), so
+        // "abc" -> "ab" -> "abc" inside the debounce window searches again after the clear.
         _query
             .debounce(300)
-            .distinctUntilChanged()
             .filter { it.length >= 3 }
             .onEach { queryText ->
-                performSearch(queryText)
+                if (queryText != lastSearchedQuery) startSearch(queryText)
             }
             .launchIn(viewModelScope)
+    }
+
+    /** The single in-flight search; a newer query, a clear or a retry cancels it. */
+    private var searchJob: Job? = null
+    private var lastSearchedQuery: String? = null
+
+    private fun startSearch(queryText: String) {
+        searchJob?.cancel()
+        lastSearchedQuery = queryText
+        searchJob = viewModelScope.launch { performSearch(queryText) }
+    }
+
+    private fun cancelSearch() {
+        searchJob?.cancel()
+        searchJob = null
+        lastSearchedQuery = null
     }
 
     override fun onCleared() {
@@ -99,7 +117,7 @@ class NaturalLanguageSearchViewModel @Inject constructor(
     fun retrySearch() {
         val current = _query.value
         if (current.length < 3) return
-        viewModelScope.launch { performSearch(current) }
+        startSearch(current)
     }
     
     fun clearQuery() {
@@ -108,6 +126,7 @@ class NaturalLanguageSearchViewModel @Inject constructor(
     }
     
     private fun clearResults() {
+        cancelSearch()
         _searchState.value = SearchState.Idle
         _interpretation.value = null
         _results.value = emptyList()

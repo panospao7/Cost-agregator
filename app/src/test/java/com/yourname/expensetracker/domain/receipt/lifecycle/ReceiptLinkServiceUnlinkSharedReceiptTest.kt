@@ -47,10 +47,15 @@ class ReceiptLinkServiceUnlinkSharedReceiptTest {
     private lateinit var database: AppDatabase
     private lateinit var linkService: ReceiptLinkService
 
+    private val events = mutableListOf<ReceiptLifecycleEvent>()
+
     @Before
     fun setUp() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         database = AppDatabaseTestFactory.create(context)
+        events.clear()
+        val eventWriter = mockk<ReceiptLifecycleEventWriter>(relaxed = true)
+        io.mockk.coEvery { eventWriter.write(any(), capture(events)) } returns Unit
         val timeProvider = FakeTimeProvider(now)
         val maintenanceMode = mockk<RestoreMaintenanceMode>()
         every { maintenanceMode.currentMode() } returns RestoreMaintenanceMode.Mode.NORMAL
@@ -59,7 +64,7 @@ class ReceiptLinkServiceUnlinkSharedReceiptTest {
             database = database,
             receiptExpenseLinkDao = database.receiptExpenseLinkDao(),
             scannedReceiptDao = database.scannedReceiptDao(),
-            receiptLifecycleEventWriter = mockk(relaxed = true),
+            receiptLifecycleEventWriter = eventWriter,
             receiptItemCategorizationDao = database.receiptItemCategorizationDao(),
             warrantyDao = database.warrantyDao(),
             returnWindowDao = database.returnWindowDao(),
@@ -277,6 +282,82 @@ class ReceiptLinkServiceUnlinkSharedReceiptTest {
         assertNull("R's window is detached, not repointed", database.returnWindowDao().getReturnWindowByReceiptId(r)!!.expenseId)
         assertEquals("Y's own window is untouched", ownBefore, database.returnWindowDao().getReturnWindowByExpenseId(y))
         assertTrue(ownWindowId > 0L)
+    }
+
+    // ------------------------------------------------- R7 audit message outcome wording
+
+    private fun unlinkedEvents(): List<ReceiptLifecycleEvent> =
+        events.filter { it.eventType == "RECEIPT_UNLINKED_FROM_EXPENSE" }
+
+    private fun assertNoRawText(message: String) {
+        listOf("Synthetic Shop", "Synthetic Product", "synthetic text", "Other Product", "Item 1").forEach {
+            assertTrue("message must not carry raw text '$it': $message", !message.contains(it))
+        }
+    }
+
+    @Test
+    fun unlinkWithRemainingExpense_auditMessageSaysRepointedForWarrantyAndReturnWindow() = runTest {
+        val x = insertExpense()
+        val y = insertExpense()
+        val r = insertReceipt()
+        linkPrimary(r, x)
+        linkPrimary(r, y)
+        matchWithDependents(r, x)
+
+        assertTrue(linkService.unlinkReceiptFromExpense(r, x).isSuccess)
+
+        val message = unlinkedEvents().single().message
+        assertTrue(message, message.contains("Warranty expenseId repointed to expense $y"))
+        assertTrue(message, message.contains("return window expenseId repointed to expense $y"))
+        assertTrue(message, !message.contains("cleared"))
+        assertNoRawText(message)
+    }
+
+    @Test
+    fun unlinkWithNoRemainingExpense_auditMessageSaysClearedForWarrantyAndReturnWindow() = runTest {
+        val x = insertExpense()
+        val r = insertReceipt()
+        linkPrimary(r, x)
+        matchWithDependents(r, x)
+
+        assertTrue(linkService.unlinkReceiptFromExpense(r, x).isSuccess)
+
+        val message = unlinkedEvents().single().message
+        assertTrue(message, message.contains("Warranty expenseId cleared"))
+        assertTrue(message, message.contains("return window expenseId cleared"))
+        assertTrue(message, !message.contains("repointed"))
+        assertNoRawText(message)
+    }
+
+    @Test
+    fun unlinkWithReturnWindowConflict_auditMessageSaysClearedForTheWindowOnly() = runTest {
+        val x = insertExpense()
+        val y = insertExpense()
+        val r = insertReceipt()
+        val r2 = insertReceipt()
+        linkPrimary(r, x)
+        linkPrimary(r, y)
+        matchWithDependents(r, x)
+        database.returnWindowDao().insertReturnWindow(
+            ReturnWindow(
+                receiptId = r2,
+                expenseId = y,
+                productName = "Other Product",
+                merchantName = "Synthetic Shop",
+                purchaseDate = now,
+                returnDays = 14,
+                returnDeadline = now + 3_000_000L,
+                createdAt = now,
+                updatedAt = now
+            )
+        )
+
+        assertTrue(linkService.unlinkReceiptFromExpense(r, x).isSuccess)
+
+        val message = unlinkedEvents().single().message
+        assertTrue(message, message.contains("Warranty expenseId repointed to expense $y"))
+        assertTrue(message, message.contains("return window expenseId cleared"))
+        assertNoRawText(message)
     }
 
     @Test

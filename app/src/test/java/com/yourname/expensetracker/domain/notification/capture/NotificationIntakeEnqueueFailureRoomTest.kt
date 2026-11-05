@@ -25,6 +25,7 @@ import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -556,6 +557,96 @@ class NotificationIntakeEnqueueFailureRoomTest {
         recoveryScheduler().recoverPending()
 
         assertEquals(listOf(NotificationIntakeWorkNames.uniqueWorkName(ready)), names)
+    }
+
+    // ── R6 (fix-1.0.4): cap warning precision and injected dispatcher ───────
+
+    private val capWarning = "Intake recovery reached page cap; remaining rows deferred to next run"
+
+    /** Runs [block] with a Timber tree planted and returns the warning-level messages it saw. */
+    private inline fun collectWarnings(block: () -> Unit): List<String> {
+        val warnings = mutableListOf<String>()
+        val tree = object : timber.log.Timber.Tree() {
+            override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+                if (priority == android.util.Log.WARN) warnings += message
+            }
+        }
+        timber.log.Timber.plant(tree)
+        try {
+            block()
+        } finally {
+            timber.log.Timber.uproot(tree)
+        }
+        return warnings
+    }
+
+    @Test(timeout = 120_000)
+    fun `R6 cap warning fires when the 20th page was full`() = runBlocking {
+        val ids = insertReadyRows(250, { NOW - 1_000_000L + it })
+        val names = captureEnqueuedNames()
+
+        val warnings = collectWarnings { runBlocking { recoveryScheduler().recoverPending(limit = 10) } }
+
+        assertEquals(200, names.size)
+        assertEquals(ids.take(200).map { NotificationIntakeWorkNames.uniqueWorkName(it) }, names)
+        assertEquals(1, warnings.count { it == capWarning })
+    }
+
+    @Test(timeout = 120_000)
+    fun `R6 cap warning does not fire when the 20th page was short`() = runBlocking {
+        // 19 full pages of 10 plus a short 20th page of 5: every row is enqueued, nothing is deferred.
+        insertReadyRows(195, { NOW - 1_000_000L + it })
+        val names = captureEnqueuedNames()
+
+        val warnings = collectWarnings { runBlocking { recoveryScheduler().recoverPending(limit = 10) } }
+
+        assertEquals(195, names.size)
+        assertTrue("no cap warning expected", warnings.none { it == capWarning })
+    }
+
+    @Test(timeout = 120_000)
+    fun `R6 cap warning does not fire when the backlog ends before page 20`() = runBlocking {
+        insertReadyRows(30, { NOW - 100_000L + it })
+        captureEnqueuedNames()
+
+        val warnings = collectWarnings { runBlocking { recoveryScheduler().recoverPending(limit = 10) } }
+
+        assertTrue("no cap warning expected", warnings.none { it == capWarning })
+    }
+
+    @Test(timeout = 120_000)
+    fun `R6 recoverPending builds and enqueues work on the injected dispatcher not the caller thread`() {
+        val executor = Executors.newSingleThreadExecutor(daemonFactory("intake-recovery-injected-io"))
+        val dispatcher = executor.asCoroutineDispatcher()
+        try {
+            runBlocking { insertReadyRows(3, { NOW - 100_000L + it }) }
+            val threads = java.util.Collections.synchronizedList(mutableListOf<String>())
+            every {
+                workManager.enqueueUniqueWork(any<String>(), any<ExistingWorkPolicy>(), any<OneTimeWorkRequest>())
+            } answers {
+                threads += Thread.currentThread().name
+                mockk<Operation>(relaxed = true)
+            }
+            val scheduler = NotificationIntakeRecoveryScheduler(
+                intakeDao = intakeDao,
+                workManager = workManager,
+                timeProvider = timeProvider,
+                writeBarrier = DatabaseWriteBarrier(normalMaintenanceMode()),
+                ioDispatcher = dispatcher
+            )
+            val callerThread = Thread.currentThread().name
+
+            runBlocking { scheduler.recoverPending() }
+
+            assertEquals(3, threads.size)
+            assertTrue(
+                "work must run on the injected dispatcher, saw $threads",
+                threads.all { it == "intake-recovery-injected-io" }
+            )
+            assertTrue(callerThread != "intake-recovery-injected-io")
+        } finally {
+            executor.shutdownNow()
+        }
     }
 
     private companion object {
