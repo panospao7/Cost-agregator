@@ -515,7 +515,11 @@ class ReviewViewModel @Inject constructor(
                         val categoryId = finalCategoryId
                         
                         if (merchantName != null && categoryId != null) {
-                            expenseRepository.updateExpenseCategoryBulk(merchantName, categoryId)
+                            expenseRepository.updateExpenseCategoryBulk(
+                                merchantName,
+                                categoryId,
+                                recordCorrection = categoryChosenByUser
+                            )
                             reviewQueueRepository.updatePendingReviewCategoryBulk(merchantName, categoryId)
                         }
 

@@ -163,6 +163,26 @@ class ExpenseRepositoryTest {
     }
 
     @Test
+    fun `DR-04 updateExpenseCategoryBulk with recordCorrection false updates rows but records no correction`() = runTest {
+        repository.updateExpenseCategoryBulk("LIDL #123 ATHENS", 7L, recordCorrection = false)
+
+        coVerify(exactly = 1) { transactionLifecycleCoordinator.bulkUpdateCategory(eq("LIDL #123 ATHENS"), eq(7L), eq("USER_EDIT"), any(), any()) }
+        coVerify(exactly = 0) { merchantCategoryRepository.correctPattern(any(), any()) }
+        coVerify(exactly = 0) { merchantCategoryRepository.learnPattern(any(), any()) }
+        coVerify(exactly = 0) { userCorrectionDao.insert(any()) }
+    }
+
+    @Test
+    fun `DR-04 updateExpenseCategoryBulk with recordCorrection true and by default records correction and row`() = runTest {
+        repository.updateExpenseCategoryBulk("LIDL #123 ATHENS", 7L, recordCorrection = true)
+        repository.updateExpenseCategoryBulk("LIDL #123 ATHENS", 7L)
+
+        coVerify(exactly = 2) { transactionLifecycleCoordinator.bulkUpdateCategory(eq("LIDL #123 ATHENS"), eq(7L), eq("USER_EDIT"), any(), any()) }
+        coVerify(exactly = 2) { merchantCategoryRepository.correctPattern("LIDL #123 ATHENS", 7L) }
+        coVerify(exactly = 2) { userCorrectionDao.insert(any()) }
+    }
+
+    @Test
     fun `DR-04 updateExpenseCategory propagates CancellationException from the correction`() = runTest {
         coEvery { merchantCategoryRepository.correctPattern(any(), any()) } throws
             kotlinx.coroutines.CancellationException("cancelled")

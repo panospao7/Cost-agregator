@@ -422,6 +422,45 @@ class ReviewViewModelAiAssistTest {
         verifyEditApprove(106L, 5L, expectedChosenByUser = false, merchant = "Lidl")
     }
 
+    private fun approveAllWithPrefill(reviewId: Long, finalCategoryId: Long, prefill: Long?) {
+        coEvery { reviewQueueRepository.getReviewById(reviewId) } returns null
+        stubEditApprove(reviewId, finalCategoryId, merchant = "Lidl")
+        viewModel.approveReviewWithEdits(
+            reviewId = reviewId,
+            finalAmount = null,
+            finalMerchant = "Lidl",
+            finalCategoryId = finalCategoryId,
+            finalDate = null,
+            finalType = null,
+            applyToAll = true,
+            aiPrefilledCategoryId = prefill
+        )
+    }
+
+    @Test
+    fun `apply to all with untouched prefill 5 and final 5 updates rows but records no correction`() = runTest {
+        approveAllWithPrefill(111L, finalCategoryId = 5L, prefill = 5L)
+        advanceUntilIdle()
+        coVerify(exactly = 1) { expenseRepository.updateExpenseCategoryBulk("Lidl", 5L, recordCorrection = false) }
+        coVerify(exactly = 0) { expenseRepository.updateExpenseCategoryBulk("Lidl", 5L, recordCorrection = true) }
+    }
+
+    @Test
+    fun `apply to all with prefill 5 and final 7 records the correction`() = runTest {
+        approveAllWithPrefill(112L, finalCategoryId = 7L, prefill = 5L)
+        advanceUntilIdle()
+        coVerify(exactly = 1) { expenseRepository.updateExpenseCategoryBulk("Lidl", 7L, recordCorrection = true) }
+        coVerify(exactly = 0) { expenseRepository.updateExpenseCategoryBulk("Lidl", 7L, recordCorrection = false) }
+    }
+
+    @Test
+    fun `apply to all with null prefill and final 5 records the correction`() = runTest {
+        approveAllWithPrefill(113L, finalCategoryId = 5L, prefill = null)
+        advanceUntilIdle()
+        coVerify(exactly = 1) { expenseRepository.updateExpenseCategoryBulk("Lidl", 5L, recordCorrection = true) }
+        coVerify(exactly = 0) { expenseRepository.updateExpenseCategoryBulk("Lidl", 5L, recordCorrection = false) }
+    }
+
     @Test
     fun `loadAiExplanation sets Disabled when AI is off`() = runTest {
         // AI disabled by default (AiSettings() has aiEnabled=false)
