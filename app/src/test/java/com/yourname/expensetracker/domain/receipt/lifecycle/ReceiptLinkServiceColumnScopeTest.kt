@@ -268,6 +268,97 @@ class ReceiptLinkServiceColumnScopeTest {
         }
     }
 
+    // ---- RCP-30 majority vote: null (uncategorised) items never vote; ties go to the lowest id.
+
+    private fun majorityPort(): ExpenseCategoryAssignmentPort {
+        val port = mockk<ExpenseCategoryAssignmentPort>()
+        coEvery { port.assignCategoryIfUnset(any(), any(), any(), any()) } returns
+            CategoryAssignmentOutcome.Assigned
+        coEvery { port.dispatchAssignedCategorySideEffects(any(), any(), any()) } returns Unit
+        return port
+    }
+
+    private fun serviceWith(port: ExpenseCategoryAssignmentPort) = ReceiptLinkService(
+        database = database,
+        receiptExpenseLinkDao = database.receiptExpenseLinkDao(),
+        scannedReceiptDao = database.scannedReceiptDao(),
+        receiptLifecycleEventWriter = mockk(relaxed = true),
+        receiptItemCategorizationDao = database.receiptItemCategorizationDao(),
+        warrantyDao = database.warrantyDao(),
+        returnWindowDao = database.returnWindowDao(),
+        expenseDao = database.expenseDao(),
+        timeProvider = timeProvider,
+        writeBarrier = writeBarrier,
+        sourceLinkWriter = mockk(relaxed = true),
+        categoryAssignmentPort = port,
+        transactionRunner = RoomDomainTransactionRunner(database, timeProvider)
+    )
+
+    private suspend fun linkWithItemCategories(
+        port: ExpenseCategoryAssignmentPort,
+        suggestedIds: List<Long?>
+    ): Long {
+        val receiptId = database.scannedReceiptDao().insert(receipt(createdAt = now - 10_000))
+        val expenseId = database.expenseDao().insert(expense("Groceries"))
+        suggestedIds.forEachIndexed { index, categoryId ->
+            database.receiptItemCategorizationDao().insert(
+                ReceiptItemCategorization(
+                    receiptId = receiptId,
+                    itemDescription = "Item $index",
+                    itemAmount = 1.0,
+                    suggestedCategoryId = categoryId,
+                    suggestedCategoryName = null,
+                    confidence = 0.9f,
+                    aiRationale = null,
+                    alternativeCategoriesJson = null,
+                    userCorrectedCategoryId = null,
+                    userCorrectedCategoryName = null,
+                    userCorrectedAt = null,
+                    taxAmount = null
+                )
+            )
+        }
+        val result = serviceWith(port).linkReceiptToExpense(
+            receiptId = receiptId,
+            expenseId = expenseId,
+            linkType = "DIRECT_SAVE",
+            source = "TEST"
+        )
+        assertTrue("link should succeed: ${result.exceptionOrNull()}", result.isSuccess)
+        return expenseId
+    }
+
+    @Test
+    fun `majority vote ignores null items so 5 5 null null null assigns 5`() = runTest {
+        val port = majorityPort()
+        val expenseId = linkWithItemCategories(port, listOf(5L, 5L, null, null, null))
+
+        coVerify(exactly = 1) {
+            port.assignCategoryIfUnset(expenseId, 5L, "RECEIPT_ITEM_MAJORITY", any())
+        }
+    }
+
+    @Test
+    fun `majority vote tie goes to the lowest category id so 7 3 assigns 3`() = runTest {
+        val port = majorityPort()
+        val expenseId = linkWithItemCategories(port, listOf(7L, 3L))
+
+        coVerify(exactly = 1) {
+            port.assignCategoryIfUnset(expenseId, 3L, "RECEIPT_ITEM_MAJORITY", any())
+        }
+        coVerify(exactly = 0) {
+            port.assignCategoryIfUnset(any(), 7L, any(), any())
+        }
+    }
+
+    @Test
+    fun `majority vote with all null items assigns nothing`() = runTest {
+        val port = majorityPort()
+        linkWithItemCategories(port, listOf(null, null, null))
+
+        coVerify(exactly = 0) { port.assignCategoryIfUnset(any(), any(), any(), any()) }
+    }
+
     @Test
     fun `nested caller can defer category side effects until outer commit`() = runTest {
         val dao = database.scannedReceiptDao()

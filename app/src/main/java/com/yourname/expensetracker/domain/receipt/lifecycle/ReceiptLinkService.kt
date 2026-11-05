@@ -365,9 +365,14 @@ class ReceiptLinkService @Inject constructor(
             try {
                 val categorizations = receiptItemCategorizationDao.getByReceiptId(receiptId)
                 if (categorizations.isNotEmpty()) {
+                    // Null (uncategorised) items never vote; ties go to the lowest category id.
                     val bestCategoryId = categorizations
-                        .groupBy { it.userCorrectedCategoryId ?: it.suggestedCategoryId }
-                        .maxByOrNull { (_, items) -> items.size }
+                        .mapNotNull { it.userCorrectedCategoryId ?: it.suggestedCategoryId }
+                        .groupingBy { it }
+                        .eachCount()
+                        .entries
+                        .sortedWith(compareByDescending<Map.Entry<Long, Int>> { it.value }.thenBy { it.key })
+                        .firstOrNull()
                         ?.key
                     if (bestCategoryId != null) {
                         val existingExpense = expenseDao.getById(expenseId)

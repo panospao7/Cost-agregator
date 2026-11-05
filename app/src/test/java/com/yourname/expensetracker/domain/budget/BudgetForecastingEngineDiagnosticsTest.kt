@@ -104,6 +104,10 @@ class BudgetForecastingEngineDiagnosticsTest : AnalyticsEngineTestBase() {
             rateAsOfMillis = fixedNow
         )
 
+        // P-06-2: the limit comes from the repository status snapshot (effectiveLimit),
+        // not from converting budget.amount. Default: a known 1_000 EUR effective limit.
+        coEvery { budgetRepository.getBudgetStatusAt(any(), any()) } returns statusFor(budget, 1_000.0)
+
         mockExpenseRepo = mockk(relaxed = true)
         mockCurrencyNormalizer = mockk(relaxed = true)
         mockCurrencySettingsRepo = mockk(relaxed = true)
@@ -188,25 +192,25 @@ class BudgetForecastingEngineDiagnosticsTest : AnalyticsEngineTestBase() {
         assertTrue(logs.all { it.first == null })
     }
 
-    private fun converted(amount: Double): ConversionOutcome.Converted = ConversionOutcome.Converted(
-        originalAmount = amount,
-        originalCurrency = CurrencyCode("EUR"),
-        convertedAmount = amount,
-        targetCurrency = CurrencyCode("EUR"),
-        rateUsed = 1.0,
-        rateBasis = RateBasis.IDENTITY,
-        rateValidDate = null,
-        rateLastUpdated = null,
-        rateSource = null,
-        conversionPath = ConversionPath.IDENTITY
+    private fun statusFor(
+        forBudget: Budget,
+        effectiveLimit: Double,
+        percentKnown: Boolean = true
+    ): BudgetStatus = BudgetStatus(
+        budget = forBudget,
+        category = null,
+        spentAmount = 0.0,
+        remainingAmount = effectiveLimit,
+        percentUsed = 0f,
+        healthStatus = BudgetHealthStatus.ON_TRACK,
+        periodStart = fixedNow,
+        periodEnd = fixedNow,
+        effectiveLimit = effectiveLimit,
+        percentKnown = percentKnown
     )
 
     @Test
     fun `generateForecastResult emits FORECAST_GENERATED on success`() = runTest {
-        coEvery {
-            mockConverter.convertOutcome(any(), any(), any(), any(), any(), any())
-        } returns converted(1_000.0)
-
         val result = engine.generateForecastResult(budget)
 
         assertNotNull(result as? BudgetForecastResult.Available)
@@ -221,9 +225,6 @@ class BudgetForecastingEngineDiagnosticsTest : AnalyticsEngineTestBase() {
     @Test
     fun `generateForecastResult maps persistence constraint to bounded unavailable event`() = runTest {
         val rawPayload = "CHECK constraint failed: SQL /private/receipt merchant 1234.56"
-        coEvery {
-            mockConverter.convertOutcome(any(), any(), any(), any(), any(), any())
-        } returns converted(1_000.0)
         coEvery { budgetForecastDao.insertWithDeactivation(any()) } throws
             DiagnosticsSQLiteConstraintException(rawPayload)
 
@@ -266,20 +267,17 @@ class BudgetForecastingEngineDiagnosticsTest : AnalyticsEngineTestBase() {
 
     @Test
     fun `generateForecastResult emits FORECAST_UNAVAILABLE when limit conversion fails`() = runTest {
-        coEvery {
-            mockConverter.convertOutcome(any(), any(), any(), any(), any(), any())
-        } returns ConversionOutcome.Failed(
-            originalAmount = 1_000.0,
-            originalCurrency = "USD",
-            targetCurrency = "EUR",
-            rateBasis = RateBasis.PERIOD_END,
-            failureType = ConversionFailureType.MISSING_RATE,
-            message = "SQL /data/user/0/private.db merchant 42.00"
-        )
+        // The status snapshot reports no known home-currency limit (limit conversion failed upstream).
+        coEvery { budgetRepository.getBudgetStatusAt(any(), any()) } returns
+            statusFor(budget.copy(currency = "USD"), 0.0, percentKnown = false)
 
         val result = engine.generateForecastResult(budget.copy(currency = "USD"))
 
-        assertEquals("Budget limit conversion unavailable", (result as BudgetForecastResult.Unavailable).reason)
+        assertEquals(
+            ForecastUnavailableReason.LIMIT_CONVERSION_FAILED,
+            (result as BudgetForecastResult.Unavailable).reasonCode
+        )
+        assertEquals("Budget effective limit unavailable", result.reason)
         val event = emitted.singleOrNull { it.stage == "FORECAST_UNAVAILABLE" }
         assertNotNull("Expected a FORECAST_UNAVAILABLE diagnostic event", event)
         assertEquals(EventOutcome.SKIPPED, event!!.outcome)
@@ -292,7 +290,6 @@ class BudgetForecastingEngineDiagnosticsTest : AnalyticsEngineTestBase() {
         ).copy(conversionQuality = com.yourname.expensetracker.domain.core.money.ConversionQuality.UNAVAILABLE)
         coEvery { budgetRepository.getCurrentPeriodPurchaseSpendAtPeriodEnd(any(), any(), any(), any()) } returns
             BudgetRepository.CurrentPeriodSpendAtPeriodEnd(unavailable, fixedNow)
-        coEvery { mockConverter.convertOutcome(any(), any(), any(), any(), any(), any()) } returns converted(1_000.0)
 
         val result = engine.generateForecastResult(budget)
 
@@ -304,9 +301,6 @@ class BudgetForecastingEngineDiagnosticsTest : AnalyticsEngineTestBase() {
 
     @Test
     fun `event writer failure does not fail forecast generation`() = runTest {
-        coEvery {
-            mockConverter.convertOutcome(any(), any(), any(), any(), any(), any())
-        } returns converted(1_000.0)
         coEvery { diagnosticEventWriter.emit(any()) } throws RuntimeException("diagnostic sink down")
 
         val result = engine.generateForecastResult(budget)

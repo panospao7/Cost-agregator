@@ -326,7 +326,7 @@ class DashboardBudgetProvenanceChainTest {
         assertEquals("remaining after spend", 900.0, runway.discretionaryRemaining, 0.001)
         assertEquals("daily burn 100/15", 100.0 / 15.0, runway.averageDailyDiscretionarySpend, 0.001)
         assertEquals("committed", 0.0, runway.committedExpenses, 0.0)
-        assertEquals("runway total budget", 1000.0, runway.totalBudget, 0.001)
+        assertEquals("runway total budget", 1000.0, requireNotNull(runway.totalBudget), 0.001)
 
         val safeToSpend = result.allWidgets.filterIsInstance<DashboardWidget.SafeToSpend>().single()
         assertNotNull("RG06A-1: SafeToSpend.totalBudget null for UI-created budget (assumption=$persistedAssumption)", safeToSpend.totalBudget)

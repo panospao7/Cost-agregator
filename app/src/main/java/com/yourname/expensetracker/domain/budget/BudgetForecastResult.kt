@@ -20,6 +20,8 @@ sealed interface BudgetForecastResult {
 enum class ForecastUnavailableReason {
     HOME_CURRENCY_UNAVAILABLE,
     LIMIT_CONVERSION_FAILED,
+    NO_LIMIT_LEFT,
+    BUDGET_STATUS_UNAVAILABLE,
     MISSING_RATE,
     INVALID_CURRENCY,
     UNKNOWN

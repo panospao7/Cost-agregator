@@ -453,6 +453,65 @@ class FinancialRunwayNoBurnTest {
         assertEquals(DashboardWidget.RunwayStatus.CRITICAL, runway.status)
     }
 
+    @Test
+    fun `P05-3 available explicit budget exposes its effective limit as nullable totalBudget`() = runTest {
+        fixedNowMs = toEpochMs(2024, 7, 10, 12, 0)
+
+        val result = computeUseCase.compute(
+            createProcessedData(
+                expenses = listOf(
+                    purchase(100.0, dayOffsetMs(1)),
+                    purchase(100.0, dayOffsetMs(2))
+                ),
+                budgetStatuses = listOf(overallBudget(500.0, spent = 200.0))
+            )
+        )
+        val runway = result.allWidgets.filterIsInstance<DashboardWidget.FinancialRunway>().single()
+
+        assertEquals(500.0, requireNotNull(runway.totalBudget), 0.0)
+    }
+
+    @Test
+    fun `P05-3 exhausted available budget still shows the widget with its limit`() = runTest {
+        fixedNowMs = toEpochMs(2024, 7, 10, 12, 0)
+
+        // Remaining is floored at 0 but a budget basis is Available, so the widget stays
+        // and carries the real limit (150), not 0.0.
+        val result = computeUseCase.compute(
+            createProcessedData(
+                expenses = listOf(
+                    purchase(100.0, dayOffsetMs(1)),
+                    purchase(100.0, dayOffsetMs(2))
+                ),
+                budgetStatuses = listOf(overallBudget(150.0, spent = 200.0, health = BudgetHealthStatus.EXCEEDED))
+            )
+        )
+        val runway = result.allWidgets.filterIsInstance<DashboardWidget.FinancialRunway>().single()
+
+        assertEquals(0.0, runway.discretionaryRemaining, 0.0)
+        assertEquals(150.0, requireNotNull(runway.totalBudget), 0.0)
+    }
+
+    @Test
+    fun `P05-3 no budget basis leaves totalBudget null rather than zero`() = runTest {
+        fixedNowMs = toEpochMs(2024, 7, 10, 12, 0)
+
+        // Income-based remainder (no explicit budget): the widget shows, but there is no budget
+        // limit to state, so totalBudget is null (unavailable), never a 0.0 sentinel.
+        val result = computeUseCase.compute(
+            createProcessedData(
+                expenses = listOf(
+                    deposit(2000.0, dayOffsetMs(1)),
+                    purchase(100.0, dayOffsetMs(1)),
+                    purchase(100.0, dayOffsetMs(2))
+                )
+            )
+        )
+        val runway = result.allWidgets.filterIsInstance<DashboardWidget.FinancialRunway>().single()
+
+        assertNull(runway.totalBudget)
+    }
+
     // ── Harness helpers ──────────────────────────────────────────────────────
 
     private fun deposit(amount: Double, date: Long): DashboardExpense = DashboardExpense(
