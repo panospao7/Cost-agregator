@@ -170,7 +170,20 @@ class FinancialWeatherRepository @Inject constructor(
             }
         }
 
+        // Display-only de-dup: a planned row linked to rule R is the same payment as the
+        // Recurring pattern item for rule R on the same due day. Totals are unaffected.
+        val recurringRuleDays: Set<Pair<Long, Long>> = items
+            .filterIsInstance<UpcomingItem.Recurring>()
+            .mapNotNull { item ->
+                item.pattern.id?.let { ruleId -> ruleId to TimePeriodUtils.getStartOfDay(item.date) }
+            }
+            .toSet()
+
         planned.filter { it.date >= startOfToday && it.date < horizon }
+            .filterNot { p ->
+                val ruleId = p.sourceRecurringRuleId
+                ruleId != null && (ruleId to TimePeriodUtils.getStartOfDay(p.date)) in recurringRuleDays
+            }
             .forEach { items.add(UpcomingItem.Planned(it)) }
 
         return items.sortedBy { it.date }

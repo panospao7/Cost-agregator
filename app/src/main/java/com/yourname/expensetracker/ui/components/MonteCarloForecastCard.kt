@@ -196,7 +196,7 @@ fun MonteCarloForecastCard(
                     Column {
                         Text(
                             stringResource(
-                                if (budgetNotComparable) R.string.forecast_budget_not_compared
+                                if (budgetNotComparable || result.budgetAmount != null) R.string.forecast_budget_not_compared
                                 else R.string.forecast_no_budget_set
                             ),
                             style = MaterialTheme.typography.labelSmall,
