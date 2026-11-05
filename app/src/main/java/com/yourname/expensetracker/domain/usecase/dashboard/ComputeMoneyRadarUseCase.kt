@@ -355,7 +355,11 @@ class ComputeMoneyRadarUseCase @Inject constructor(
                 displayCurrency = homeCurrency
             )
             
-            checkNotNull(mcResult) { "RADAR_BUDGET_UNAVAILABLE" }.let { result ->
+            val simulated = checkNotNull(mcResult) { "RADAR_BUDGET_UNAVAILABLE" }
+            // No usable fit and total at or under the limit: the budget part is absent.
+            if (simulated.probabilityUnderBudget == null) return null
+
+            simulated.let { result ->
                 // Use GetMonteCarloBudgetImpactUseCase to get proper risk assessment
                 when (val impact = getMonteCarloBudgetImpact(budgetAmount, result)) {
                     is com.yourname.expensetracker.domain.model.Result.Success -> {

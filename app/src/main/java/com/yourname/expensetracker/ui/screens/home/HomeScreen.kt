@@ -456,6 +456,7 @@ fun HomeScreen(
                                         Spacer(modifier = Modifier.height(4.dp))
                                         AmountText(
                                             amount = widget.amount ?: 0.0,
+                                            currency = homeCurrency ?: "",
                                             style = MaterialTheme.typography.displayMedium,
                                             color = SemanticColors.TextPrimary
                                         )
@@ -478,6 +479,7 @@ fun HomeScreen(
                                         Spacer(modifier = Modifier.height(4.dp))
                                         AmountText(
                                             amount = widget.amount ?: 0.0,
+                                            currency = homeCurrency ?: "",
                                             style = MaterialTheme.typography.displayMedium,
                                             color = SemanticColors.TextPrimary
                                         )

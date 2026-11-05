@@ -205,6 +205,13 @@ class HomeViewModel @Inject constructor(
     /** S4-003: Serializes widget config read-modify-write operations */
     private val widgetConfigMutex = kotlinx.coroutines.sync.Mutex()
 
+    /**
+     * The live year-view collection. Cancelled before a new year collection starts and
+     * before any drill-down/drill-up so a stale collection never overwrites other levels.
+     * Declared before init: init starts the first collection.
+     */
+    private var yearTotalsJob: kotlinx.coroutines.Job? = null
+
     init {
         viewModelScope.launch {
             try {
@@ -692,30 +699,35 @@ class HomeViewModel @Inject constructor(
     }
 
     fun loadTotalsForYear(year: Int) {
-        viewModelScope.launch {
+        yearTotalsJob?.cancel()
+        yearTotalsJob = viewModelScope.launch {
             _totalsDrillDownState.update { it.copy(isLoading = true) }
             try {
                 Timber.d("Loading totals for year $year")
-                val totals = totalsAggregationEngine.getMonthlyTotals(year).first()
-                Timber.d("Got ${totals.size} monthly totals for year $year")
-                // P5-014 (RP-07): month status labels compare against COMPLETED-month
-                // history — the partial current month stays out of the baseline.
-                val average = totalsAggregationEngine.getAverageForPeriodType(PeriodType.MONTH, excludeCurrent = true)
-                Timber.d("Average for month: $average")
-                
-                val updatedTotals = totals.map { period ->
-                    period.copy(status = totalsAggregationEngine.getPeriodStatus(statusAggregate(period), average))
+                // Collected (not .first()) so the year view follows expense changes.
+                totalsAggregationEngine.getMonthlyTotals(year).collect { totals ->
+                    Timber.d("Got ${totals.size} monthly totals for year $year")
+                    // P5-014 (RP-07): month status labels compare against COMPLETED-month
+                    // history — the partial current month stays out of the baseline.
+                    val average = totalsAggregationEngine.getAverageForPeriodType(PeriodType.MONTH, excludeCurrent = true)
+                    Timber.d("Average for month: $average")
+
+                    val updatedTotals = totals.map { period ->
+                        period.copy(status = totalsAggregationEngine.getPeriodStatus(statusAggregate(period), average))
+                    }
+
+                    _totalsDrillDownState.update { state ->
+                        state.copy(
+                            currentLevel = PeriodType.MONTH,
+                            periodTotals = updatedTotals,
+                            isLoading = false,
+                            error = null
+                        )
+                    }
+                    Timber.d("Totals loaded successfully")
                 }
-                
-                _totalsDrillDownState.update { state ->
-                    state.copy(
-                        currentLevel = PeriodType.MONTH,
-                        periodTotals = updatedTotals,
-                        isLoading = false,
-                        error = null
-                    )
-                }
-                Timber.d("Totals loaded successfully")
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Timber.e(e, "Error loading totals for year $year")
                 _totalsDrillDownState.update { it.copy(isLoading = false, error = UiText.StringResource(R.string.home_error_unable_to_load_totals)) }
@@ -724,6 +736,7 @@ class HomeViewModel @Inject constructor(
     }
 
     fun drillDownToPeriod(period: PeriodTotal) {
+        yearTotalsJob?.cancel()
         viewModelScope.launch {
             _totalsDrillDownState.update { it.copy(isLoading = true) }
             try {
@@ -802,6 +815,7 @@ class HomeViewModel @Inject constructor(
             PeriodType.YEAR -> return // Already at top, can't go up
         }
 
+        yearTotalsJob?.cancel()
         viewModelScope.launch {
             _totalsDrillDownState.update { it.copy(isLoading = true) }
             try {

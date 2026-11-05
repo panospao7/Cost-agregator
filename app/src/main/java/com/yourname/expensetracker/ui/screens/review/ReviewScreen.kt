@@ -904,6 +904,7 @@ fun ReviewCard(
                         if (review.suggestedAmount != null) {
                             AmountText(
                                 amount = review.suggestedAmount,
+                                currency = review.suggestedCurrency,
                                 style = MaterialTheme.typography.headlineSmall,
                                 color = SemanticColors.TextPrimary
                             )
