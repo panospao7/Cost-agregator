@@ -264,7 +264,7 @@ class ReceiptParserTest {
     }
 
     @Test
-    fun `DR-09 reconciling discount adds exactly one negative adjustment and changes nothing else`() {
+    fun `DR-09 reconciling discount adds exactly one negative adjustment and only recomputes taxInclusive`() {
         val receipt = eurReceipt(tenAndFive, total = 12.0, discount = 3.0, tax = 1.2)
 
         val adjusted = receipt.withDiscountAdjustment()
@@ -278,7 +278,9 @@ class ReceiptParserTest {
         assertEquals(3, adjusted.lineItems.map { it.itemIndex }.toSet().size)
         assertEquals(MoneyAmount(12.0, eur), adjusted.total)
         assertEquals(MoneyAmount(1.2, eur), adjusted.tax)
-        assertEquals(receipt, adjusted.copy(lineItems = tenAndFive))
+        // Net items (10 + 5 - 3) now match the total, so taxInclusive is recomputed to true
+        // (strict review 2026-11-06: the first scan must agree with a reopen).
+        assertEquals(receipt.copy(taxInclusive = true), adjusted.copy(lineItems = tenAndFive))
     }
 
     @Test

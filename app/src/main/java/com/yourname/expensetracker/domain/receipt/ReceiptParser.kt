@@ -246,7 +246,12 @@ class ReceiptParser @Inject constructor(
                 itemIndex = (lineItems.maxOfOrNull { it.itemIndex } ?: -1) + 1,
                 isAdjustment = true
             )
-            return copy(lineItems = lineItems + adjustment)
+            val newItems = lineItems + adjustment
+            return copy(
+                lineItems = newItems,
+                taxInclusive = taxInclusive ||
+                    isTaxInclusive(totalValue.amount, tax?.amount, newItems, currency)
+            )
         }
     }
 
