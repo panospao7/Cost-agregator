@@ -1,5 +1,8 @@
 package com.yourname.expensetracker.domain.receipt
 
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -33,6 +36,64 @@ class ReceiptParserTaxInclusiveAdjustmentTest {
         val items = listOf(line("Item ten", 10.0), line("Item five", 5.0))
 
         assertFalse(ReceiptParser.isTaxInclusive(12.0, 1.0, items, "EUR"))
+    }
+
+    private fun receipt(
+        total: Double,
+        tax: Double?,
+        discount: Double?,
+        taxInclusive: Boolean = false
+    ) = ReceiptParser.ParsedReceipt(
+        merchantName = null,
+        total = MoneyAmount(total, CurrencyCode.EUR),
+        subtotal = null,
+        tax = tax?.let { MoneyAmount(it, CurrencyCode.EUR) },
+        date = null,
+        currency = "EUR",
+        lineItems = listOf(line("Item ten", 10.0), line("Item five", 5.0)),
+        confidence = 1.0f,
+        taxInclusive = taxInclusive,
+        discount = discount?.let { MoneyAmount(it, CurrencyCode.EUR) }
+    )
+
+    @Test
+    fun `withDiscountAdjustment sets taxInclusive consistent with recompute over adjusted items`() {
+        val adjusted = receipt(total = 12.0, tax = 1.0, discount = 3.0).withDiscountAdjustment()
+
+        assertEquals(3, adjusted.lineItems.size)
+        assertTrue(adjusted.lineItems.last().isAdjustment)
+        assertTrue(adjusted.taxInclusive)
+        assertEquals(
+            ReceiptParser.isTaxInclusive(12.0, 1.0, adjusted.lineItems, "EUR"),
+            adjusted.taxInclusive
+        )
+    }
+
+    @Test
+    fun `withDiscountAdjustment without tax amount stays not tax inclusive and matches recompute`() {
+        val adjusted = receipt(total = 12.0, tax = null, discount = 3.0).withDiscountAdjustment()
+
+        assertEquals(3, adjusted.lineItems.size)
+        assertFalse(adjusted.taxInclusive)
+        assertEquals(
+            ReceiptParser.isTaxInclusive(12.0, null, adjusted.lineItems, "EUR"),
+            adjusted.taxInclusive
+        )
+    }
+
+    @Test
+    fun `non reconciling discount returns receipt unchanged and keeps original taxInclusive`() {
+        // 10 + 5 - 3 = 12 differs from total 20, so the discount is ignored.
+        val notInclusive = receipt(total = 20.0, tax = 1.0, discount = 3.0, taxInclusive = false)
+        val unchangedFalse = notInclusive.withDiscountAdjustment()
+        assertEquals(notInclusive, unchangedFalse)
+        assertEquals(2, unchangedFalse.lineItems.size)
+        assertFalse(unchangedFalse.taxInclusive)
+
+        val inclusive = receipt(total = 20.0, tax = 1.0, discount = 3.0, taxInclusive = true)
+        val unchangedTrue = inclusive.withDiscountAdjustment()
+        assertEquals(inclusive, unchangedTrue)
+        assertTrue(unchangedTrue.taxInclusive)
     }
 
     @Test

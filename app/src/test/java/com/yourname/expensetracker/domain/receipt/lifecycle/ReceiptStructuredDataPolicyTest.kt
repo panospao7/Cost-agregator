@@ -82,6 +82,62 @@ class ReceiptStructuredDataPolicyTest {
     }
 
     @Test
+    fun `STORE_REDACTED drops adjustment items so no negative totalPrice is persisted`() {
+        val withAdjustment = listOf(
+            ReceiptParser.LineItem("Item ten", null, null, 10.0, itemIndex = 0),
+            ReceiptParser.LineItem("Item five", null, null, 5.0, itemIndex = 1),
+            ReceiptParser.LineItem("Discount", null, null, -3.0, itemIndex = 2, isAdjustment = true)
+        )
+        val persisted = ReceiptStructuredDataPolicy.persistedItems(
+            "[]", withAdjustment, "EUR", RawStorageMode.STORE_REDACTED
+        )
+        assertTrue(persisted != null)
+        val arr = JSONObject(persisted!!).getJSONArray("items")
+        assertEquals(2, arr.length())
+        assertEquals(10.0, arr.getJSONObject(0).getDouble("totalPrice"), 0.0)
+        assertEquals(5.0, arr.getJSONObject(1).getDouble("totalPrice"), 0.0)
+        for (i in 0 until arr.length()) {
+            assertTrue(arr.getJSONObject(i).getDouble("totalPrice") >= 0.0)
+        }
+    }
+
+    @Test
+    fun `STORE_REDACTED via parser JSON drops adjustment items`() {
+        val parserJson = """[
+            {"description":"Item ten","totalPrice":10.0,"itemIndex":0},
+            {"description":"Item five","totalPrice":5.0,"itemIndex":1},
+            {"description":"Discount","totalPrice":-3.0,"itemIndex":2,"isAdjustment":true}
+        ]"""
+        val persisted = ReceiptStructuredDataPolicy.persistedItemsFromParserJson(
+            parserJson, "EUR", RawStorageMode.STORE_REDACTED
+        )
+        assertTrue(persisted != null)
+        val arr = JSONObject(persisted!!).getJSONArray("items")
+        assertEquals(2, arr.length())
+        for (i in 0 until arr.length()) {
+            assertTrue(arr.getJSONObject(i).getDouble("totalPrice") > 0.0)
+        }
+    }
+
+    @Test
+    fun `STORE_REDACTED with only adjustment items persists null`() {
+        val onlyAdjustments = listOf(
+            ReceiptParser.LineItem("Discount", null, null, -3.0, itemIndex = 0, isAdjustment = true)
+        )
+        assertNull(
+            ReceiptStructuredDataPolicy.persistedItems(
+                "[]", onlyAdjustments, "EUR", RawStorageMode.STORE_REDACTED
+            )
+        )
+        assertNull(
+            ReceiptStructuredDataPolicy.persistedItemsFromParserJson(
+                """[{"description":"Discount","totalPrice":-3.0,"itemIndex":0,"isAdjustment":true}]""",
+                "EUR", RawStorageMode.STORE_REDACTED
+            )
+        )
+    }
+
+    @Test
     fun `restricted modes persist neither items nor merchant`() {
         for (mode in listOf(RawStorageMode.STORE_METADATA_ONLY, RawStorageMode.DO_NOT_STORE)) {
             assertNull(ReceiptStructuredDataPolicy.persistedItems(fullJson, items, "EUR", mode))

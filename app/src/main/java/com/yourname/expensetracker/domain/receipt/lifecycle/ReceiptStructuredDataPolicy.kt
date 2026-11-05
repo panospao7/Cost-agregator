@@ -67,10 +67,16 @@ object ReceiptStructuredDataPolicy {
             RawStorageMode.STORE_REDACTED -> items
                 ?.takeIf { it.isNotEmpty() }
                 ?.let { list ->
-                    redactedItemsJson(
-                        list.map { RedactedSourceItem(it.quantity, it.unitPrice, it.totalPrice) },
-                        currency
-                    )
+                    // Adjustment (discount) items are never persisted in redacted form:
+                    // a bare negative totalPrice without the isAdjustment flag is ambiguous.
+                    list.filterNot { it.isAdjustment }
+                        .takeIf { it.isNotEmpty() }
+                        ?.let { kept ->
+                            redactedItemsJson(
+                                kept.map { RedactedSourceItem(it.quantity, it.unitPrice, it.totalPrice) },
+                                currency
+                            )
+                        }
                 }
             RawStorageMode.STORE_METADATA_ONLY, RawStorageMode.DO_NOT_STORE -> null
         }
@@ -149,6 +155,7 @@ object ReceiptStructuredDataPolicy {
         val items = mutableListOf<RedactedSourceItem>()
         for (i in 0 until array.length()) {
             val obj = array.optJSONObject(i) ?: continue
+            if (obj.optBoolean("isAdjustment", false)) continue // adjustments never persisted redacted
             val total = if (obj.has("totalPrice")) obj.optDouble("totalPrice") else Double.NaN
             if (total.isNaN()) continue // no trustworthy price — nothing may be persisted
             items.add(
