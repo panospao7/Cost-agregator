@@ -15,6 +15,7 @@ import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import com.yourname.expensetracker.testAnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.toExpenseSnapshot
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -298,6 +299,89 @@ class NetCashflowBalanceProviderTest {
         }
 
         assertNull(provider.currentBalance("EUR"))
+    }
+
+    // ── Unconvertible rows: only an own WITHDRAWAL may block (REAL normalizer, no rate store entries) ──
+
+    private fun entity(
+        id: Long,
+        type: TransactionType,
+        currency: String,
+        amount: Double = 100.0,
+        isNotMine: Boolean = false
+    ): Expense = Expense(
+        id = id,
+        amount = amount,
+        merchant = "Synthetic $id",
+        transactionType = type,
+        date = now - 5 * TimePeriodUtils.DAY_IN_MILLIS,
+        categoryId = 1L,
+        currency = currency,
+        isNotMine = isNotMine
+    )
+
+    /** Provider wired to the REAL [AnalyticsCurrencyNormalizer]; the empty rate store converts nothing but identity. */
+    private fun providerWithRealNormalizer(rows: List<Expense>): NetCashflowBalanceProvider {
+        coEvery { expenseRepository.getExpensesBetween(ninetyDaysAgo, now) } returns rows
+        return NetCashflowBalanceProvider(
+            multiCurrencyRepository,
+            expenseRepository,
+            testAnalyticsCurrencyNormalizer(),
+            currencySettingsRepository,
+            FakeTimeProvider(now)
+        )
+    }
+
+    @Test
+    fun `non-vacuity - the unconvertible JPY row really fails conversion in the real normalizer`() = runTest {
+        val rows = listOf(
+            entity(1L, TransactionType.WITHDRAWAL, "EUR"),
+            entity(2L, TransactionType.TRANSFER, "JPY")
+        )
+
+        val result = testAnalyticsCurrencyNormalizer().normalizeExpenses(rows, "EUR")
+
+        // Unfiltered, the JPY transfer is excluded for a missing rate; this is the failure the provider must not inherit.
+        assertEquals(1, result.excludedCount)
+        assertEquals(1, result.includedExpenses.size)
+        assertEquals(1L, result.includedExpenses.single().id)
+        assertEquals(true, result.severeWarnings.isNotEmpty() || result.warnings.isNotEmpty())
+    }
+
+    @Test
+    fun `unconvertible TRANSFER plus convertible WITHDRAWAL returns a number not null`() = runTest {
+        val provider = providerWithRealNormalizer(
+            listOf(
+                entity(1L, TransactionType.WITHDRAWAL, "EUR", amount = 100.0),
+                entity(2L, TransactionType.TRANSFER, "JPY", amount = 5000.0)
+            )
+        )
+
+        // 1000 - 250.5 - 100 = 649.5; the JPY transfer is neutral and never reaches conversion.
+        assertEquals(649.5, provider.currentBalance("EUR")!!, 0.0)
+    }
+
+    @Test
+    fun `unconvertible WITHDRAWAL is unavailable not a number`() = runTest {
+        val rows = listOf(
+            entity(1L, TransactionType.WITHDRAWAL, "EUR", amount = 100.0),
+            entity(2L, TransactionType.WITHDRAWAL, "JPY", amount = 5000.0)
+        )
+        // Non-vacuity: the real normalizer excludes exactly the JPY withdrawal for conversion.
+        val direct = testAnalyticsCurrencyNormalizer().normalizeExpenses(rows, "EUR")
+        assertEquals(1, direct.excludedCount)
+
+        assertNull(providerWithRealNormalizer(rows).currentBalance("EUR"))
+    }
+
+    @Test
+    fun `unconvertible not-mine WITHDRAWAL does not block the figure`() = runTest {
+        val rows = listOf(
+            entity(1L, TransactionType.WITHDRAWAL, "EUR", amount = 100.0),
+            entity(2L, TransactionType.WITHDRAWAL, "JPY", amount = 5000.0, isNotMine = true)
+        )
+
+        assertEquals(649.5, providerWithRealNormalizer(rows).currentBalance("EUR")!!, 0.0)
     }
 
     // ── Cancellation propagates unchanged ───────────────────────────────────

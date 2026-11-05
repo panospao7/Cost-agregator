@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.forecasting
 
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
@@ -92,7 +93,11 @@ class NetCashflowBalanceProvider @Inject constructor(
     ): Pair<Double, Int>? {
         val normalized = CancellationSafe.runCatchingCancellable {
             analyticsCurrencyNormalizer.normalizeExpenses(
-                expenseRepository.getExpensesBetween(startDate, endDate),
+                // Only WITHDRAWAL rows may affect this total. Filter before normalizing so an
+                // unconvertible row of another type (for example a transfer with no rate) cannot
+                // exclude itself and withhold the forecast.
+                expenseRepository.getExpensesBetween(startDate, endDate)
+                    .filter { it.transactionType == TransactionType.WITHDRAWAL && !it.isNotMine },
                 homeCurrency
             )
         }.getOrNull() ?: return null

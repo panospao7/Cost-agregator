@@ -1222,7 +1222,7 @@ entries:
   operation: upsertUserCorrection
   barrierMode: helper
   reason: 'DR-04 EXACT_POLICY (owner item 138): barrier-checked genuine user category
-    correction -- @Upsert replaces the existing merchantPattern row so a seeded or
+    correction -- @Insert(onConflict = REPLACE) replaces the existing merchantPattern row so a seeded or
     auto-learned mapping cannot override the user''s choice, then invalidates the
     categorization caches; reached only via CategorizationEngine.correctMerchantCategory
     from the ExpenseRepository user category edit paths (seeding and auto-learning

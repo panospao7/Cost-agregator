@@ -509,6 +509,27 @@ private fun DailyCashFlowDetails(
             Spacer(modifier = Modifier.height(8.dp))
         }
 
+        // DR-01: group settlements are folded into the Income / Expenses totals above, so a
+        // settlement-only day needs its own line. Amounts are already in the home currency.
+        if (cashFlow.groupSettlementIncome > 0.0 || cashFlow.groupSettlementOutflow > 0.0) {
+            Text(text = "Group settlements", fontWeight = FontWeight.SemiBold)
+            if (cashFlow.groupSettlementIncome > 0.0) {
+                Text(
+                    text = "• Settlement received: +${CurrencyFormatter.formatMoney(cashFlow.groupSettlementIncome, homeCurrency)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (cashFlow.groupSettlementOutflow > 0.0) {
+                Text(
+                    text = "• Settlement paid: -${CurrencyFormatter.formatMoney(cashFlow.groupSettlementOutflow, homeCurrency)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+
         if (cashFlow.predictedRecurring.isNotEmpty()) {
             Text(text = "Recurring items", fontWeight = FontWeight.SemiBold)
             cashFlow.predictedRecurring.take(3).forEach { recurring ->

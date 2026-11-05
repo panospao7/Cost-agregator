@@ -356,4 +356,55 @@ class MerchantCategoryCorrectionDr04Test {
         assertEquals(groceries, runBlocking { dao.getCategoryForMerchant(other.merchantPattern) }!!.categoryId)
         assertEquals(dining, classify("lidl"))
     }
+
+    // ---- Re-correcting the row that is already the best match must not lower its ranking ----
+
+    /** Seeds "LIDL" at 1,000,000 and "Lidl" at 1,000,001 (same canonical name, both Groceries). */
+    private fun seedUpperAndTitleCaseLidl() = runBlocking {
+        val base = engine.createMerchantCategoryMapping("lidl", groceries)
+        val upper = base.copy(merchantPattern = "LIDL", confidence = 1.0f, timesUsed = 1_000_000)
+        val title = base.copy(merchantPattern = "Lidl", confidence = 1.0f, timesUsed = 1_000_001)
+        assertEquals("precondition: shared canonical name", "lidl", upper.normalizedCanonicalName)
+        assertTrue(repository.insert(upper) is MerchantCategoryInsertResult.Inserted)
+        assertTrue(repository.insert(title) is MerchantCategoryInsertResult.Inserted)
+        engine.invalidateAllCaches()
+        assertEquals(
+            "precondition: correcting 'Lidl' targets the stored 'Lidl' key",
+            "Lidl",
+            engine.createMerchantCategoryMapping("Lidl", dining).merchantPattern
+        )
+        assertEquals("precondition: Lidl (1,000,001) is the best rival", "Lidl", lookupByCanonical("lidl")!!.merchantPattern)
+    }
+
+    @Test
+    fun DR04_reCorrectingBestRow_keepsItsTimesUsed_andItStillWinsTheDaoLookup() {
+        seedUpperAndTitleCaseLidl()
+
+        runBlocking { engine.correctMerchantCategory("Lidl", dining) }
+
+        val title = runBlocking { dao.getCategoryForMerchant("Lidl") }!!
+        val upper = runBlocking { dao.getCategoryForMerchant("LIDL") }!!
+        assertEquals("best row keeps 1,000,001, never reset to 1,000,000", 1_000_001, title.timesUsed)
+        assertEquals(dining, title.categoryId)
+        assertEquals("rival row untouched", 1_000_000, upper.timesUsed)
+        assertEquals(groceries, upper.categoryId)
+        assertEquals("Lidl", lookupByCanonical("lidl")!!.merchantPattern)
+        assertEquals(dining, lookupByCanonical("lidl")!!.categoryId)
+        assertEquals(2, runBlocking { dao.getCount() })
+    }
+
+    @Test
+    fun DR04_reCorrectingBestRowTwice_staysAt1000001_andLatestCategoryWins() {
+        seedUpperAndTitleCaseLidl()
+
+        runBlocking { engine.correctMerchantCategory("Lidl", dining) }
+        runBlocking { engine.correctMerchantCategory("Lidl", transport) }
+
+        val title = runBlocking { dao.getCategoryForMerchant("Lidl") }!!
+        assertEquals(1_000_001, title.timesUsed)
+        assertEquals(transport, title.categoryId)
+        assertEquals(transport, lookupByCanonical("lidl")!!.categoryId)
+        assertEquals(transport, classify("Lidl"))
+        assertEquals(2, runBlocking { dao.getCount() })
+    }
 }
