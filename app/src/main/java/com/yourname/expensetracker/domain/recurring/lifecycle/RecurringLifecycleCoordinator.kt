@@ -1244,14 +1244,21 @@ class RecurringLifecycleCoordinator @Inject constructor(
      * atomic [updateOccurrenceStatus] path, which cancels the open planned row and
      * suppresses open reminders in one transaction.
      *
-     * @return `true` when an occurrence with the key exists and the skip was applied;
-     *   `false` when no occurrence has this key (nothing written).
-     * @throws IllegalArgumentException (transition policy, via `require`) when the occurrence is not skippable
-     *   (for example already PAID or MISSED).
+     * Only PLANNED (and idempotently SKIPPED) occurrences are skippable under the transition
+     * policy. Any other status (PAID, CANCELLED, MISSED, IGNORED, ...) is left untouched.
+     *
+     * @return `true` when an occurrence with the key exists in PLANNED or SKIPPED status and the
+     *   skip was applied; `false` (nothing written) when no occurrence has this key or the
+     *   occurrence is in any other status, so the caller may delete the planned row directly.
      */
     suspend fun skipOccurrenceByKey(occurrenceKey: String): Boolean {
         writeBarrier.checkWritesAllowed("RecurringLifecycleCoordinator.skipOccurrenceByKey")
         val occurrence = occurrenceDao.getByKey(occurrenceKey) ?: return false
+        if (occurrence.status != RecurringOccurrenceStatus.PLANNED.dbValue &&
+            occurrence.status != RecurringOccurrenceStatus.SKIPPED.dbValue
+        ) {
+            return false
+        }
         updateOccurrenceStatus(
             occurrence.id,
             RecurringOccurrenceStatus.SKIPPED,

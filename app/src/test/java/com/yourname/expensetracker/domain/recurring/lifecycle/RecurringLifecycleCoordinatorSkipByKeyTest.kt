@@ -33,8 +33,8 @@ import kotlin.time.Duration.Companion.seconds
  * P-04-2: [RecurringLifecycleCoordinator.skipOccurrenceByKey] resolves an occurrence by its key
  * and routes through the existing atomic status path: occurrence SKIPPED, open planned row
  * CANCELLED, open reminders suppressed, one OCCURRENCE_SKIPPED lifecycle event. An unknown key
- * returns false and writes nothing; a non-skippable (PAID) occurrence is refused with nothing
- * written.
+ * returns false and writes nothing; an occurrence that is neither PLANNED nor SKIPPED (PAID, MISSED,
+ * CANCELLED, IGNORED) also returns false with nothing written, so the caller deletes the row.
  */
 class RecurringLifecycleCoordinatorSkipByKeyTest {
 
@@ -165,27 +165,56 @@ class RecurringLifecycleCoordinatorSkipByKeyTest {
             verifyNothingWritten()
         }
 
+    private suspend fun assertNonSkippableReturnsFalseAndWritesNothing(
+        occurrenceStatus: String,
+        plannedStatus: String
+    ) {
+        coEvery { occurrenceDao.getByKey(key) } returns occurrence(occurrenceStatus)
+        coEvery { occurrenceDao.getById(10L) } returns occurrence(occurrenceStatus)
+        coEvery { plannedExpenseDao.getBySourceOccurrenceKey(key) } returns planned(plannedStatus)
+
+        val skipped = coordinator.skipOccurrenceByKey(key)
+
+        assertFalse(skipped)
+        verifyNothingWritten()
+    }
+
     @Test
-    fun `P-04-2 skipOccurrenceByKey refuses a PAID occurrence and writes nothing`() =
+    fun `P-04-2 skipOccurrenceByKey returns false for a PAID occurrence and writes nothing`() =
         runTest(timeout = 60.seconds) {
-            coEvery { occurrenceDao.getByKey(key) } returns occurrence("PAID")
-            coEvery { occurrenceDao.getById(10L) } returns occurrence("PAID")
-            coEvery { plannedExpenseDao.getBySourceOccurrenceKey(key) } returns planned("FULFILLED")
-
-            assertFailsWith<IllegalArgumentException> { coordinator.skipOccurrenceByKey(key) }
-
-            verifyNothingWritten()
+            assertNonSkippableReturnsFalseAndWritesNothing("PAID", "FULFILLED")
         }
 
     @Test
-    fun `P-04-2 skipOccurrenceByKey refuses a MISSED occurrence and writes nothing`() =
+    fun `P-04-2 skipOccurrenceByKey returns false for a MISSED occurrence and writes nothing`() =
         runTest(timeout = 60.seconds) {
-            coEvery { occurrenceDao.getByKey(key) } returns occurrence("MISSED")
-            coEvery { occurrenceDao.getById(10L) } returns occurrence("MISSED")
+            assertNonSkippableReturnsFalseAndWritesNothing("MISSED", "PLANNED")
+        }
 
-            assertFailsWith<IllegalArgumentException> { coordinator.skipOccurrenceByKey(key) }
+    @Test
+    fun `P-04-2 skipOccurrenceByKey returns false for a CANCELLED occurrence and writes nothing`() =
+        runTest(timeout = 60.seconds) {
+            assertNonSkippableReturnsFalseAndWritesNothing("CANCELLED", "CANCELLED")
+        }
 
-            verifyNothingWritten()
+    @Test
+    fun `P-04-2 skipOccurrenceByKey returns false for an IGNORED occurrence and writes nothing`() =
+        runTest(timeout = 60.seconds) {
+            assertNonSkippableReturnsFalseAndWritesNothing("IGNORED", "PLANNED")
+        }
+
+    @Test
+    fun `P-04-2 skipOccurrenceByKey on an already SKIPPED occurrence is idempotent and returns true`() =
+        runTest(timeout = 60.seconds) {
+            coEvery { occurrenceDao.getByKey(key) } returns occurrence("SKIPPED")
+            coEvery { occurrenceDao.getById(10L) } returns occurrence("SKIPPED")
+            coEvery { plannedExpenseDao.getBySourceOccurrenceKey(key) } returns planned("CANCELLED")
+
+            val skipped = coordinator.skipOccurrenceByKey(key)
+
+            assertTrue(skipped)
+            coVerify(exactly = 1) { occurrenceDao.updateStatus(listOf(10L), "SKIPPED", now) }
+            coVerify(exactly = 0) { plannedExpenseDao.updateStatus(any(), any(), any()) }
         }
 
     @Test
