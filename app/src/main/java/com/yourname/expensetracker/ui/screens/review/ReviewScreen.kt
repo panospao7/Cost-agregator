@@ -501,7 +501,8 @@ fun ReviewScreen(
                             finalLongitude = lon,
                             finalAddress = address,
                             finalPlaceId = osmId,
-                            finalCurrency = currency
+                            finalCurrency = currency,
+                            aiPrefilledCategoryId = editPrefillCategoryId
                         )
                         // S6-005: Dialog closes via editApproveSuccess LaunchedEffect, not here
                     },

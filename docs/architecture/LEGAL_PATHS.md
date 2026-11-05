@@ -1484,12 +1484,14 @@ LEARN merchant category (user feedback):
 CORRECT merchant category (DR-04, genuine user category edit only):
   → ExpenseRepository.updateExpenseCategory (only when the category actually changes) / updateExpenseCategoryBulk,
     or ReviewQueueRepository.approveReview (user changed a non-null suggested category; post-commit, best effort,
-    failure never fails the approval, cancellation rethrown; null/unchanged suggestion, auto-accept and parser do not correct)
+    failure never fails the approval, cancellation rethrown; null/unchanged suggestion, auto-accept and parser do not correct;
+    a quick approve and an AI category suggestion saved untouched do not correct)
   → MerchantCategoryRepository.correctPattern → CategorizationEngine.correctMerchantCategory(merchantName, categoryId)
   → Same merchantPattern key as learnMerchantCategory (merchantNormalizer canonical name)
   → MerchantCategoryRepository.upsertUserCorrection (DatabaseWriteBarrier check, MerchantCategoryDao @Insert(onConflict = REPLACE),
     invalidates all caches) REPLACES a seeded or auto-learned row for that key
-  → Bulk edit corrects the one merchant key once, not once per row
+  → A bulk category edit corrects the one merchant key once; approve-all-identical corrects once per approved review,
+    all on the same key with the same category, so the result is the same
   → NOT called from TransactionSideEffectPlanner (fires on any trusted edit even if the category is unchanged)
 
 DEBUG categorize:

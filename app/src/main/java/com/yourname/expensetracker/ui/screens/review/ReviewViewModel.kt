@@ -468,8 +468,12 @@ class ReviewViewModel @Inject constructor(
         finalLongitude: Double? = null,
         finalAddress: String? = null,
         finalPlaceId: String? = null,
-        finalCurrency: String? = null
+        finalCurrency: String? = null,
+        aiPrefilledCategoryId: Long? = null
     ) {
+        // An untouched AI prefill Saved as-is is the AI's choice, not a user correction. A
+        // receipt-only prefill does not set the id, so it stays a user pick.
+        val categoryChosenByUser = finalCategoryId != aiPrefilledCategoryId || aiPrefilledCategoryId == null
         viewModelScope.launch {
             if (!beginMutation(reviewId, "edit")) return@launch // S6-003: idempotency guard
             try {
@@ -481,7 +485,7 @@ class ReviewViewModel @Inject constructor(
                     finalAmount = finalAmount,
                     finalMerchant = finalMerchant,
                     finalCategoryId = finalCategoryId,
-                    categoryChosenByUser = true,
+                    categoryChosenByUser = categoryChosenByUser,
                     finalDate = finalDate,
                     finalType = finalType,
                     finalCurrency = finalCurrency,
@@ -553,7 +557,7 @@ class ReviewViewModel @Inject constructor(
                                      finalAmount = null, // Keep original amounts for identical transactions
                                      finalMerchant = finalMerchant,
                                      finalCategoryId = finalCategoryId,
-                                     categoryChosenByUser = true,
+                                     categoryChosenByUser = categoryChosenByUser,
                                      finalDate = finalDate,
                                      finalType = finalType,
                                      // S6-D5-005: Pass transfer metadata and location-clear to bulk approvals

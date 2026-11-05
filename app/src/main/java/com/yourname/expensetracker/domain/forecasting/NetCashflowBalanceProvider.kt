@@ -4,6 +4,7 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.dao.CurrentUserSettlementRow
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.GroupCashFlowReader
+import com.yourname.expensetracker.data.repository.GroupCashFlowSnapshot
 import com.yourname.expensetracker.domain.cashflow.GroupCashFlowRule
 import com.yourname.expensetracker.domain.core.money.ConversionOutcome
 import com.yourname.expensetracker.domain.core.money.RateBasis
@@ -70,7 +71,15 @@ class NetCashflowBalanceProvider @Inject constructor(
             return null
         }
 
-        val withdrawals = withdrawalTotalOrNull(ninetyDaysAgo, now, homeCurrency)
+        // One group snapshot feeds both the withdrawal total and the adjustment, so they agree on
+        // which rows are non-payer or payer. A failed read is unavailable (null), never zero.
+        val groupSnapshot = groupCashFlowReader.read(ninetyDaysAgo, now, "NetCashflowBalanceProvider.currentBalance")
+        if (groupSnapshot.anyReadFailed) {
+            Timber.w("NET_CASHFLOW_BALANCE_UNAVAILABLE reason=GROUP_ADJUSTMENT_UNAVAILABLE")
+            return null
+        }
+
+        val withdrawals = withdrawalTotalOrNull(ninetyDaysAgo, now, homeCurrency, groupSnapshot)
         if (withdrawals == null) {
             Timber.w("NET_CASHFLOW_BALANCE_UNAVAILABLE reason=WITHDRAWALS_UNAVAILABLE")
             return null
@@ -78,8 +87,11 @@ class NetCashflowBalanceProvider @Inject constructor(
 
         // DR-01: agree with CashFlowCalculator's group rule. The totals above count a non-payer
         // row at its share and a payer row at its share; cash flow drops the former and counts the
-        // latter at the full paid amount, and settlements are the cash event. Any failure is null.
-        val groupAdjustment = groupAdjustmentOrNull(ninetyDaysAgo, now, homeCurrency)
+        // latter at the full paid amount, and settlements are the cash event. Basis: purchases are
+        // adjusted at LATEST rates (their totals' basis), withdrawals are already handled at date
+        // rates inside the withdrawal total (not adjusted here), settlements at LATEST rates.
+        // Any failure is null.
+        val groupAdjustment = groupAdjustmentOrNull(ninetyDaysAgo, now, homeCurrency, groupSnapshot)
         if (groupAdjustment == null) {
             Timber.w("NET_CASHFLOW_BALANCE_UNAVAILABLE reason=GROUP_ADJUSTMENT_UNAVAILABLE")
             return null
@@ -107,11 +119,18 @@ class NetCashflowBalanceProvider @Inject constructor(
     /**
      * Home-currency withdrawal total and row count, or null when the read fails or any row
      * cannot be converted.
+     *
+     * Rate basis: withdrawals are totalled at DATE rates (via the normalizer) and the group rule is
+     * applied here, entirely, so [groupAdjustmentOrNull] does not touch withdrawals. Per
+     * [GroupCashFlowRule], NON_PAYER withdrawal rows are removed, PAYER rows count at the full paid
+     * amount, REGULAR rows are unchanged. The rule is applied before the not-mine filter and before
+     * normalizing, so a dropped non-payer row with no rate cannot withhold the balance.
      */
     private suspend fun withdrawalTotalOrNull(
         startDate: Long,
         endDate: Long,
-        homeCurrency: String
+        homeCurrency: String,
+        snapshot: GroupCashFlowSnapshot
     ): Pair<Double, Int>? {
         val normalized = CancellationSafe.runCatchingCancellable {
             analyticsCurrencyNormalizer.normalizeExpenses(
@@ -119,7 +138,17 @@ class NetCashflowBalanceProvider @Inject constructor(
                 // unconvertible row of another type (for example a transfer with no rate) cannot
                 // exclude itself and withhold the forecast.
                 expenseRepository.getExpensesBetween(startDate, endDate)
-                    .filter { it.transactionType == TransactionType.WITHDRAWAL && !it.isNotMine },
+                    .filter { it.transactionType == TransactionType.WITHDRAWAL }
+                    .mapNotNull { row ->
+                        when (
+                            GroupCashFlowRule.classify(row.id, snapshot.nonPayerExpenseIds, snapshot.payerExpenseIds)
+                        ) {
+                            GroupCashFlowRule.RowClass.NON_PAYER -> null
+                            GroupCashFlowRule.RowClass.PAYER -> GroupCashFlowRule.asFullAmountCopy(row)
+                            else -> row
+                        }
+                    }
+                    .filter { !it.isNotMine },
                 homeCurrency
             )
         }.getOrNull() ?: return null
@@ -141,20 +170,25 @@ class NetCashflowBalanceProvider @Inject constructor(
     /**
      * Net home-currency change to the plain totals so they match [GroupCashFlowRule]:
      * + converted share of non-payer rows (dropped from cash flow), - (converted full amount minus
-     * converted share) of payer rows, + received settlements, - paid settlements. Only PURCHASE and
-     * WITHDRAWAL rows are in the totals, so only those are adjusted. Same half-open window as the
-     * totals and the group reads. Null when any read fails or any row or settlement cannot be
-     * converted (never treated as zero).
+     * converted share) of payer rows, + received settlements, - paid settlements. Only PURCHASE
+     * rows are adjusted here: withdrawals are handled entirely in [withdrawalTotalOrNull] at date
+     * rates. Same half-open window as the totals and the group reads. Null when any row or
+     * settlement cannot be converted (never treated as zero). The snapshot is read once by the
+     * caller and its failure is handled there.
      *
-     * Rate basis: the plain totals (getHomeCurrencyPurchaseTotal / DepositTotal) convert every
+     * Rate basis: the plain purchase total (getHomeCurrencyPurchaseTotal) converts every
      * per-currency bucket at the LATEST available rate. The add-back MUST use that same basis, or a
      * non-payer share of $1000 (latest 1.00, date rate 0.90) is included at EUR 1000 but removed at
-     * EUR 900, leaving a phantom EUR 100 outflow. So payer and non-payer rows, and settlements
-     * (added to a net made of latest-rate totals), are all converted at LATEST_AVAILABLE here.
+     * EUR 900, leaving a phantom EUR 100 outflow. So purchases are adjusted at LATEST_AVAILABLE
+     * (their totals' basis), withdrawals at date rates in the withdrawal total, and settlements
+     * (added to a net made of latest-rate totals) at LATEST_AVAILABLE.
      */
-    private suspend fun groupAdjustmentOrNull(startDate: Long, endDate: Long, homeCurrency: String): GroupAdjustment? {
-        val snapshot = groupCashFlowReader.read(startDate, endDate, "NetCashflowBalanceProvider.currentBalance")
-        if (snapshot.anyReadFailed) return null
+    private suspend fun groupAdjustmentOrNull(
+        startDate: Long,
+        endDate: Long,
+        homeCurrency: String,
+        snapshot: GroupCashFlowSnapshot
+    ): GroupAdjustment? {
         if (snapshot.nonPayerExpenseIds.isEmpty() && snapshot.payerExpenseIds.isEmpty() &&
             snapshot.settlements.isEmpty()
         ) {
@@ -164,19 +198,17 @@ class NetCashflowBalanceProvider @Inject constructor(
             expenseRepository.getExpensesBetween(startDate, endDate)
         }.getOrNull() ?: return null
 
-        val inTotals = rows.filter {
-            it.transactionType == TransactionType.PURCHASE || it.transactionType == TransactionType.WITHDRAWAL
-        }
+        val inTotals = rows.filter { it.transactionType == TransactionType.PURCHASE }
         val nonPayerRows = inTotals.filter {
             GroupCashFlowRule.classify(it.id, snapshot.nonPayerExpenseIds, snapshot.payerExpenseIds) ==
                 GroupCashFlowRule.RowClass.NON_PAYER
         }
         val nonPayerShare = convertedEffectiveTotalOrNull(nonPayerRows, homeCurrency) ?: return null
-        // Non-payer rows that the plain totals counted as cash rows (same predicate as the totals:
-        // not-mine rows are never counted, and a spending-excluded PURCHASE is never counted).
+        // Non-payer PURCHASE rows that the plain totals counted as cash rows (same predicate as the
+        // totals: not-mine rows are never counted, and a spending-excluded PURCHASE is never
+        // counted). Non-payer withdrawals never enter the withdrawal row count.
         val removedCashRowCount = nonPayerRows.count {
-            !it.isNotMine &&
-                (it.transactionType != TransactionType.PURCHASE || it.spendingExclusionReason == null)
+            !it.isNotMine && it.spendingExclusionReason == null
         }
         val payerRows = inTotals.filter {
             GroupCashFlowRule.classify(it.id, snapshot.nonPayerExpenseIds, snapshot.payerExpenseIds) ==
@@ -213,8 +245,17 @@ class NetCashflowBalanceProvider @Inject constructor(
         homeCurrency: String
     ): Double? {
         if (rows.isEmpty()) return 0.0
-        val byCurrency = rows.groupBy { it.currency.uppercase() }
-            .mapValues { (_, group) -> group.sumOf { it.effectiveAmount } }
+        // Per-currency sums go through MoneyAggregateBuilder (same-currency bucket, home-currency
+        // label only for the builder). A throw is unavailable (null); cancellation is rethrown.
+        val byCurrency = CancellationSafe.runCatchingCancellable {
+            rows.groupBy { it.currency.uppercase() }
+                .mapValues { (currency, group) ->
+                    MoneyAggregateBuilder.fromHomeCurrencyAmounts(
+                        amounts = group.map { it.effectiveAmount },
+                        homeCurrency = currency
+                    ).displayAmount
+                }
+        }.getOrNull() ?: return null
         var total = 0.0
         for ((currency, amount) in byCurrency) {
             total += latestHomeAmountOrNull(amount, currency, homeCurrency) ?: return null

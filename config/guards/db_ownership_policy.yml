@@ -2505,6 +2505,7 @@ entries:
   - Double?
   - String?
   - String?
+  - Boolean
   daoAccessor: pendingReviewDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.PendingReviewDao
   operation: transitionStatus
@@ -2534,6 +2535,7 @@ entries:
   - Double?
   - String?
   - String?
+  - Boolean
   daoAccessor: pendingReviewDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.PendingReviewDao
   operation: updateStatus
@@ -2562,6 +2564,7 @@ entries:
   - Double?
   - String?
   - String?
+  - Boolean
   daoAccessor: rawNotificationDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.RawNotificationDao
   operation: markRelevance
@@ -2590,6 +2593,7 @@ entries:
   - Double?
   - String?
   - String?
+  - Boolean
   daoAccessor: sourceStatsDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
   operation: decrementPending
@@ -2618,6 +2622,7 @@ entries:
   - Double?
   - String?
   - String?
+  - Boolean
   daoAccessor: sourceStatsDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
   operation: incrementAccepted
@@ -2646,6 +2651,7 @@ entries:
   - Double?
   - String?
   - String?
+  - Boolean
   daoAccessor: sourceStatsDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
   operation: incrementDuplicate
@@ -2674,6 +2680,7 @@ entries:
   - Double?
   - String?
   - String?
+  - Boolean
   daoAccessor: userCorrectionDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.UserCorrectionDao
   operation: insert
