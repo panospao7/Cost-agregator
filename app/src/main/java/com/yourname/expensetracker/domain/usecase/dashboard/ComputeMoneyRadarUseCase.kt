@@ -192,7 +192,12 @@ class ComputeMoneyRadarUseCase @Inject constructor(
             budgetRiskScore * WEIGHT_BUDGET_RISK
         ).toInt()
         
-        val urgencyScore = rawScore.coerceIn(0, 100)
+        // HIGH/CRITICAL budget risk floors at YELLOW (budget weighs max 30 = GREEN); never RED, as an unlinked paid bill can be double counted.
+        val budgetFloor = when (budgetRisk?.riskTier) {
+            RiskTier.HIGH, RiskTier.CRITICAL -> GREEN_THRESHOLD + 1
+            else -> 0
+        }
+        val urgencyScore = maxOf(rawScore, budgetFloor).coerceIn(0, 100)
         val urgencyLevel = when {
             urgencyScore <= GREEN_THRESHOLD -> UrgencyLevel.GREEN
             urgencyScore <= YELLOW_THRESHOLD -> UrgencyLevel.YELLOW

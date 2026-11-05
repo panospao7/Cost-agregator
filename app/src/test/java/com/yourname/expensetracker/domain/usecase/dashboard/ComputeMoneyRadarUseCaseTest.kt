@@ -653,6 +653,100 @@ class ComputeMoneyRadarUseCaseTest {
         assertTrue(highRisk.urgencyLevel >= lowRisk.urgencyLevel)
     }
 
+    private fun stubBudgetRiskOnly(tier: RiskTier?, anomalies: List<AnomalyAlertRecord> = emptyList()) {
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns emptyList()
+        coEvery { anomalyAlertRepository.getActiveAlerts() } returns anomalies
+        if (tier == null) {
+            every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
+            return
+        }
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(1000.0)))
+        coEvery { expenseRepository.getExpensesSince(any()) } returns listOf(
+            expense(300.0, TransactionType.PURCHASE, now - dayMs)
+        )
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
+            expense(1000.0, TransactionType.DEPOSIT, now - dayMs)
+        )
+        val mcResult = monteCarloResult(probabilityUnderBudget = 0.2)
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any()) } returns mcResult
+        every { getMonteCarloBudgetImpact(1000.0, mcResult) } returns Result.Success(
+            MonteCarloBudgetImpact(
+                budgetAmount = 1000.0,
+                p50Forecast = 1150.0,
+                expectedOverrun = if (tier == RiskTier.CRITICAL) 150.0 else 0.0,
+                probabilityOfOverrun = 0.80,
+                riskTier = tier
+            )
+        )
+    }
+
+    @Test
+    fun `critical budget risk alone floors at 31 YELLOW and never RED`() = runTest {
+        stubBudgetRiskOnly(RiskTier.CRITICAL)
+
+        val result = useCase.compute()
+
+        // Budget part: min(100, 80+10+20) * 0.3 = 30, which would be GREEN without the floor.
+        assertEquals(31, result.urgencyScore)
+        assertEquals(UrgencyLevel.YELLOW, result.urgencyLevel)
+    }
+
+    @Test
+    fun `high budget risk alone floors at 31 YELLOW`() = runTest {
+        stubBudgetRiskOnly(RiskTier.HIGH)
+
+        val result = useCase.compute()
+
+        // Budget part: (80+0+10) * 0.3 = 27, floored to 31.
+        assertEquals(31, result.urgencyScore)
+        assertEquals(UrgencyLevel.YELLOW, result.urgencyLevel)
+    }
+
+    @Test
+    fun `medium budget risk alone is not floored`() = runTest {
+        stubBudgetRiskOnly(RiskTier.MEDIUM)
+
+        val result = useCase.compute()
+
+        // Budget part: (80+0+5) * 0.3 = 25.
+        assertEquals(25, result.urgencyScore)
+        assertEquals(UrgencyLevel.GREEN, result.urgencyLevel)
+    }
+
+    @Test
+    fun `weighted score above the floor is kept with critical budget risk`() = runTest {
+        stubBudgetRiskOnly(
+            RiskTier.CRITICAL,
+            anomalies = listOf(
+                anomaly("Odd Coffee", 8.0, now - dayMs),
+                anomaly("Unknown Charge", 120.0, now - 2 * dayMs)
+            )
+        )
+
+        val result = useCase.compute()
+
+        // Anomalies 60*0.3 = 18 plus budget 30 = 48, above the floor of 31.
+        assertEquals(48, result.urgencyScore)
+        assertEquals(UrgencyLevel.YELLOW, result.urgencyLevel)
+    }
+
+    @Test
+    fun `null budget risk is not floored`() = runTest {
+        stubBudgetRiskOnly(
+            null,
+            anomalies = listOf(
+                anomaly("Odd Coffee", 8.0, now - dayMs),
+                anomaly("Unknown Charge", 120.0, now - 2 * dayMs)
+            )
+        )
+
+        val result = useCase.compute()
+
+        assertNull(result.budgetRisk)
+        assertEquals(18, result.urgencyScore)
+        assertEquals(UrgencyLevel.GREEN, result.urgencyLevel)
+    }
+
     @Test
     fun `compute formats string placeholder reason with scalar merchant arg`() = runTest {
         coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
