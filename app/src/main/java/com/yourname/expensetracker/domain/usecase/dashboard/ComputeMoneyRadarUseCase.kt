@@ -196,7 +196,9 @@ class ComputeMoneyRadarUseCase @Inject constructor(
             budgetRiskScore * WEIGHT_BUDGET_RISK
         ).toInt()
         
-        val urgencyScore = rawScore.coerceIn(0, 100)
+        // P-05-5: the budget part alone weighs at most 30, which is still GREEN, so a certain
+        // overrun could never leave GREEN. The tier sets a floor; score and level stay in step.
+        val urgencyScore = rawScore.coerceIn(0, 100).coerceAtLeast(budgetRiskScoreFloor(budgetRisk))
         val urgencyLevel = when {
             urgencyScore <= GREEN_THRESHOLD -> UrgencyLevel.GREEN
             urgencyScore <= YELLOW_THRESHOLD -> UrgencyLevel.YELLOW
@@ -230,6 +232,12 @@ class ComputeMoneyRadarUseCase @Inject constructor(
      * other than a non-positive limit.
      */
     private class BudgetRiskOutcome(val info: BudgetRiskInfo?, val budgetUnknown: Boolean)
+
+    private fun budgetRiskScoreFloor(budgetRisk: BudgetRiskInfo?): Int = when (budgetRisk?.riskTier) {
+        RiskTier.CRITICAL -> YELLOW_THRESHOLD + 1
+        RiskTier.HIGH -> GREEN_THRESHOLD + 1
+        else -> 0
+    }
 
     /**
      * Get bills due within the next 7 days from recurring patterns.
