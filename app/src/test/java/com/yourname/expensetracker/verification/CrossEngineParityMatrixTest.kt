@@ -1072,10 +1072,14 @@ class CrossEngineParityMatrixTest : AnalyticsEngineTestBase() {
             now
         )
         val historyRig = rigFor(history)
-        // STRICT budget repository (not relaxed): the only call the forecast may make is the
-        // period-end spend aggregate, delegated to the rig's real-aggregate stub. Any other
+        // STRICT budget repository (not relaxed): the only calls the forecast may make are the status
+        // read for the effective limit (P-06-2) and the period-end spend aggregate, delegated to the
+        // rig's real-aggregate stub. Any other
         // BudgetRepository call throws instead of silently returning a relaxed default.
         val strictBudgetRepository = mockk<BudgetRepository>()
+        coEvery { strictBudgetRepository.getBudgetStatusAt(any(), any()) } answers {
+            com.yourname.expensetracker.testfixtures.completeBudgetStatus(firstArg())
+        }
         coEvery {
             strictBudgetRepository.getCurrentPeriodPurchaseSpendAtPeriodEnd(any(), any(), any(), any())
         } coAnswers {
