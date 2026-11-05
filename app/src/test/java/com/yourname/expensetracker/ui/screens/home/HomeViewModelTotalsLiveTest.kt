@@ -258,6 +258,21 @@ class HomeViewModelTotalsLiveTest {
     }
 
     @Test
+    fun `a dashboard reload on a past year month list keeps that year`() {
+        val vm = checkNotNull(viewModel)
+        val past = MutableStateFlow(listOf(month(2025, 11, 180.0)))
+        every { engine.getMonthlyTotals(2025) } returns past
+        vm.drillDownToPeriod(year(2025))
+        assertEquals(PeriodType.MONTH, vm.totalsDrillDownState.value.currentLevel)
+
+        vm.reloadDashboard()
+
+        verify(atLeast = 2) { engine.getMonthlyTotals(2025) }
+        verify(exactly = 1) { engine.getMonthlyTotals(1970) } // init load only
+        assertEquals(180.0, vm.totalsDrillDownState.value.periodTotals.single().total, 0.001)
+    }
+
+    @Test
     fun `an in-flight drill that finishes late does not overwrite a newer year load`() {
         val vm = checkNotNull(viewModel)
         val weeklyGate = MutableSharedFlow<List<PeriodTotal>>()

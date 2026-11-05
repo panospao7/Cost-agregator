@@ -514,8 +514,13 @@ class HomeViewModel @Inject constructor(
             loadCategoryTrends()
             // Trigger a totals reload if we have drill-down state
             if (_totalsDrillDownState.value.periodTotals.isNotEmpty()) {
-                val currentYear = TimePeriodUtils.getYear(timeProvider.now())
-                loadTotalsForYear(currentYear)
+                // A month list of a past year keeps that year, so rows match the summary above them.
+                val state = _totalsDrillDownState.value
+                val year = state.selectedPeriod
+                    ?.takeIf { state.currentLevel == PeriodType.MONTH }
+                    ?.let { parseYear(it.periodKey) }
+                    ?: TimePeriodUtils.getYear(timeProvider.now())
+                loadTotalsForYear(year)
             }
         }
     }
