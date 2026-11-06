@@ -164,21 +164,14 @@ class MarkRecurringBillPaidUseCase @Inject constructor(
     /**
      * FC-PAID-UNLINKED INV-12: the user confirmed that [expenseId] pays [occurrenceId] of [ruleId].
      * Runs under the same per-rule [Mutex] as mark-paid, so the two cannot race (AE-28). The
-     * occurrence must belong to [ruleId]; the pair itself is re-validated inside the link
-     * transaction by [RecurringLifecycleCoordinator.confirmPaymentLink].
+     * occurrence must belong to [ruleId]; that ownership check and the pair re-validation both run
+     * inside the link transaction (behind the write barrier) in
+     * [RecurringLifecycleCoordinator.confirmPaymentLink], which receives [ruleId].
      */
     suspend fun linkExistingPayment(ruleId: Long, occurrenceId: Long, expenseId: Long): PaymentLinkConfirmResult =
         lockFor(ruleId).withLock {
             try {
-                val occurrence = occurrenceCoordinator.getOccurrenceById(occurrenceId)
-                if (occurrence == null ||
-                    occurrence.sourceType != RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE ||
-                    occurrence.sourceId != ruleId
-                ) {
-                    PaymentLinkConfirmResult.NoLongerValid
-                } else {
-                    occurrenceCoordinator.confirmPaymentLink(expenseId, occurrenceId)
-                }
+                occurrenceCoordinator.confirmPaymentLink(ruleId, expenseId, occurrenceId)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -193,15 +186,7 @@ class MarkRecurringBillPaidUseCase @Inject constructor(
     suspend fun declinePayment(ruleId: Long, occurrenceId: Long, expenseId: Long): PaymentLinkDeclineResult =
         lockFor(ruleId).withLock {
             try {
-                val occurrence = occurrenceCoordinator.getOccurrenceById(occurrenceId)
-                if (occurrence == null ||
-                    occurrence.sourceType != RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE ||
-                    occurrence.sourceId != ruleId
-                ) {
-                    PaymentLinkDeclineResult.NoLongerValid
-                } else {
-                    occurrenceCoordinator.declinePaymentLink(expenseId, occurrenceId)
-                }
+                occurrenceCoordinator.declinePaymentLink(ruleId, expenseId, occurrenceId)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
