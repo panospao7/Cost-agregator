@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.ai.provider
 
 import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiServiceError
 import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.model.AiRoute
@@ -63,7 +64,10 @@ class HybridDedupeJudgeService @Inject constructor(
             AiRoute.ON_DEVICE -> {
                 val primary = safeExecute("on-device") { onDeviceDedupeJudgeService.judge(input) }
                 if (primary is AiServiceResult.Success) return primary
-                // AI-5: On-device failed — fall back to cloud
+                // Privacy: an explicit ON_DEVICE preference never falls back to cloud
+                // (mirrors DefaultAiCapabilityRouter.chooseOnDevicePreferred); fail closed.
+                if (settings.preferredMode != AiMode.AUTO) return primary
+                // AI-5: On-device failed under AUTO — fall back to cloud
                 Timber.w("HybridDedupeJudge: on-device failed (${errorMessage(primary)}), falling back to cloud")
                 val fallback = safeExecute("cloud") { cloudDedupeJudgeService.judge(input) }
                 if (fallback is AiServiceResult.Success) fallback else primary
