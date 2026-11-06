@@ -325,6 +325,25 @@ class MainScreenCallSiteTest {
     }
 
     @Test
+    fun p013_theAppsToSkipBranchRendersOneScreenThatOnlyNavigatesBack_andOnlyThePrivacyScreenOpensIt() {
+        val text = sanitized(mainActivityFile)
+        val branch = Regex("""is\s+NavigationDestination\.AppsToSkip\s*->\s*\{""").find(text)
+        assertNotNull("MainActivity must render AppsToSkip", branch)
+        val open = branch!!.range.last
+        val body = text.substring(open + 1, matching(text, open, '{', '}'))
+        assertEquals(1, Regex("""\bAppsToSkipScreen\s*\(""").findAll(body).count())
+        assertTrue(Regex("""onNavigateBack\s*=\s*\{\s*navigation\.navigateBack\(\)\s*\}""").containsMatchIn(body))
+        // Navigation only: the branch never opens another destination or touches the repository.
+        assertFalse("AppsToSkip branch must not navigate onward", body.contains("navigateTo"))
+        assertFalse("AppsToSkip branch must not touch a repository", body.contains("epository"))
+        // Exactly one place opens the screen: the privacy settings callback.
+        assertEquals(
+            1,
+            Regex("""navigateTo\(\s*NavigationDestination\.AppsToSkip\s*\)""").findAll(text).count()
+        )
+    }
+
+    @Test
     fun uf46_restoreVerificationNoticeIsConsumedExactlyOnce_afterTheOperationalLockEarlyReturns() {
         val text = sanitized(mainActivityFile)
         val consume = Regex("""restoreVerificationNoticeStore\s*\.\s*consume\s*\(""").findAll(text).toList()
