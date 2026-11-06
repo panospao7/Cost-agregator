@@ -760,6 +760,15 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             throw e
         } catch (e: Exception) {
             CancellationSafe.rethrowIfCancellation(e)
+            // P-03-4: generic failure leaves this attempt's asset uncommitted (no orphan
+            // sweeper); cleanup is reference-checked and best-effort, result unchanged.
+            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                assetCleanupCoordinator.cleanupUncommittedAsset(
+                    path = uncommittedAssetPath,
+                    attemptId = correlationId,
+                    reason = "INSERT_FAILED"
+                )
+            }
             Timber.e(e, "processReceiptInput failed")
             Result.failure(e)
         }

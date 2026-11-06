@@ -285,22 +285,30 @@ class ExportAnonymizer @Inject constructor() {
             null
         )
         val count = cursor.use { if (it.moveToFirst()) it.getInt(0) else 0 }
-        if (count == 0) return 0
+        if (count > 0) {
+            db.execSQL(
+                """
+                UPDATE notification_intake SET
+                    title = NULL,
+                    text = NULL,
+                    bigText = NULL,
+                    subText = NULL,
+                    extrasJson = NULL
+                WHERE title IS NOT NULL OR text IS NOT NULL OR bigText IS NOT NULL
+                    OR subText IS NOT NULL OR extrasJson IS NOT NULL
+                """.trimIndent()
+            )
+            Timber.d("$TAG: Nulled raw content in $count notification_intake rows")
+        }
 
-        db.execSQL(
-            """
-            UPDATE notification_intake SET
-                title = NULL,
-                text = NULL,
-                bigText = NULL,
-                subText = NULL,
-                extrasJson = NULL
-            WHERE title IS NOT NULL OR text IS NOT NULL OR bigText IS NOT NULL
-                OR subText IS NOT NULL OR extrasJson IS NOT NULL
-            """.trimIndent()
+        // P-01-4: encrypted transient payload (ciphertext/nonce/version) must not survive
+        // an anonymized export either. Each column is guarded by columnExists for older schemas.
+        val transientCount = nullifyColumnsWhereSet(
+            db,
+            "notification_intake",
+            listOf("transientPayloadCiphertext", "transientPayloadNonce", "transientPayloadVersion")
         )
-        Timber.d("$TAG: Nulled raw content in $count notification_intake rows")
-        return count
+        return maxOf(count, transientCount)
     }
 
     /**
