@@ -16,7 +16,8 @@ The signatures candidate
 ``config/guards/db_ownership_policy.signatures.candidate.yml`` is a valid
 v2 document (``schemaVersion: 2``).  Post-GR-08 (and post-GR-14c truth
 sync, 2026-09-06) it carried the 475 entries; post-GR-14h Pattern E
-removals plus the GR-14u34 dead-writer singles (2026-09-11) plus the GR-14u35..u37 removals it carries the 407 entries
+removals plus the GR-14u34 dead-writer singles (2026-09-11) plus the GR-14u35..u37 removals it carried 407 entries, and after the 1.0.4
+category delete/rename (owner item 144) it carries the 406 entries
 of the activated v2 policy (one entry per canonical mutation key); the v2
 loader must accept it with zero errors.
 
@@ -87,9 +88,11 @@ def test_archived_v1_policy_rejected_by_v2_loader():
 
 
 def test_candidate_signatures_accepted_by_v2_loader():
-    """The tracked signatures candidate is a valid v2 document with 407 entries.
+    """The tracked signatures candidate is a valid v2 document with 406 entries.
 
-    Derivation of the 407 pin: the candidate is the activation artifact that
+    Derivation of the 406 pin (407 post-GR-14u37, minus the removed legacy
+    CategoryRepository.deleteCategory/delete call site -- 1.0.4 category
+    delete/rename, owner item 144): the candidate is the activation artifact that
     was promoted over the active path (by the since-retired promote CLI),
     so it carries the same entries as the activated v2 policy document
     ``config/guards/db_ownership_policy.yml`` — 475 entries post-GR-08,
@@ -114,8 +117,8 @@ def test_candidate_signatures_accepted_by_v2_loader():
     assert document is not None, (
         "tracked signatures candidate must be accepted by the v2 loader"
     )
-    assert len(document) == 407, (
-        "candidate must carry exactly the 407 current signature entries"
+    assert len(document) == 406, (
+        "candidate must carry exactly the 406 current signature entries"
     )
     assert not errors, "acceptance must report zero errors"
 

@@ -123,46 +123,70 @@ fun CsvImportCard(viewModel: CsvImportViewModel = hiltViewModel()) {
 
                 is CsvImportUiState.Importing -> ImportingContent(s, onCancel = viewModel::cancelImport)
 
-                is CsvImportUiState.Result -> StatusContent(onDismiss = viewModel::dismiss) {
-                    val resources = LocalContext.current.resources
-                    Text(
-                        text = stringResource(R.string.csv_import_result_title),
-                        style = MaterialTheme.typography.titleSmall,
-                        color = SemanticColors.TextPrimary,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = resources.getQuantityString(R.plurals.csv_import_result_imported, s.imported, s.imported),
-                        color = SemanticColors.TextSecondary
-                    )
-                    Text(
-                        text = resources.getQuantityString(R.plurals.csv_import_result_duplicates, s.duplicates, s.duplicates),
-                        color = SemanticColors.TextSecondary
-                    )
-                    Text(
-                        text = resources.getQuantityString(R.plurals.csv_import_result_failed, s.failed, s.failed),
-                        color = SemanticColors.TextSecondary
-                    )
+                is CsvImportUiState.Result -> {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite },
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        val resources = LocalContext.current.resources
+                        Text(
+                            text = stringResource(R.string.csv_import_result_title),
+                            style = MaterialTheme.typography.titleSmall,
+                            color = SemanticColors.TextPrimary,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = resources.getQuantityString(R.plurals.csv_import_result_imported, s.imported, s.imported),
+                            color = SemanticColors.TextSecondary
+                        )
+                        Text(
+                            text = resources.getQuantityString(R.plurals.csv_import_result_duplicates, s.duplicates, s.duplicates),
+                            color = SemanticColors.TextSecondary
+                        )
+                        Text(
+                            text = resources.getQuantityString(R.plurals.csv_import_result_failed, s.failed, s.failed),
+                            color = SemanticColors.TextSecondary
+                        )
+                    }
+                    StatusDismissButton(onDismiss = viewModel::dismiss)
                 }
 
-                is CsvImportUiState.Cancelled -> StatusContent(onDismiss = viewModel::dismiss) {
-                    Text(
-                        text = LocalContext.current.resources.getQuantityString(
-                            R.plurals.csv_import_cancelled, s.processedRows, s.processedRows
-                        ),
-                        color = SemanticColors.TextSecondary
-                    )
+                is CsvImportUiState.Cancelled -> {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite },
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = LocalContext.current.resources.getQuantityString(
+                                R.plurals.csv_import_cancelled, s.processedRows, s.processedRows
+                            ),
+                            color = SemanticColors.TextSecondary
+                        )
+                    }
+                    StatusDismissButton(onDismiss = viewModel::dismiss)
                 }
 
-                is CsvImportUiState.Error -> StatusContent(onDismiss = viewModel::dismiss) {
-                    Text(text = errorText(s.error), color = MaterialTheme.colorScheme.error)
+                is CsvImportUiState.Error -> {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite },
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(text = errorText(s.error), color = MaterialTheme.colorScheme.error)
+                    }
+                    StatusDismissButton(onDismiss = viewModel::dismiss)
                 }
 
-                is CsvImportUiState.WriteBlocked -> StatusContent(onDismiss = viewModel::dismiss) {
-                    Text(
-                        text = stringResource(R.string.ui_write_blocked_maintenance),
-                        color = MaterialTheme.colorScheme.error
-                    )
+                is CsvImportUiState.WriteBlocked -> {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite },
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = stringResource(R.string.ui_write_blocked_maintenance),
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                    StatusDismissButton(onDismiss = viewModel::dismiss)
                 }
             }
         }
@@ -220,13 +244,7 @@ private fun ImportingContent(state: CsvImportUiState.Importing, onCancel: () -> 
 }
 
 @Composable
-private fun StatusContent(onDismiss: () -> Unit, content: @Composable () -> Unit) {
-    Column(
-        modifier = Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite },
-        verticalArrangement = Arrangement.spacedBy(4.dp)
-    ) {
-        content()
-    }
+private fun StatusDismissButton(onDismiss: () -> Unit) {
     Spacer(modifier = Modifier.height(8.dp))
     Button(
         onClick = onDismiss,

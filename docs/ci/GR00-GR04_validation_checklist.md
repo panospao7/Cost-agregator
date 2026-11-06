@@ -134,9 +134,9 @@ git diff cf07b04b~1 --exit-code -- config/baselines/db_access.json config/guards
 | --- | --- |
 | Active DB gate | authoritative-v2, trusted exit 0 (clean) / exit 1 (real findings); v1 archived at db_ownership_policy.legacy.yml; ratchet v2 live (empty baseline). Post-GR-05 real tree (Revision 2): accepted — exit 0, trusted, 0 findings, 20 x DB_SIGNATURE_UNRESOLVED advisory |
 | Inventory-only | exit 2 on Windows pre-existing debt, trusted-equivalent to base |
-| Migration | exit 1 resolved=57/99 unresolved=42 (fold truth) |
+| Migration | exit 1 input=93 resolved=54 unresolved=39 (fold truth; 1.0.4 category delete/rename, owner item 144: 55/38 -> 54/39) |
 | Meta-guard | exit 0 |
-| Candidate | v2 472 entries byte-reproducible |
+| Candidate | v2 406 entries byte-reproducible (54 fold-resolved + 352 reviewed seeds; 1.0.4: 407 -> 406) |
 | Structural pin | 64 retained (60 expected + 4 fixtures) |
 | Test-result freshness | optional stamp row (PR-GR-10f): SKIP when never stamped (non-blocking); PASS when the stamp matches HEAD, is within max age, and no XML is newer than it; FAIL on stale/SHA drift |
 

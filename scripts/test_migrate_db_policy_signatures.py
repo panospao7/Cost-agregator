@@ -1567,12 +1567,16 @@ def test_real_run_distribution_pinned_and_reproducible(
 ):
     """Pin the reviewed September 27 unseeded migration truth.
 
-    Current fixed contract: 93 legacy inputs, 55 unique candidate keys,
-    38 unresolved records, 45 keeper indexes, and 55 RESOLVED accounting
+    Current fixed contract: 93 legacy inputs, 54 unique candidate keys,
+    39 unresolved records, 44 keeper indexes, and 54 RESOLVED accounting
     records. The ten folded indexes are pinned below. This derivation is
     backed by the retained real-run report and tracked accounting, not a
     relaxed range or a new authorization. The seeded artifact adds the
-    unchanged 352 reviewed seed rows, giving 407 candidate entries.
+    unchanged 352 reviewed seed rows, giving 406 candidate entries.
+    (1.0.4 category delete/rename, owner item 144: the sole-carrier legacy
+    CategoryRepository.deleteCategory/delete call site was removed -- now
+    reassignAndDeleteCategory with exact active rows -- fold 55/38->54/39,
+    keepers 45->44, candidate 407->406.)
 
     Historical derivation follows. Its 53/40/43 figures describe the
     superseded pre-repair pin, not the current assertions above/below.
@@ -1701,8 +1705,8 @@ def test_real_run_distribution_pinned_and_reproducible(
     payload = json.loads(report.read_text(encoding="utf-8"))
     counts = payload["counts"]
     assert counts["input"] == 93
-    assert counts["resolved"] == 55
-    assert counts["unresolved"] == 38
+    assert counts["resolved"] == 54
+    assert counts["unresolved"] == 39
     assert counts["seeds"] == 0
     assert payload["duplicateMutationKeys"] == []
     document, errors = load_policy_v2(candidate)
@@ -1713,10 +1717,10 @@ def test_real_run_distribution_pinned_and_reproducible(
     candidate_keys = {
         entry.mutation_key().canonical_key() for entry in document
     }
-    assert len(candidate_keys) == len(document) == 55
+    assert len(candidate_keys) == len(document) == 54
     assert counts["resolved"] == len(document)
     # Folded same-key indices keep NO resolved report row. The current
-    # 55 RESOLVED accounting indexes comprise 45 keepers and ten exact
+    # 54 RESOLVED accounting indexes comprise 44 keepers and ten exact
     # folded indexes, whose identity and crosswalk are pinned below.
     report_resolved_indexes = {
         row["index"] for row in payload["resolved"]
@@ -1725,7 +1729,7 @@ def test_real_run_distribution_pinned_and_reproducible(
         row["index"] for row in payload["unresolved"]
     }
     assert not (report_resolved_indexes & report_unresolved_indexes)
-    assert len(report_resolved_indexes) == 45
+    assert len(report_resolved_indexes) == 44
     # The accounting records tie EVERY legacy index to exactly one outcome.
     records = payload["accounting"]["records"]
     assert len(records) == 93
@@ -1741,8 +1745,8 @@ def test_real_run_distribution_pinned_and_reproducible(
     }
     assert not (resolved_indexes & unresolved_indexes)
     assert resolved_indexes | unresolved_indexes == set(range(93))
-    assert len(resolved_indexes) == 55
-    assert len(unresolved_indexes) == 38
+    assert len(resolved_indexes) == 54
+    assert len(unresolved_indexes) == 39
     assert report_resolved_indexes <= resolved_indexes
     assert resolved_indexes - report_resolved_indexes == {
         15, 18, 19, 22, 23, 24, 25, 26, 37, 38,
@@ -3447,7 +3451,9 @@ def test_verify_report_distribution_matches_accounting_records(
     (97/54/44 -> 93/55/38) and the later tranches settled the tracked
     pair at a 407-entry candidate with the 55/38/45 distribution
     (regenerated 2026-09-20 after the GR-14u51b hand-edit had left the
-    accounting digests stale).
+    accounting digests stale).  1.0.4 category delete/rename (owner item
+    144) removed the sole-carrier legacy deleteCategory/delete call site:
+    406-entry candidate, 54/39/44 distribution.
     """
     completed = tracked_verify["completed"]
     assert completed.returncode == 0, completed.stderr
@@ -3464,9 +3470,9 @@ def test_verify_report_distribution_matches_accounting_records(
         == records_distribution
     )
     assert records_distribution == {
-        "resolved": 55,
-        "unresolved": 38,
-        "keeper": 45,
+        "resolved": 54,
+        "unresolved": 39,
+        "keeper": 44,
     }
 
 
