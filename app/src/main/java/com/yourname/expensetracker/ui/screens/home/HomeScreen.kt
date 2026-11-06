@@ -831,6 +831,8 @@ fun HomeScreen(
                         showCategoryBreakdown = true
                     },
                     currency = homeCurrency ?: "",
+                    error = totalsState.error?.asString(LocalContext.current),
+                    onRetry = { viewModel.reloadCurrentTotalsLevel() },
                     modifier = Modifier.fillMaxWidth()
                 )
                                 } else {

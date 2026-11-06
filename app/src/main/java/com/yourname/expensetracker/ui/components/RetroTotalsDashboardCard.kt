@@ -67,7 +67,9 @@ fun RetroTotalsDashboardCard(
     onViewAnalysis: (PeriodTotal) -> Unit,
     modifier: Modifier = Modifier,
     /** Placeholder default. Production callers should pass explicit currency. */
-    currency: String = "EUR"
+    currency: String = "EUR",
+    error: String? = null,
+    onRetry: (() -> Unit)? = null
 ) {
     var showStageDialog by remember { mutableStateOf<PeriodTotal?>(null) }
     
@@ -104,6 +106,32 @@ fun RetroTotalsDashboardCard(
                     .fillMaxWidth()
                     .padding(16.dp)
             ) {
+                // Error state with Retry, mirroring the modern TotalsDashboardCard
+                if (error != null) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = error,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = RetroColorsTotals.NeonRed,
+                            modifier = Modifier.weight(1f)
+                        )
+                        if (onRetry != null) {
+                            TextButton(onClick = onRetry) {
+                                Text(
+                                    stringResource(R.string.error_try_again),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = RetroColorsTotals.NeonCyan
+                                )
+                            }
+                        }
+                    }
+                }
+
                 // Arcade header
                 RetroTotalsHeader(
                     currentLevel = currentLevel,
