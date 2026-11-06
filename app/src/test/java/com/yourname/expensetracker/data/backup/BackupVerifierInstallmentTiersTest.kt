@@ -152,7 +152,11 @@ class BackupVerifierInstallmentTiersTest {
     fun INV30_expectedCountsAfterMigration_keeps_a_count_already_present_in_the_manifest() {
         val counts = mapOf("installment_plans" to 2, "installment_entries" to 6)
 
-        assertEquals(counts, BackupVerifier.expectedCountsAfterMigration(counts, 151))
+        // A 151 source legitimately seeds the refund link table at zero; the installment counts stay as recorded.
+        assertEquals(
+            counts + ("expense_refund_links" to 0),
+            BackupVerifier.expectedCountsAfterMigration(counts, 151)
+        )
     }
 
     // ── real databases ───────────────────────────────────────────

@@ -873,8 +873,11 @@ class BackupVerifierManifestTest {
             val db = createAllTablesDatabase()
             try {
                 db.execSQL("INSERT INTO \"$table\" (id) VALUES (1)")
-                val exact = BackupVerifier.requiredManifestTables(databaseVersion = 152)
-                    .associateWith { 0 } + (table to 1)
+                // Real restore flow: counts pass through the migration step (seeds expense_refund_links) before verify.
+                val exact = BackupVerifier.expectedCountsAfterMigration(
+                    BackupVerifier.requiredManifestTables(databaseVersion = 152).associateWith { 0 } + (table to 1),
+                    152
+                )
                 // Control: exact count passes.
                 val ok = BackupVerifier.verify(db, exact)
                 assertTrue("$table: ${ok.errors}", ok.passed)
@@ -906,8 +909,12 @@ class BackupVerifierManifestTest {
             } finally {
                 db.close()
             }
-            val exact = BackupVerifier.requiredManifestTables(databaseVersion = 152)
-                .associateWith { 0 } + ("investment_transactions" to 1)
+            // Real restore flow: counts pass through the migration step (seeds expense_refund_links) before verify.
+            val exact = BackupVerifier.expectedCountsAfterMigration(
+                BackupVerifier.requiredManifestTables(databaseVersion = 152).associateWith { 0 } +
+                    ("investment_transactions" to 1),
+                152
+            )
             BackupVerifier.verifyQuick(file, exact)
 
             val thrown = assertThrows(BackupVerifier.CountMismatchException::class.java) {
