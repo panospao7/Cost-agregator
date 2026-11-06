@@ -804,7 +804,8 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
     # allowlist and no baseline.  Every aggregate @Query over the expenses table
     # in a production data/database/dao file must either reference a qualified
     # SpendingInclusionSql constant or carry a bounded `// spending-exempt:
-    # <REASON>` marker; dedupe-marked queries must not reference it.
+    # <REASON>` marker; dedupe-marked queries must not reference it.  Rule 04
+    # (I-04-5) pins the @RawQuery builders in the required input below.
     # Legal-path anchor: docs/architecture/LEGAL_PATHS.md ("Installment Plan
     # Mutations", ENFORCEMENT).
     "spending_predicate_usage": {
@@ -816,14 +817,20 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
         "allowlist": None,
         "policies": None,
         "description": "Spending predicate usage in DAO aggregate queries "
-                       "(G-SPENDING-PREDICATE-01..03, INV-1/INV-8) — fails closed "
+                       "(G-SPENDING-PREDICATE-01..04, INV-1/INV-8) — fails closed "
                        "when a @Query in a production data/database/dao file "
                        "aggregates (SUM/AVG/TOTAL/COUNT/MIN/MAX) over the expenses "
                        "table without a qualified SpendingInclusionSql reference "
                        "or a '// spending-exempt: <REASON>' marker; also fails on "
                        "an unknown reason, an orphan marker, a marker combined with "
                        "a SpendingInclusionSql reference, and a DEDUPE_* marked "
-                       "query that references it; an empty DAO surface exits 2",
+                       "query that references it; Rule 04 (I-04-5) also fails "
+                       "when a SimpleSQLiteQuery builder site or @RawQuery DAO "
+                       "method is not pinned in config/guards/"
+                       "spending_raw_query_builders.yml, a pinned selectClause "
+                       "literal changes, a pin is stale, or the builder count "
+                       "differs; an empty DAO surface or a missing/malformed pin "
+                       "file exits 2",
         "execution": {
             "engine": "python-direct",
             "entrypoint": "scripts/verify_spending_predicate_usage.py",
@@ -831,9 +838,9 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
             "mode": "blocking",
             "ruleIds": (
                 "G-SPENDING-PREDICATE-01", "G-SPENDING-PREDICATE-02",
-                "G-SPENDING-PREDICATE-03",
+                "G-SPENDING-PREDICATE-03", "G-SPENDING-PREDICATE-04",
             ),
-            "requiredInputs": (),
+            "requiredInputs": ("config/guards/spending_raw_query_builders.yml",),
             "timeoutProfile": "standard",
             "outputContract": "stdout-human;exit:0=pass,1=violation,2=infra",
             "testManifest": ("scripts/test_verify_spending_predicate_usage.py",),
