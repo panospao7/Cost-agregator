@@ -1198,7 +1198,35 @@ class TransactionClassifierTest {
     }
 
     @Test
-    fun `J-03-1 onRawStorageModeChanged purge is idempotent`() = runBlocking<Unit> {
+    fun `J-03-1 a purge between the train mode read and the lock adds no sample and writes no file`() = runBlocking<Unit> {
+        val dir = createTempDir("classifier_j031_train_race")
+        val privacy = SwitchablePrivacy()
+        val subject = trainedAndPersisted(dir, passthroughCrypto(), privacy)
+
+        // Deterministic interleaving: the read returns STORE_RAW, then the eager purge runs to
+        // completion before train() reaches mutex.withLock.
+        var armed = true
+        coEvery { privacy.repo.getLoadState() } coAnswers {
+            val state = PrivacySettingsLoadState.Loaded(
+                PrivacySettings(rawNotificationStorageMode = RawStorageMode.STORE_RAW)
+            )
+            if (armed) {
+                armed = false
+                subject.onRawStorageModeChanged(RawStorageMode.DO_NOT_STORE)
+            }
+            state
+        }
+
+        subject.train("Payment of 88.10 EUR at racetrain", isTransaction = true)
+        subject.onBackground() // awaited save; must not recreate the model
+
+        assertPurged("train raced with purge", subject, dir)
+        subject.destroy()
+        assertFalse("no model file after the raced train", modelFileIn(dir).exists())
+    }
+
+    @Test
+    fun `J-03-1 onRawStorageModeChanged purge is idempotent`()= runBlocking<Unit> {
         val dir = createTempDir("classifier_j031_hook_idem")
         val privacy = SwitchablePrivacy()
         val subject = trainedAndPersisted(dir, passthroughCrypto(), privacy)

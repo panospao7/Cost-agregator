@@ -417,6 +417,25 @@ class RecurringAutoLinkWindowLinkTest {
         assertEquals("PLANNED", occurrenceDao.getById(later)!!.status)
     }
 
+    @Test
+    fun `DR-11 first come wins - a late link is not displaced by a later same-day expense`() =
+        runTest(timeout = 60.seconds) {
+            seedRule(frequency = RecurrenceFrequency.WEEKLY)
+            val occ = seedOccurrence(DUE, frequency = "WEEKLY")
+            val lateFirst = seedExpense(DUE.plusDays(2))
+            val sameDayLater = seedExpense(DUE)
+
+            assertTrue(lifecycle.linkExpenseToOccurrence(lateFirst))
+            // The occurrence is already linked: the exact-day expense finds no target and no
+            // displacement happens, even though it is nearer to the due date.
+            assertFalse(lifecycle.linkExpenseToOccurrence(sameDayLater))
+
+            assertEquals(occ, linkedOccurrenceOf(lateFirst))
+            assertNull(linkedOccurrenceOf(sameDayLater))
+            assertEquals(lateFirst, occurrenceDao.getById(occ)!!.linkedExpenseId)
+            assertEquals("PAID", occurrenceDao.getById(occ)!!.status)
+        }
+
     // ── keep-check after an expense update ──────────────────────────────────
 
     @Test

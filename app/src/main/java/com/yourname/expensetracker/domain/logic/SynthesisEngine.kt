@@ -263,9 +263,11 @@ class SynthesisEngine @Inject constructor(
         }
         
         // FC-HIGH-CONF-UNDERCOUNT follow-up: a detected-only pattern (id == null) that shares merchant
-        // key and frequency with a rule-backed pattern (id != null) is already represented by that
-        // rule's confirmed occurrences, even when the amounts differ (15.49 vs 15.00). Drop it once,
-        // up front, so committed, likely and the baseline subtraction all agree.
+        // key, frequency and currency with a rule-backed pattern (id != null), and whose amount is
+        // within SHADOW_AMOUNT_TOLERANCE (20%) of the rule's, is already represented by that rule's
+        // confirmed occurrences (a re-priced 15.49 vs 15.00 is dropped; a different obligation at
+        // the same merchant is kept). Drop it once, up front, so committed, likely and the
+        // baseline subtraction all agree.
         val effectiveRecurringPatterns = dropDetectedShadowedByRules(recurringPatterns)
 
         // G-TIME-01: derive calendar fields from the injected TimeProvider instant

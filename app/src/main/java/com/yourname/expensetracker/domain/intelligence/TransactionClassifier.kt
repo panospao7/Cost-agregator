@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.ln
@@ -129,6 +130,13 @@ open class TransactionClassifier @Inject constructor(
 
     /** J-03-1: set by [purgeModelState]; blocks model persistence until STORE_RAW training resumes. */
     @Volatile private var persistenceBlocked = false
+
+    /**
+     * Incremented at the start of every [purgeModelState]. [train] captures it before reading the
+     * raw-storage mode and skips if it changed by the time it holds the lock, so a purge that runs
+     * between the mode read and the lock can never be followed by a stale training sample.
+     */
+    private val purgeGeneration = AtomicLong(0L)
 
     /** Set to true when a legacy plaintext model file was loaded and needs re-saving (encrypted). */
     private var legacyFileMigrated = false
@@ -244,6 +252,7 @@ open class TransactionClassifier @Inject constructor(
      * purged, [persistenceBlocked] short-circuits repeated calls until STORE_RAW training resumes.
      */
     private suspend fun purgeModelState() {
+        purgeGeneration.incrementAndGet()
         // Deadlock guard: the dispatcher switch happens BEFORE the lock is taken, and nothing
         // inside the lock suspends. A Main caller blocked in onBackground()'s runBlocking can
         // therefore never wait on a lock holder that needs Main to resume.
@@ -301,6 +310,8 @@ open class TransactionClassifier @Inject constructor(
     }
 
     suspend fun train(text: String, isTransaction: Boolean) {
+        // Captured BEFORE the mode read: a purge between the read and the lock bumps it.
+        val generationAtRead = purgeGeneration.get()
         val mode = readRawStorageMode() ?: return
         if (mode != RawStorageMode.STORE_RAW) {
             Timber.d("Classifier training skipped: reason=raw_storage_not_store_raw")
@@ -310,14 +321,23 @@ open class TransactionClassifier @Inject constructor(
         // Deadlock guard: switch to IO BEFORE queuing for the lock, and nothing inside the lock
         // suspends. A Main caller queued here while retrain holds the lock would otherwise be
         // granted the lock on Main after onBackground()'s runBlocking (also on Main) queued behind it.
-        val newStats: ClassifierStats = withContext(Dispatchers.IO) {
+        val newStats: ClassifierStats? = withContext(Dispatchers.IO) {
             mutex.withLock {
-                val features = extractFeatures(text)
-                addTrainingSample(features, isTransaction)
-                val stats = getStatsInternal()
-                scheduleSave()
-                stats
+                if (purgeGeneration.get() != generationAtRead) {
+                    // A purge ran after the mode read: the STORE_RAW decision is stale.
+                    null
+                } else {
+                    val features = extractFeatures(text)
+                    addTrainingSample(features, isTransaction)
+                    val stats = getStatsInternal()
+                    scheduleSave()
+                    stats
+                }
             }
+        }
+        if (newStats == null) {
+            Timber.d("Classifier training skipped: reason=purged_during_train")
+            return
         }
         // Emit outside lock to prevent potential deadlock
         _stats.value = newStats

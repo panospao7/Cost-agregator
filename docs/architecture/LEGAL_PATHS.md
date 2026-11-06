@@ -482,6 +482,7 @@ LINK expense to occurrence:
 
   → A CLAIMED automatic link advances the rule's next date through RecurringRuleLifecycleCoordinator.advanceNextDate() (best effort, after the claim transaction; it only moves forward; one horizon top-up first when no open occurrence exists, as in mark-paid).
   Known limitation: after relinking or deleting the expense the original occurrence returns to PLANNED and the rule's next date stays advanced, the same as mark-paid.
+  Auto-link window (DR-11): a RECURRING_RULE occurrence accepts an expense on its due day or inside a period-bounded window (weekly 1 day early / 2 late, biweekly and monthly 1 / 3, irregular or unresolved period same-day only); every other source stays same-day. With several candidates the nearest due day wins, a tie goes to the earlier due date. First-come-wins, no displacement: once an occurrence is claimed it is no longer PLANNED, so a later expense, even one nearer the due date, gets no target and never takes over the link.
 
 LINK expense to a SPECIFIC occurrence (R21 S1):
   → RecurringLifecycleCoordinator.linkExpenseToSpecificOccurrence(occurrenceId, expenseId, source) -> SpecificLinkResult (shares claimLinkSuppressInWrite with the automatic link; bounded `source` code, one occurrence per expense)
