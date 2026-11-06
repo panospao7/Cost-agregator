@@ -15,8 +15,12 @@ import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.forecasting.FinancialStressForecastEngine
 import com.yourname.expensetracker.domain.forecasting.ForecastInputAssembler
+import com.yourname.expensetracker.domain.forecasting.ConfidenceLevel
+import com.yourname.expensetracker.domain.forecasting.MonteCarloResult
 import com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator
 import com.yourname.expensetracker.domain.forecasting.NormalizedForecastInput
+import com.yourname.expensetracker.domain.forecasting.SimulationConfidence
+import com.yourname.expensetracker.domain.forecasting.SimulationMetadata
 import com.yourname.expensetracker.domain.forecasting.StressForecastResult
 import com.yourname.expensetracker.domain.forecasting.StressHorizon
 import com.yourname.expensetracker.domain.forecasting.StressRiskLevel
@@ -45,6 +49,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -78,7 +83,18 @@ class BudgetSurfaceAgreementTest {
     /** Budget argument of every Monte Carlo simulate() call, in call order. */
     private val simulatedBudgetAmounts = mutableListOf<Double?>()
 
+    /** Argument of every ComputeMoneyRadarUseCase.compute() call, in call order. */
+    private val radarInputs = mutableListOf<RadarBudgetInput>()
+
+    /**
+     * When true the simulator returns a deterministic result carrying the limit it was given, so
+     * the Home card exists; when false it returns null (no card), the default for the rest of the file.
+     */
+    private var seedCardResult = false
+
     private class Surfaces(
+        val card: DashboardWidget.MonteCarloForecast?,
+        val radarInputs: List<RadarBudgetInput>,
         val headline: DashboardWidget.SafeToSpend,
         val runway: DashboardWidget.FinancialRunway,
         val weatherAvailable: Double,
@@ -230,12 +246,13 @@ class BudgetSurfaceAgreementTest {
     }
 
     /**
-     * P-05-5: the Money Radar and the dashboard widget read the budget limit from the same
-     * derivation, so one budget gives the same Monte Carlo limit on both; a non-month-scale period
-     * gives no comparison on either.
+     * P-05-5 single source: the Money Radar's budget input is `Simulated(card.result)` where
+     * `card.result` is the very object the Home Monte Carlo card shows (identity, not equality), so
+     * the Radar budget limit is the card's budgetAmount, rollover included, and there is exactly
+     * one simulation per compute.
      */
     @Test
-    fun `P-05-5 the same budget gives the same Radar limit and widget Monte Carlo limit`() = runTest {
+    fun `P-05-5 the Radar budget risk is derived from the same result object as the Home card`() = runTest {
         val rows = listOf(
             "plain 1000" to status(1_000.0, 300.0, date(2026, 6, 10), date(2026, 7, 10), 300.0),
             "rollover surplus 1000 plus 100" to
@@ -243,70 +260,125 @@ class BudgetSurfaceAgreementTest {
         )
 
         rows.forEach { (name, budgetStatus) ->
-            val widgetLimit = surfaces(budgetStatus.toBudgetStatusSnapshot()).monteCarloBudget
-            val radarLimits = radarSimulatedLimits(budgetStatus)
+            val s = surfaces(budgetStatus.toBudgetStatusSnapshot(), seedCard = true)
 
-            assertEquals("$name: widget limit", budgetStatus.effectiveLimit, widgetLimit!!, 0.0)
-            assertEquals("$name: radar limit", listOf(widgetLimit), radarLimits)
+            val card = requireNotNull(s.card) { "$name: Home Monte Carlo card is shown" }
+            val radarInput = s.radarInputs.single()
+            assertTrue("$name: radar input is Simulated", radarInput is RadarBudgetInput.Simulated)
+            assertSame(
+                "$name: radar reads the card's result object",
+                card.result,
+                (radarInput as RadarBudgetInput.Simulated).result
+            )
+            assertEquals("$name: card limit", budgetStatus.effectiveLimit, card.result.budgetAmount!!, 0.0)
+            assertEquals("$name: radar limit equals card budgetAmount", card.result.budgetAmount, radarInput.result.budgetAmount)
+            assertEquals("$name: simulator limit", listOf(budgetStatus.effectiveLimit), simulatedBudgetAmounts.toList())
+            assertEquals("$name: one simulation per compute", 1, s.monteCarloCalls)
         }
     }
 
     @Test
-    fun `P-05-5 a weekly budget gives no Monte Carlo limit on the Radar or the widget`() = runTest {
-        val weekly = status(100.0, 50.0, at(15, 0), at(22, 0), 50.0)
+    fun `P-05-5 a weekly or yearly budget gives the Radar None and the card no limit`() = runTest {
+        val rows = listOf(
+            "weekly" to status(100.0, 50.0, at(15, 0), at(22, 0), 50.0),
+            "yearly" to status(12_000.0, 9_300.0, date(2026, 1, 1), date(2027, 1, 1), 9_300.0)
+        )
 
-        assertNull(surfaces(weekly.toBudgetStatusSnapshot()).monteCarloBudget)
-        assertEquals(emptyList<Double>(), radarSimulatedLimits(weekly))
-    }
+        rows.forEach { (name, budgetStatus) ->
+            val s = surfaces(budgetStatus.toBudgetStatusSnapshot(), seedCard = true)
 
-    /** Runs the real Radar use case on [budgetStatus] and returns the limits it passed to the simulator. */
-    private suspend fun radarSimulatedLimits(budgetStatus: BudgetStatus): List<Double> {
-        val limits = mutableListOf<Double>()
-        val radarSimulator = mockk<MonteCarloSpendingSimulator>()
-        coEvery { radarSimulator.simulate(any(), any(), any(), any()) } answers {
-            limits.add(thirdArg())
-            null // the limit is captured at the call; no simulation result is needed
+            assertNull("$name: no limit reaches the simulator", s.monteCarloBudget)
+            assertEquals("$name: radar sees no comparable budget", listOf<RadarBudgetInput>(RadarBudgetInput.None), s.radarInputs)
+            assertTrue("$name: card says not comparable", requireNotNull(s.card).budgetNotComparable)
         }
-        val budgetRepository = mockk<com.yourname.expensetracker.data.repository.BudgetRepository>()
-        io.mockk.every { budgetRepository.getBudgetStatuses() } returns
-            kotlinx.coroutines.flow.flowOf(listOf(budgetStatus))
-        val expenseRepository = mockk<com.yourname.expensetracker.data.repository.ExpenseRepository>()
-        coEvery { expenseRepository.getExpensesSince(any()) } returns emptyList()
-        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
-        val recurring = mockk<com.yourname.expensetracker.domain.forecasting.MergedRecurringPatternsProvider>()
-        coEvery { recurring.getConfirmedPatterns() } returns emptyList()
-        val anomalies = mockk<AnomalyAlertRepository>()
-        coEvery { anomalies.getActiveAlerts() } returns emptyList()
-        val settings = mockk<CurrencySettingsRepository>()
-        io.mockk.every { settings.homeCurrency() } returns kotlinx.coroutines.flow.flowOf("EUR")
-
-        ComputeMoneyRadarUseCase(
-            recurringPatternsProvider = recurring,
-            anomalyAlertRepository = anomalies,
-            getMonteCarloBudgetImpact = mockk(),
-            expenseRepository = expenseRepository,
-            analyticsCurrencyNormalizer =
-                com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer(currencyConverter),
-            currencySettingsRepository = settings,
-            currencyConverter = currencyConverter,
-            timeProvider = timeProvider
-        // TODO(test-author, P-05-5): compile-only fixture; the Radar no longer simulates, so `limits`
-        // is never filled. Rebase this on RadarBudgetInput.Simulated(card result).
-        ).compute(RadarBudgetInput.None)
-        return limits
     }
 
-    // ---------------------------------------------------------------- harness
+    @Test
+    fun `P-05-5 no overall budget gives the Radar None`() = runTest {
+        assertEquals(listOf<RadarBudgetInput>(RadarBudgetInput.None), radarInputsFor(emptyList(), seedCard = true))
+    }
 
-    private suspend fun surfaces(snapshot: BudgetStatusSnapshot): Surfaces {
+    @Test
+    fun `P-05-5 a month-scale budget without a card result gives the Radar Unknown not None`() = runTest {
+        // Simulator returns null: the card is absent while a comparable month-scale budget exists.
+        val monthScale = status(1_000.0, 300.0, date(2026, 6, 10), date(2026, 7, 10), 300.0)
+
+        val s = surfaces(monthScale.toBudgetStatusSnapshot(), seedCard = false)
+
+        assertNull(s.card)
+        assertEquals(listOf<RadarBudgetInput>(RadarBudgetInput.Unknown), s.radarInputs)
+    }
+
+    @Test
+    fun `P-05-5 a month-scale budget with unavailable effective spend gives the Radar Unknown`() = runTest {
+        val base = snapshot(1_000.0, 1_100.0, date(2026, 6, 10), date(2026, 7, 10), gross = 1_100.0)
+
+        val s = surfaces(base.copy(effectiveSpend = null, effectiveHealthStatus = null), seedCard = true)
+
+        assertEquals(listOf<RadarBudgetInput>(RadarBudgetInput.Unknown), s.radarInputs)
+    }
+
+    @Test
+    fun `P-05-5 a month-scale budget with a zero limit gives the Radar None as no positive limit`() = runTest {
+        val zeroLimit = snapshot(0.0, 0.0, date(2026, 6, 10), date(2026, 7, 10), gross = 0.0)
+            .copy(percentUsed = 0.0)
+
+        assertEquals(
+            listOf<RadarBudgetInput>(RadarBudgetInput.None),
+            radarInputsFor(listOf(zeroLimit), seedCard = true)
+        )
+    }
+
+    @Test
+    fun `P-05-5 a failed budget read gives the Radar Unreadable even with a seeded card`() = runTest {
+        assertEquals(
+            listOf<RadarBudgetInput>(RadarBudgetInput.Unreadable),
+            radarInputsFor(emptyList(), seedCard = true, budgetReadFailed = true)
+        )
+    }
+
+    /**
+     * Radar inputs only: with no budget and no income the Home headline and Runway widgets are
+     * legitimately absent, so [surfacesFor] (which needs them) does not apply.
+     */
+    private suspend fun radarInputsFor(
+        snapshots: List<BudgetStatusSnapshot>,
+        seedCard: Boolean,
+        budgetReadFailed: Boolean = false
+    ): List<RadarBudgetInput> {
         fixedNowMs = at(15, 12)
         simulatedBudgetAmounts.clear()
+        radarInputs.clear()
+        seedCardResult = seedCard
         val purchase = DashboardExpense(
             id = 1L, amount = 300.0, effectiveAmount = 300.0, currency = "EUR", merchant = "M1",
             transactionType = DashboardTransactionType.PURCHASE, date = at(2, 12),
             categoryId = 7L, isNotMine = false, isManualEntry = false
         )
-        val result = computeUseCase.compute(data(listOf(purchase), listOf(snapshot)))
+        computeUseCase.compute(data(listOf(purchase), snapshots, budgetReadFailed))
+        return radarInputs.toList()
+    }
+
+    // ---------------------------------------------------------------- harness
+
+    private suspend fun surfaces(snapshot: BudgetStatusSnapshot, seedCard: Boolean = false): Surfaces =
+        surfacesFor(listOf(snapshot), seedCard)
+
+    private suspend fun surfacesFor(
+        snapshots: List<BudgetStatusSnapshot>,
+        seedCard: Boolean = false,
+        budgetReadFailed: Boolean = false
+    ): Surfaces {
+        fixedNowMs = at(15, 12)
+        simulatedBudgetAmounts.clear()
+        radarInputs.clear()
+        seedCardResult = seedCard
+        val purchase = DashboardExpense(
+            id = 1L, amount = 300.0, effectiveAmount = 300.0, currency = "EUR", merchant = "M1",
+            transactionType = DashboardTransactionType.PURCHASE, date = at(2, 12),
+            categoryId = 7L, isNotMine = false, isManualEntry = false
+        )
+        val result = computeUseCase.compute(data(listOf(purchase), snapshots, budgetReadFailed))
 
         // Weather the way the weather repository builds it: synthesize, then narrate.
         val forecast = synthesisEngine.synthesize(
@@ -314,13 +386,15 @@ class BudgetSurfaceAgreementTest {
             recurringPatterns = emptyList(),
             plannedExpenses = emptyList(),
             savingsGoals = emptyList(),
-            budgetStatuses = listOf(snapshot),
+            budgetStatuses = snapshots,
             spendingPace = pace(),
             displayCurrency = "EUR"
         )
-        val narrative = narrativeGenerator.generate(forecast, listOf(snapshot), "EUR")
+        val narrative = narrativeGenerator.generate(forecast, snapshots, "EUR")
 
         return Surfaces(
+            card = result.allWidgets.filterIsInstance<DashboardWidget.MonteCarloForecast>().singleOrNull(),
+            radarInputs = radarInputs.toList(),
             headline = result.allWidgets.filterIsInstance<DashboardWidget.SafeToSpend>().single(),
             runway = result.allWidgets.filterIsInstance<DashboardWidget.FinancialRunway>().single(),
             weatherAvailable = forecast.components.discretionaryBudget,
@@ -335,6 +409,25 @@ class BudgetSurfaceAgreementTest {
             hasBudgetHealthWidget = result.allWidgets.any { it is DashboardWidget.BudgetHealthWidget }
         )
     }
+
+    /** Deterministic stand-in for the simulator result: carries the arguments it was given. */
+    private fun seededCardResult(spent: Double, known: Double, limit: Double?) = MonteCarloResult(
+        percentile10 = spent + known - 50.0,
+        percentile25 = spent + known - 25.0,
+        percentile50 = spent + known,
+        percentile75 = spent + known + 25.0,
+        percentile90 = spent + known + 50.0,
+        probabilityUnderBudget = limit?.let { if (spent + known > it) 0.2 else 0.9 },
+        budgetAmount = limit,
+        spentToDate = spent,
+        knownUpcoming = known,
+        confidence = SimulationConfidence(0.7, ConfidenceLevel.HIGH, "seeded"),
+        metadata = SimulationMetadata(
+            qualifyingWeeks = 10, totalWeeksExamined = 12, iterations = 1000,
+            logNormalMu = 0.0, logNormalSigma = 1.0, daysRemaining = 15, computedAt = fixedNowMs
+        ),
+        displayCurrency = "EUR"
+    )
 
     private fun pace() = SpendingPace(
         currentMonthSpent = 300.0,
@@ -395,7 +488,11 @@ class BudgetSurfaceAgreementTest {
         )
     )
 
-    private fun data(expenses: List<DashboardExpense>, budgets: List<BudgetStatusSnapshot>): ProcessedDashboardData {
+    private fun data(
+        expenses: List<DashboardExpense>,
+        budgets: List<BudgetStatusSnapshot>,
+        budgetReadFailed: Boolean = false
+    ): ProcessedDashboardData {
         val dashboardData = DashboardData(
             expenses = expenses,
             categories = emptyList(),
@@ -414,7 +511,8 @@ class BudgetSurfaceAgreementTest {
             ),
             recurringPatterns = emptyList(),
             plannedExpenses = emptyList(),
-            goals = emptyList()
+            goals = emptyList(),
+            budgetReadFailed = budgetReadFailed
         )
         val summary = SpendingSummary(
             totalSpent = 0.0,
@@ -443,8 +541,9 @@ class BudgetSurfaceAgreementTest {
         synthesisEngine = SynthesisEngine(timeProvider, currencyConverter = currencyConverter)
         val monteCarloSimulator = mockk<MonteCarloSpendingSimulator>(relaxed = true)
         coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } answers {
-            simulatedBudgetAmounts.add(arg<Double?>(2))
-            null
+            val limit = arg<Double?>(2)
+            simulatedBudgetAmounts.add(limit)
+            if (seedCardResult) seededCardResult(arg(0), arg(1), limit) else null
         }
         val healthScoreV2 = mockk<FinancialHealthScoreV2>(relaxed = true)
         coEvery { healthScoreV2.calculateHealthScore(any(), any()) } returns HealthScoreOutcome.Available(
@@ -465,15 +564,18 @@ class BudgetSurfaceAgreementTest {
         coEvery { monthlySavingsSweepUseCase.computeSweepRecommendationResult() } returns
             SavingsSweepComputationResult.NoRecommendation()
         val computeMoneyRadarUseCase = mockk<ComputeMoneyRadarUseCase>(relaxed = true)
-        coEvery { computeMoneyRadarUseCase.compute(any()) } returns MoneyRadarData(
-            urgencyScore = 0,
-            urgencyLevel = UrgencyLevel.GREEN,
-            dueBills = emptyList(),
-            anomalyAlerts = emptyList(),
-            budgetRisk = null,
-            topReasons = emptyList(),
-            primaryCta = null
-        )
+        coEvery { computeMoneyRadarUseCase.compute(any()) } answers {
+            radarInputs.add(firstArg())
+            MoneyRadarData(
+                urgencyScore = 0,
+                urgencyLevel = UrgencyLevel.GREEN,
+                dueBills = emptyList(),
+                anomalyAlerts = emptyList(),
+                budgetRisk = null,
+                topReasons = emptyList(),
+                primaryCta = null
+            )
+        }
         val stressForecastEngine = mockk<FinancialStressForecastEngine>(relaxed = true)
         coEvery { stressForecastEngine.computeStressForecast() } returns StressForecastResult(
             horizons = listOf(StressHorizon(30, 0.0, 0.0, 0.0, StressRiskLevel.LOW, 0.0, 0.0, 0.0)),
