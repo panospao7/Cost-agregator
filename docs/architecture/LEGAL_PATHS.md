@@ -1054,6 +1054,12 @@ HOME CURRENCY SWITCH (Currency Management screen):
     (ExpenseRepository.countExpensesWithoutHomeValue(empty filter, candidate H)) is added when it
     arrives and omitted when unreadable or slow; confirm = exactly one setHomeCurrency, then the
     classifier invalidation
+  → second write path (FL-07, 1.0.4): DatabaseBackupRepositoryImpl.restoreCostBackup applies the
+    optional .costbackup manifest homeCurrency (supported ISO code only) via applyRestoredHomeCurrency,
+    after restoreJournal.commitJournal and before restoreMaintenanceMode.exit; a failure is logged with
+    a bounded code and never rolls the restore back; no classifier invalidation (the forced restart
+    rebuilds it); a restore completed by the startup resume path does not apply it; privacy and AI
+    settings are never carried
 
 FORBIDDEN:
   ❌ Calling CurrencySettingsRepository.setHomeCurrency from the Currency Management screen/ViewModel
