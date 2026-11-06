@@ -258,7 +258,17 @@ class PaymentLinkArchitectureGuardTest {
         assertTrue("confirm must use claimLinkSuppressInWrite", body.contains("claimLinkSuppressInWrite("))
         assertTrue("confirm must use the user_confirmed_match source", body.contains("SOURCE_USER_CONFIRMED_MATCH"))
         assertTrue("confirm must advance through advanceRuleAfterAutoLink", body.contains("advanceRuleAfterAutoLink("))
-        assertTrue("the advance must be NonCancellable", body.contains("NonCancellable"))
+        val ensureActiveAt = body.indexOf("ensureActive()")
+        val nonCancellableAt = body.indexOf("withContext(NonCancellable)")
+        val claimAt = body.indexOf("claimLinkSuppressInWrite(")
+        val advanceAt = body.indexOf("advanceRuleAfterAutoLink(")
+        assertTrue("confirm must check cancellation before anything is written", ensureActiveAt >= 0)
+        assertTrue(
+            "the claim AND the advance must both run inside one withContext(NonCancellable): " +
+                "ensureActive() < NonCancellable < claim < advance",
+            ensureActiveAt < nonCancellableAt && nonCancellableAt in 0 until claimAt && claimAt < advanceAt
+        )
+        assertEquals("confirm has exactly one NonCancellable block", 1, Regex("""\bNonCancellable\b""").findAll(body).count())
         assertTrue(
             "confirm must rethrow cancellation",
             Regex("""CancellationSafe\s*\.\s*rethrowIfCancellation\s*\(""").containsMatchIn(body)
@@ -277,6 +287,7 @@ class PaymentLinkArchitectureGuardTest {
         for (required in listOf(
             "RecurringNextDatePolicy.isOpen(",
             "SOURCE_TYPE_RECURRING_RULE",
+            "occurrence.sourceId != ruleId",
             "isActive",
             "RecurringPaymentLinkMatcher.pairMatches(",
             "RecurringPaymentLinkMatcher.isDeclined("
@@ -294,6 +305,10 @@ class PaymentLinkArchitectureGuardTest {
         val body = code(section)
         assertTrue("decline must run under writeBarrier.runWrite", body.contains("writeBarrier.runWrite("))
         assertTrue("decline must run in database.withTransaction", body.contains("database.withTransaction"))
+        assertTrue(
+            "decline must check the rule ownership inside the transaction",
+            body.indexOf("database.withTransaction") in 0 until body.indexOf("occurrence.sourceId != ruleId")
+        )
         assertTrue(
             "decline must write through eventWriter.writeCritical with the decline event type",
             Regex("""eventWriter\s*\.\s*writeCritical\s*\([^)]*eventType\s*=\s*RecurringPaymentLinkMatcher\s*\.\s*LINK_SUGGESTION_DECLINED""")

@@ -144,14 +144,14 @@ class MarkRecurringBillPaidUseCaseLinkTest {
     // -- linkExistingPayment ---------------------------------------------------------------------
 
     @Test
-    fun `INV-12 linkExistingPayment delegates to confirmPaymentLink with the expense and occurrence ids in order`() =
+    fun `INV-12 linkExistingPayment delegates to confirmPaymentLink with the rule, expense and occurrence ids in order`() =
         runTest {
-            coEvery { occurrences.confirmPaymentLink(any(), any()) } returns PaymentLinkConfirmResult.Linked
+            coEvery { occurrences.confirmPaymentLink(any(), any(), any()) } returns PaymentLinkConfirmResult.Linked
 
             val result = useCase.linkExistingPayment(RULE_ID, OCC_ID, EXPENSE_ID)
 
             assertEquals(PaymentLinkConfirmResult.Linked, result)
-            coVerify(exactly = 1) { occurrences.confirmPaymentLink(EXPENSE_ID, OCC_ID) }
+            coVerify(exactly = 1) { occurrences.confirmPaymentLink(RULE_ID, EXPENSE_ID, OCC_ID) }
         }
 
     @Test
@@ -165,47 +165,48 @@ class MarkRecurringBillPaidUseCaseLinkTest {
             PaymentLinkConfirmResult.Failed(PaymentLinkFailureCodes.INTERNAL)
         )
         for (outcome in outcomes) {
-            coEvery { occurrences.confirmPaymentLink(any(), any()) } returns outcome
+            coEvery { occurrences.confirmPaymentLink(any(), any(), any()) } returns outcome
 
             assertEquals(outcome, useCase.linkExistingPayment(RULE_ID, OCC_ID, EXPENSE_ID))
         }
     }
 
     @Test
-    fun `INV-12 linkExistingPayment with a rule id that does not own the occurrence is NoLongerValid and never writes`() =
+    fun `INV-12 linkExistingPayment hands the caller rule id to the coordinator and returns its NoLongerValid for a mismatch`() =
         runTest {
-            coEvery { occurrences.confirmPaymentLink(any(), any()) } returns PaymentLinkConfirmResult.Linked
+            // The ownership check now runs inside the coordinator transaction (see
+            // RecurringPaymentLinkConfirmDeclineTest); the use case no longer pre-reads the occurrence.
+            coEvery { occurrences.confirmPaymentLink(any(), any(), any()) } returns PaymentLinkConfirmResult.NoLongerValid
 
             val result = useCase.linkExistingPayment(OTHER_RULE_ID, OCC_ID, EXPENSE_ID)
 
             assertEquals(PaymentLinkConfirmResult.NoLongerValid, result)
-            coVerify(exactly = 0) { occurrences.confirmPaymentLink(any(), any()) }
+            coVerify(exactly = 1) { occurrences.confirmPaymentLink(OTHER_RULE_ID, EXPENSE_ID, OCC_ID) }
+            coVerify(exactly = 0) { occurrences.getOccurrenceById(any()) }
         }
 
     @Test
-    fun `INV-12 linkExistingPayment for an unknown occurrence is NoLongerValid and never writes`() = runTest {
-        coEvery { occurrences.confirmPaymentLink(any(), any()) } returns PaymentLinkConfirmResult.Linked
+    fun `INV-12 linkExistingPayment passes an unknown or non-rule occurrence to the coordinator which refuses it`() =
+        runTest {
+            coEvery { occurrences.confirmPaymentLink(any(), any(), any()) } returns PaymentLinkConfirmResult.NoLongerValid
 
-        val result = useCase.linkExistingPayment(RULE_ID, UNKNOWN_OCC_ID, EXPENSE_ID)
+            assertEquals(
+                PaymentLinkConfirmResult.NoLongerValid,
+                useCase.linkExistingPayment(RULE_ID, UNKNOWN_OCC_ID, EXPENSE_ID)
+            )
+            assertEquals(
+                PaymentLinkConfirmResult.NoLongerValid,
+                useCase.linkExistingPayment(RULE_ID, SUBSCRIPTION_OCC_ID, EXPENSE_ID)
+            )
 
-        assertEquals(PaymentLinkConfirmResult.NoLongerValid, result)
-        coVerify(exactly = 0) { occurrences.confirmPaymentLink(any(), any()) }
-    }
-
-    @Test
-    fun `INV-12 linkExistingPayment for a non-rule occurrence with the same source id is NoLongerValid`() = runTest {
-        store[SUBSCRIPTION_OCC_ID] = occurrence(SUBSCRIPTION_OCC_ID, RULE_ID, sourceType = "SUBSCRIPTION")
-        coEvery { occurrences.confirmPaymentLink(any(), any()) } returns PaymentLinkConfirmResult.Linked
-
-        val result = useCase.linkExistingPayment(RULE_ID, SUBSCRIPTION_OCC_ID, EXPENSE_ID)
-
-        assertEquals(PaymentLinkConfirmResult.NoLongerValid, result)
-        coVerify(exactly = 0) { occurrences.confirmPaymentLink(any(), any()) }
-    }
+            coVerify(exactly = 1) { occurrences.confirmPaymentLink(RULE_ID, EXPENSE_ID, UNKNOWN_OCC_ID) }
+            coVerify(exactly = 1) { occurrences.confirmPaymentLink(RULE_ID, EXPENSE_ID, SUBSCRIPTION_OCC_ID) }
+            coVerify(exactly = 0) { occurrences.getOccurrenceById(any()) }
+        }
 
     @Test
     fun `INV-12 linkExistingPayment maps an unexpected exception to Failed INTERNAL without raw text`() = runTest {
-        coEvery { occurrences.confirmPaymentLink(any(), any()) } throws IllegalStateException(SECRET)
+        coEvery { occurrences.confirmPaymentLink(any(), any(), any()) } throws IllegalStateException(SECRET)
 
         val result = useCase.linkExistingPayment(RULE_ID, OCC_ID, EXPENSE_ID)
 
@@ -215,7 +216,7 @@ class MarkRecurringBillPaidUseCaseLinkTest {
 
     @Test
     fun `INV-12 linkExistingPayment rethrows cancellation and releases the rule lock`() = runTest {
-        coEvery { occurrences.confirmPaymentLink(any(), any()) } throws CancellationException("cancelled")
+        coEvery { occurrences.confirmPaymentLink(any(), any(), any()) } throws CancellationException("cancelled")
 
         try {
             useCase.linkExistingPayment(RULE_ID, OCC_ID, EXPENSE_ID)
@@ -224,21 +225,21 @@ class MarkRecurringBillPaidUseCaseLinkTest {
             assertEquals("cancelled", e.message)
         }
 
-        coEvery { occurrences.confirmPaymentLink(any(), any()) } returns PaymentLinkConfirmResult.Linked
+        coEvery { occurrences.confirmPaymentLink(any(), any(), any()) } returns PaymentLinkConfirmResult.Linked
         assertEquals(PaymentLinkConfirmResult.Linked, useCase.linkExistingPayment(RULE_ID, OCC_ID, EXPENSE_ID))
     }
 
     // -- declinePayment --------------------------------------------------------------------------
 
     @Test
-    fun `INV-14 declinePayment delegates to declinePaymentLink with the expense and occurrence ids in order`() =
+    fun `INV-14 declinePayment delegates to declinePaymentLink with the rule, expense and occurrence ids in order`() =
         runTest {
-            coEvery { occurrences.declinePaymentLink(any(), any()) } returns PaymentLinkDeclineResult.Declined
+            coEvery { occurrences.declinePaymentLink(any(), any(), any()) } returns PaymentLinkDeclineResult.Declined
 
             val result = useCase.declinePayment(RULE_ID, OCC_ID, EXPENSE_ID)
 
             assertEquals(PaymentLinkDeclineResult.Declined, result)
-            coVerify(exactly = 1) { occurrences.declinePaymentLink(EXPENSE_ID, OCC_ID) }
+            coVerify(exactly = 1) { occurrences.declinePaymentLink(RULE_ID, EXPENSE_ID, OCC_ID) }
         }
 
     @Test
@@ -251,27 +252,27 @@ class MarkRecurringBillPaidUseCaseLinkTest {
             PaymentLinkDeclineResult.Failed(PaymentLinkFailureCodes.INTERNAL)
         )
         for (outcome in outcomes) {
-            coEvery { occurrences.declinePaymentLink(any(), any()) } returns outcome
+            coEvery { occurrences.declinePaymentLink(any(), any(), any()) } returns outcome
 
             assertEquals(outcome, useCase.declinePayment(RULE_ID, OCC_ID, EXPENSE_ID))
         }
     }
 
     @Test
-    fun `INV-14 declinePayment with a rule id that does not own the occurrence is NoLongerValid and never writes`() =
+    fun `INV-14 declinePayment hands the caller rule id to the coordinator and returns its NoLongerValid for a mismatch`() =
         runTest {
-            coEvery { occurrences.declinePaymentLink(any(), any()) } returns PaymentLinkDeclineResult.Declined
+            coEvery { occurrences.declinePaymentLink(any(), any(), any()) } returns PaymentLinkDeclineResult.NoLongerValid
 
             val result = useCase.declinePayment(OTHER_RULE_ID, OCC_ID, EXPENSE_ID)
 
             assertEquals(PaymentLinkDeclineResult.NoLongerValid, result)
-            coVerify(exactly = 0) { occurrences.declinePaymentLink(any(), any()) }
+            coVerify(exactly = 1) { occurrences.declinePaymentLink(OTHER_RULE_ID, EXPENSE_ID, OCC_ID) }
+            coVerify(exactly = 0) { occurrences.getOccurrenceById(any()) }
         }
 
     @Test
-    fun `INV-14 declinePayment for an unknown or non-rule occurrence is NoLongerValid and never writes`() = runTest {
-        store[SUBSCRIPTION_OCC_ID] = occurrence(SUBSCRIPTION_OCC_ID, RULE_ID, sourceType = "SUBSCRIPTION")
-        coEvery { occurrences.declinePaymentLink(any(), any()) } returns PaymentLinkDeclineResult.Declined
+    fun `INV-14 declinePayment passes an unknown or non-rule occurrence to the coordinator which refuses it`() = runTest {
+        coEvery { occurrences.declinePaymentLink(any(), any(), any()) } returns PaymentLinkDeclineResult.NoLongerValid
 
         assertEquals(PaymentLinkDeclineResult.NoLongerValid, useCase.declinePayment(RULE_ID, UNKNOWN_OCC_ID, EXPENSE_ID))
         assertEquals(
@@ -279,12 +280,14 @@ class MarkRecurringBillPaidUseCaseLinkTest {
             useCase.declinePayment(RULE_ID, SUBSCRIPTION_OCC_ID, EXPENSE_ID)
         )
 
-        coVerify(exactly = 0) { occurrences.declinePaymentLink(any(), any()) }
+        coVerify(exactly = 1) { occurrences.declinePaymentLink(RULE_ID, EXPENSE_ID, UNKNOWN_OCC_ID) }
+        coVerify(exactly = 1) { occurrences.declinePaymentLink(RULE_ID, EXPENSE_ID, SUBSCRIPTION_OCC_ID) }
+        coVerify(exactly = 0) { occurrences.getOccurrenceById(any()) }
     }
 
     @Test
     fun `INV-14 declinePayment maps an unexpected exception to Failed INTERNAL without raw text`() = runTest {
-        coEvery { occurrences.declinePaymentLink(any(), any()) } throws IllegalStateException(SECRET)
+        coEvery { occurrences.declinePaymentLink(any(), any(), any()) } throws IllegalStateException(SECRET)
 
         val result = useCase.declinePayment(RULE_ID, OCC_ID, EXPENSE_ID)
 
@@ -294,7 +297,7 @@ class MarkRecurringBillPaidUseCaseLinkTest {
 
     @Test
     fun `INV-14 declinePayment rethrows cancellation and releases the rule lock`() = runTest {
-        coEvery { occurrences.declinePaymentLink(any(), any()) } throws CancellationException("cancelled")
+        coEvery { occurrences.declinePaymentLink(any(), any(), any()) } throws CancellationException("cancelled")
 
         try {
             useCase.declinePayment(RULE_ID, OCC_ID, EXPENSE_ID)
@@ -303,7 +306,7 @@ class MarkRecurringBillPaidUseCaseLinkTest {
             assertEquals("cancelled", e.message)
         }
 
-        coEvery { occurrences.declinePaymentLink(any(), any()) } returns PaymentLinkDeclineResult.Declined
+        coEvery { occurrences.declinePaymentLink(any(), any(), any()) } returns PaymentLinkDeclineResult.Declined
         assertEquals(PaymentLinkDeclineResult.Declined, useCase.declinePayment(RULE_ID, OCC_ID, EXPENSE_ID))
     }
 
@@ -311,11 +314,11 @@ class MarkRecurringBillPaidUseCaseLinkTest {
 
     @Test
     fun `AE-28 concurrent confirms and declines of one rule never overlap`() = runTest {
-        coEvery { occurrences.confirmPaymentLink(any(), any()) } coAnswers {
+        coEvery { occurrences.confirmPaymentLink(any(), any(), any()) } coAnswers {
             trackedCriticalSection()
             PaymentLinkConfirmResult.Linked
         }
-        coEvery { occurrences.declinePaymentLink(any(), any()) } coAnswers {
+        coEvery { occurrences.declinePaymentLink(any(), any(), any()) } coAnswers {
             trackedCriticalSection()
             PaymentLinkDeclineResult.Declined
         }
@@ -335,7 +338,7 @@ class MarkRecurringBillPaidUseCaseLinkTest {
             trackedCriticalSection()
             null // the mark-paid ends right away: RULE_NOT_FOUND
         }
-        coEvery { occurrences.confirmPaymentLink(any(), any()) } coAnswers {
+        coEvery { occurrences.confirmPaymentLink(any(), any(), any()) } coAnswers {
             trackedCriticalSection()
             PaymentLinkConfirmResult.Linked
         }
@@ -351,7 +354,7 @@ class MarkRecurringBillPaidUseCaseLinkTest {
 
     @Test
     fun `AE-28 control - confirms of two different rules may run at the same time`() = runTest {
-        coEvery { occurrences.confirmPaymentLink(any(), any()) } coAnswers {
+        coEvery { occurrences.confirmPaymentLink(any(), any(), any()) } coAnswers {
             trackedCriticalSection()
             PaymentLinkConfirmResult.Linked
         }

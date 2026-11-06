@@ -10,6 +10,10 @@ import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import io.mockk.coEvery
 import io.mockk.coVerify
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.job
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.json.JSONObject
 import org.junit.After
@@ -31,8 +35,9 @@ import kotlin.time.Duration.Companion.seconds
  * [RecurringLifecycleCoordinator.declinePaymentLink].
  *
  * Invariants: INV-2 (one to one), INV-3 (single write path), INV-12 (confirm re-validates inside the
- * transaction), INV-13 (advance after confirm), INV-14 (decline), INV-16 (writes blocked during
- * restore), INV-18 (privacy). Acceptance examples: AE-1, AE-2, AE-14, AE-18, AE-19, AE-20, AE-27.
+ * transaction, including the rule ownership of the occurrence), INV-13 (advance after confirm), INV-14
+ * (decline), INV-16 (writes blocked during restore), INV-18 (privacy). Acceptance examples: AE-1, AE-2,
+ * AE-14, AE-18, AE-19, AE-20, AE-27.
  *
  * Harness: [PaymentLinkTestFixture], a REAL in-memory Room database (so rollback is real), REAL
  * barriers, REAL coordinator. The rent fixture is rule "Rent", 400 EUR, monthly, due Nov 27, 2026,
@@ -89,7 +94,7 @@ class RecurringPaymentLinkConfirmDeclineTest {
             assertEquals("PLANNED", f.status(occ))
             assertNull(f.occurrence(occ).linkedExpenseId)
 
-            val result = f.lifecycle.confirmPaymentLink(suggested.expenseId, suggested.occurrenceId)
+            val result = f.lifecycle.confirmPaymentLink(suggested.ruleId, suggested.expenseId, suggested.occurrenceId)
 
             assertEquals(PaymentLinkConfirmResult.Linked, result)
             val linked = f.occurrence(occ)
@@ -107,7 +112,7 @@ class RecurringPaymentLinkConfirmDeclineTest {
             val occ = seedRent()
             val e = f.seedExpense(twoDaysEarly)
 
-            assertEquals(PaymentLinkConfirmResult.Linked, f.lifecycle.confirmPaymentLink(e, occ))
+            assertEquals(PaymentLinkConfirmResult.Linked, f.lifecycle.confirmPaymentLink(RULE_ID, e, occ))
 
             val paid = f.events(occ).filter { it.eventType == "OCCURRENCE_PAID" }
             assertEquals(1, paid.size)
@@ -140,7 +145,7 @@ class RecurringPaymentLinkConfirmDeclineTest {
                 )
             )
 
-            assertEquals(PaymentLinkConfirmResult.Linked, f.lifecycle.confirmPaymentLink(e, occ))
+            assertEquals(PaymentLinkConfirmResult.Linked, f.lifecycle.confirmPaymentLink(RULE_ID, e, occ))
 
             val planned = f.plannedDao.getBySourceOccurrenceKey(key)!!
             assertEquals("FULFILLED", planned.status)
@@ -157,7 +162,7 @@ class RecurringPaymentLinkConfirmDeclineTest {
             val occ = seedRent()
             val e = f.seedExpense(twoDaysEarly)
 
-            assertEquals(PaymentLinkConfirmResult.Linked, f.lifecycle.confirmPaymentLink(e, occ))
+            assertEquals(PaymentLinkConfirmResult.Linked, f.lifecycle.confirmPaymentLink(RULE_ID, e, occ))
 
             val allowedKeys = setOf(
                 "expenseId", "amount", "currency", "plannedExpenseId", "occurrenceKey", "source", "suppressedCount"
@@ -181,7 +186,7 @@ class RecurringPaymentLinkConfirmDeclineTest {
             val other = f.seedOccurrence(2L, TODAY.plusDays(4)) // Nov 30, |d| 4
             val e = f.seedExpense(TODAY)
 
-            assertEquals(PaymentLinkConfirmResult.Linked, f.lifecycle.confirmPaymentLink(e, other))
+            assertEquals(PaymentLinkConfirmResult.Linked, f.lifecycle.confirmPaymentLink(2L, e, other))
 
             assertEquals(other, f.linkedOccurrenceOf(e))
             assertEquals("PAID", f.status(other))
@@ -195,7 +200,7 @@ class RecurringPaymentLinkConfirmDeclineTest {
             val e = f.seedExpense(twoDaysEarly)
             f.expenseDao.update(f.expenseDao.getById(e)!!.copy(amount = 430.0))
 
-            assertEquals(PaymentLinkConfirmResult.Linked, f.lifecycle.confirmPaymentLink(e, occ))
+            assertEquals(PaymentLinkConfirmResult.Linked, f.lifecycle.confirmPaymentLink(RULE_ID, e, occ))
 
             assertEquals(430.0, f.occurrence(occ).paidAmount!!, 0.0)
         }
@@ -211,7 +216,7 @@ class RecurringPaymentLinkConfirmDeclineTest {
             f.seedOccurrence(1L, dec27)
             val e = f.seedExpense(twoDaysEarly)
 
-            assertEquals(PaymentLinkConfirmResult.Linked, f.lifecycle.confirmPaymentLink(e, occ))
+            assertEquals(PaymentLinkConfirmResult.Linked, f.lifecycle.confirmPaymentLink(RULE_ID, e, occ))
 
             coVerify(exactly = 1) { f.ruleCoordinator.advanceNextDate(1L, f.startOf(dec27)) }
         }
@@ -222,7 +227,7 @@ class RecurringPaymentLinkConfirmDeclineTest {
             val occ = seedRent() // the rule's nextDate is parked years away
             val e = f.seedExpense(twoDaysEarly)
 
-            assertEquals(PaymentLinkConfirmResult.Linked, f.lifecycle.confirmPaymentLink(e, occ))
+            assertEquals(PaymentLinkConfirmResult.Linked, f.lifecycle.confirmPaymentLink(RULE_ID, e, occ))
 
             coVerify(exactly = 0) { f.ruleCoordinator.advanceNextDate(any(), any()) }
         }
@@ -236,11 +241,138 @@ class RecurringPaymentLinkConfirmDeclineTest {
             val e = f.seedExpense(twoDaysEarly)
             coEvery { f.ruleCoordinator.advanceNextDate(any(), any()) } throws IllegalStateException("secret-advance-detail")
 
-            val result = f.lifecycle.confirmPaymentLink(e, occ)
+            val result = f.lifecycle.confirmPaymentLink(RULE_ID, e, occ)
 
             assertEquals(PaymentLinkConfirmResult.Linked, result)
             assertEquals("PAID", f.status(occ))
             assertEquals(e, f.occurrence(occ).linkedExpenseId)
+        }
+
+    @Test
+    fun `INV-13 a cancellation that lands after the claim does not skip the rule advance`() =
+        runTest(timeout = 60.seconds) {
+            var caller: Job? = null
+            replaceFixture(
+                PaymentLinkTestFixture(
+                    eventWriterDecorator = { delegate ->
+                        object : RecurringLifecycleEventWriter {
+                            override suspend fun writeCritical(
+                                occurrenceId: Long?,
+                                eventType: String,
+                                oldStatus: String?,
+                                newStatus: String?,
+                                metadata: String?,
+                                occurredAt: Long
+                            ): Long {
+                                val id = delegate.writeCritical(
+                                    occurrenceId, eventType, oldStatus, newStatus, metadata, occurredAt
+                                )
+                                // The caller is cancelled while the claim transaction is still finishing.
+                                if (eventType == "OCCURRENCE_PAID") caller?.cancel()
+                                return id
+                            }
+                        }
+                    }
+                )
+            )
+            f.seedRule(1L, nextDate = f.startOf(due))
+            val occ = f.seedOccurrence(1L, due)
+            val dec27 = LocalDate.of(2026, 12, 27)
+            f.seedOccurrence(1L, dec27)
+            val e = f.seedExpense(twoDaysEarly)
+
+            val job = launch {
+                try {
+                    f.lifecycle.confirmPaymentLink(RULE_ID, e, occ)
+                } catch (ex: CancellationException) {
+                    // either outcome is fine: what matters is that claim and advance both completed
+                }
+            }
+            caller = job
+            job.join()
+
+            assertEquals("PAID", f.status(occ))
+            assertEquals(e, f.occurrence(occ).linkedExpenseId)
+            coVerify(exactly = 1) { f.ruleCoordinator.advanceNextDate(1L, f.startOf(dec27)) }
+        }
+
+    @Test
+    fun `INV-3 a caller that is already cancelled stops before the claim and writes nothing`() =
+        runTest(timeout = 60.seconds) {
+            val occ = seedRent()
+            val e = f.seedExpense(twoDaysEarly)
+            val before = snapshot()
+            var thrown: Throwable? = null
+
+            val caller = launch {
+                currentCoroutineContext().job.cancel()
+                try {
+                    f.lifecycle.confirmPaymentLink(RULE_ID, e, occ)
+                } catch (ex: CancellationException) {
+                    thrown = ex
+                }
+            }
+            caller.join()
+
+            assertTrue("a CancellationException must propagate", thrown is CancellationException)
+            assertNothingWritten(before)
+            assertEquals("PLANNED", f.status(occ))
+            assertNull(f.linkedOccurrenceOf(e))
+        }
+
+    // -- AE-10 / INV-5: the installment gate of confirm -------------------------------------------
+
+    private suspend fun assertConfirmRefusedForInstallmentRelated(installmentRelated: Long, occ: Long) {
+        val before = snapshot()
+
+        assertEquals(
+            PaymentLinkConfirmResult.NoLongerValid,
+            f.lifecycle.confirmPaymentLink(RULE_ID, installmentRelated, occ)
+        )
+
+        assertNothingWritten(before)
+        assertEquals("PLANNED", f.status(occ))
+        assertNull(f.occurrence(occ).linkedExpenseId)
+        assertNull(f.linkedOccurrenceOf(installmentRelated))
+    }
+
+    @Test
+    fun `AE-10 INV-5 confirm for an expense that pays an installment entry is NoLongerValid and writes nothing`() =
+        runTest(timeout = 60.seconds) {
+            val occ = seedRent()
+            val e = f.seedExpense(twoDaysEarly)
+            f.linkToInstallmentEntry(e)
+
+            assertConfirmRefusedForInstallmentRelated(e, occ)
+        }
+
+    @Test
+    fun `AE-10 INV-5 confirm for a plan purchase record row is NoLongerValid and writes nothing`() =
+        runTest(timeout = 60.seconds) {
+            val occ = seedRent()
+            val e = f.seedExpense(twoDaysEarly)
+            f.markAsPlanPurchaseRecord(e)
+
+            assertConfirmRefusedForInstallmentRelated(e, occ)
+        }
+
+    @Test
+    fun `AE-10 INV-5 confirm for an expense flagged INSTALLMENT_PURCHASE is NoLongerValid and writes nothing`() =
+        runTest(timeout = 60.seconds) {
+            val occ = seedRent()
+            val e = f.seedFlaggedExpense(twoDaysEarly, "INSTALLMENT_PURCHASE")
+
+            assertConfirmRefusedForInstallmentRelated(e, occ)
+        }
+
+    @Test
+    fun `AE-10 INV-5 control - the same pair confirms once the expense has no installment relation`() =
+        runTest(timeout = 60.seconds) {
+            val occ = seedRent()
+            val e = f.seedExpense(twoDaysEarly)
+
+            assertEquals(PaymentLinkConfirmResult.Linked, f.lifecycle.confirmPaymentLink(RULE_ID, e, occ))
+            assertEquals(occ, f.linkedOccurrenceOf(e))
         }
 
     // -- AE-19: idempotency ---------------------------------------------------------------------
@@ -253,11 +385,11 @@ class RecurringPaymentLinkConfirmDeclineTest {
             f.seedOccurrence(1L, LocalDate.of(2026, 12, 27))
             val e = f.seedExpense(twoDaysEarly)
 
-            assertEquals(PaymentLinkConfirmResult.Linked, f.lifecycle.confirmPaymentLink(e, occ))
+            assertEquals(PaymentLinkConfirmResult.Linked, f.lifecycle.confirmPaymentLink(RULE_ID, e, occ))
             val afterFirst = snapshot()
             assertEquals(1, f.eventCount(occ, "OCCURRENCE_PAID"))
 
-            assertEquals(PaymentLinkConfirmResult.AlreadyLinkedToThis, f.lifecycle.confirmPaymentLink(e, occ))
+            assertEquals(PaymentLinkConfirmResult.AlreadyLinkedToThis, f.lifecycle.confirmPaymentLink(RULE_ID, e, occ))
 
             assertNothingWritten(afterFirst)
             assertEquals(1, f.eventCount(occ, "OCCURRENCE_PAID"))
@@ -275,7 +407,7 @@ class RecurringPaymentLinkConfirmDeclineTest {
             f.expenseDao.delete(f.expenseDao.getById(e)!!)
             val before = snapshot()
 
-            assertEquals(PaymentLinkConfirmResult.NoLongerValid, f.lifecycle.confirmPaymentLink(e, occ))
+            assertEquals(PaymentLinkConfirmResult.NoLongerValid, f.lifecycle.confirmPaymentLink(RULE_ID, e, occ))
 
             assertNothingWritten(before)
             assertEquals("PLANNED", f.status(occ))
@@ -290,7 +422,7 @@ class RecurringPaymentLinkConfirmDeclineTest {
             val stale = f.seedExpense(twoDaysEarly) // a stale screen still offers this one
             val before = snapshot()
 
-            assertEquals(PaymentLinkConfirmResult.NoLongerValid, f.lifecycle.confirmPaymentLink(stale, occ))
+            assertEquals(PaymentLinkConfirmResult.NoLongerValid, f.lifecycle.confirmPaymentLink(RULE_ID, stale, occ))
 
             assertNothingWritten(before)
             assertEquals(first, f.occurrence(occ).linkedExpenseId)
@@ -304,7 +436,7 @@ class RecurringPaymentLinkConfirmDeclineTest {
         val e = f.seedExpense(twoDaysEarly)
         val before = snapshot()
 
-        assertEquals(PaymentLinkConfirmResult.NoLongerValid, f.lifecycle.confirmPaymentLink(e, occ))
+        assertEquals(PaymentLinkConfirmResult.NoLongerValid, f.lifecycle.confirmPaymentLink(RULE_ID, e, occ))
 
         assertNothingWritten(before)
     }
@@ -317,7 +449,7 @@ class RecurringPaymentLinkConfirmDeclineTest {
             f.expenseDao.update(f.expenseDao.getById(e)!!.copy(amount = 450.0))
             val before = snapshot()
 
-            assertEquals(PaymentLinkConfirmResult.NoLongerValid, f.lifecycle.confirmPaymentLink(e, occ))
+            assertEquals(PaymentLinkConfirmResult.NoLongerValid, f.lifecycle.confirmPaymentLink(RULE_ID, e, occ))
 
             assertNothingWritten(before)
         }
@@ -330,7 +462,7 @@ class RecurringPaymentLinkConfirmDeclineTest {
             f.expenseDao.update(f.expenseDao.getById(e)!!.copy(date = f.at(LocalDate.of(2026, 11, 15)))) // d = -12
             val before = snapshot()
 
-            assertEquals(PaymentLinkConfirmResult.NoLongerValid, f.lifecycle.confirmPaymentLink(e, occ))
+            assertEquals(PaymentLinkConfirmResult.NoLongerValid, f.lifecycle.confirmPaymentLink(RULE_ID, e, occ))
 
             assertNothingWritten(before)
         }
@@ -343,7 +475,7 @@ class RecurringPaymentLinkConfirmDeclineTest {
             f.expenseDao.update(f.expenseDao.getById(e)!!.copy(currency = "GBP"))
             val before = snapshot()
 
-            assertEquals(PaymentLinkConfirmResult.NoLongerValid, f.lifecycle.confirmPaymentLink(e, occ))
+            assertEquals(PaymentLinkConfirmResult.NoLongerValid, f.lifecycle.confirmPaymentLink(RULE_ID, e, occ))
 
             assertNothingWritten(before)
         }
@@ -356,7 +488,7 @@ class RecurringPaymentLinkConfirmDeclineTest {
             f.expenseDao.update(f.expenseDao.getById(e)!!.copy(transactionType = TransactionType.TRANSFER))
             val before = snapshot()
 
-            assertEquals(PaymentLinkConfirmResult.NoLongerValid, f.lifecycle.confirmPaymentLink(e, occ))
+            assertEquals(PaymentLinkConfirmResult.NoLongerValid, f.lifecycle.confirmPaymentLink(RULE_ID, e, occ))
 
             assertNothingWritten(before)
         }
@@ -368,7 +500,7 @@ class RecurringPaymentLinkConfirmDeclineTest {
         val e = f.seedExpense(twoDaysEarly)
         val before = snapshot()
 
-        assertEquals(PaymentLinkConfirmResult.NoLongerValid, f.lifecycle.confirmPaymentLink(e, occ))
+        assertEquals(PaymentLinkConfirmResult.NoLongerValid, f.lifecycle.confirmPaymentLink(RULE_ID, e, occ))
 
         assertNothingWritten(before)
     }
@@ -380,7 +512,7 @@ class RecurringPaymentLinkConfirmDeclineTest {
         f.seedDecline(occ, """{"expenseId":$e,"source":"user_declined_match"}""")
         val before = snapshot()
 
-        assertEquals(PaymentLinkConfirmResult.NoLongerValid, f.lifecycle.confirmPaymentLink(e, occ))
+        assertEquals(PaymentLinkConfirmResult.NoLongerValid, f.lifecycle.confirmPaymentLink(RULE_ID, e, occ))
 
         assertNothingWritten(before)
     }
@@ -391,8 +523,8 @@ class RecurringPaymentLinkConfirmDeclineTest {
         val e = f.seedExpense(twoDaysEarly)
         val before = snapshot()
 
-        assertEquals(PaymentLinkConfirmResult.NoLongerValid, f.lifecycle.confirmPaymentLink(e, occ + 1000L))
-        assertEquals(PaymentLinkConfirmResult.NoLongerValid, f.lifecycle.confirmPaymentLink(e + 1000L, occ))
+        assertEquals(PaymentLinkConfirmResult.NoLongerValid, f.lifecycle.confirmPaymentLink(RULE_ID, e, occ + 1000L))
+        assertEquals(PaymentLinkConfirmResult.NoLongerValid, f.lifecycle.confirmPaymentLink(RULE_ID, e + 1000L, occ))
 
         assertNothingWritten(before)
     }
@@ -405,9 +537,27 @@ class RecurringPaymentLinkConfirmDeclineTest {
             val e = f.seedExpense(TODAY)
             val before = snapshot()
 
-            assertEquals(PaymentLinkConfirmResult.NoLongerValid, f.lifecycle.confirmPaymentLink(e, occ))
+            assertEquals(PaymentLinkConfirmResult.NoLongerValid, f.lifecycle.confirmPaymentLink(RULE_ID, e, occ))
 
             assertNothingWritten(before)
+        }
+
+    @Test
+    fun `INV-12 confirm with a rule id that does not own the occurrence is NoLongerValid and writes nothing`() =
+        runTest(timeout = 60.seconds) {
+            f.seedRule(1L)
+            f.seedRule(2L)
+            val occ = f.seedOccurrence(1L, due)
+            val e = f.seedExpense(twoDaysEarly)
+            val before = snapshot()
+
+            assertEquals(PaymentLinkConfirmResult.NoLongerValid, f.lifecycle.confirmPaymentLink(2L, e, occ))
+
+            assertNothingWritten(before)
+            assertEquals("PLANNED", f.status(occ))
+            assertNull(f.linkedOccurrenceOf(e))
+            // control: the owning rule id links the same pair
+            assertEquals(PaymentLinkConfirmResult.Linked, f.lifecycle.confirmPaymentLink(1L, e, occ))
         }
 
     // -- INV-2: one to one -------------------------------------------------------------------------
@@ -426,7 +576,7 @@ class RecurringPaymentLinkConfirmDeclineTest {
             )
             val before = snapshot()
 
-            assertEquals(PaymentLinkConfirmResult.ExpenseLinkedElsewhere, f.lifecycle.confirmPaymentLink(e, b))
+            assertEquals(PaymentLinkConfirmResult.ExpenseLinkedElsewhere, f.lifecycle.confirmPaymentLink(2L, e, b))
 
             assertNothingWritten(before)
             assertEquals(a, f.linkedOccurrenceOf(e))
@@ -449,13 +599,35 @@ class RecurringPaymentLinkConfirmDeclineTest {
                 assertEquals(
                     "mode $mode",
                     PaymentLinkConfirmResult.Failed(PaymentLinkFailureCodes.WRITE_BLOCKED),
-                    f.lifecycle.confirmPaymentLink(e, occ)
+                    f.lifecycle.confirmPaymentLink(RULE_ID, e, occ)
                 )
                 assertNothingWritten(before)
             }
 
             f.maintenanceMode = RestoreMaintenanceMode.Mode.NORMAL
-            assertEquals(PaymentLinkConfirmResult.Linked, f.lifecycle.confirmPaymentLink(e, occ)) // not sticky
+            assertEquals(PaymentLinkConfirmResult.Linked, f.lifecycle.confirmPaymentLink(RULE_ID, e, occ)) // not sticky
+        }
+
+    @Test
+    fun `AE-18 INV-16 confirm with a mismatched rule id during a restore window is WRITE_BLOCKED not INTERNAL`() =
+        runTest(timeout = 60.seconds) {
+            f.seedRule(1L)
+            f.seedRule(2L)
+            val occ = f.seedOccurrence(1L, due)
+            val e = f.seedExpense(twoDaysEarly)
+            val before = snapshot()
+
+            val blockedModes = RestoreMaintenanceMode.Mode.values().filter { it != RestoreMaintenanceMode.Mode.NORMAL }
+            assertTrue(blockedModes.isNotEmpty())
+            for (mode in blockedModes) {
+                f.maintenanceMode = mode
+                assertEquals(
+                    "mode $mode",
+                    PaymentLinkConfirmResult.Failed(PaymentLinkFailureCodes.WRITE_BLOCKED),
+                    f.lifecycle.confirmPaymentLink(2L, e, occ)
+                )
+                assertNothingWritten(before)
+            }
         }
 
     // -- rollback and cancellation of confirm ---------------------------------------------------------
@@ -472,7 +644,7 @@ class RecurringPaymentLinkConfirmDeclineTest {
             val e = f.seedExpense(twoDaysEarly)
             val before = snapshot()
 
-            val result = f.lifecycle.confirmPaymentLink(e, occ)
+            val result = f.lifecycle.confirmPaymentLink(RULE_ID, e, occ)
 
             assertEquals(PaymentLinkConfirmResult.Failed(PaymentLinkFailureCodes.INTERNAL), result)
             assertFalse(result.toString().contains(SECRET))
@@ -495,7 +667,7 @@ class RecurringPaymentLinkConfirmDeclineTest {
             val before = snapshot()
 
             try {
-                f.lifecycle.confirmPaymentLink(e, occ)
+                f.lifecycle.confirmPaymentLink(RULE_ID, e, occ)
                 fail("a CancellationException must propagate, but a result was returned")
             } catch (ex: CancellationException) {
                 // expected: never mapped to Failed
@@ -514,7 +686,7 @@ class RecurringPaymentLinkConfirmDeclineTest {
             val occ = seedRent()
             val e = f.seedExpense(twoDaysEarly)
 
-            assertEquals(PaymentLinkDeclineResult.Declined, f.lifecycle.declinePaymentLink(e, occ))
+            assertEquals(PaymentLinkDeclineResult.Declined, f.lifecycle.declinePaymentLink(RULE_ID, e, occ))
 
             val declined = f.events(occ).filter { it.eventType == "LINK_SUGGESTION_DECLINED" }
             assertEquals(1, declined.size)
@@ -535,7 +707,7 @@ class RecurringPaymentLinkConfirmDeclineTest {
             assertEquals(1, f.suggestionItems().size)
             val rowBefore = f.occurrence(occ)
 
-            assertEquals(PaymentLinkDeclineResult.Declined, f.lifecycle.declinePaymentLink(e, occ))
+            assertEquals(PaymentLinkDeclineResult.Declined, f.lifecycle.declinePaymentLink(RULE_ID, e, occ))
 
             assertEquals(rowBefore, f.occurrence(occ)) // PLANNED, unlinked, same snapshot
             assertEquals(emptyList<PaymentLinkSuggestion>(), f.suggestionItems())
@@ -548,10 +720,10 @@ class RecurringPaymentLinkConfirmDeclineTest {
             val occ = seedRent()
             val e = f.seedExpense(twoDaysEarly)
 
-            assertEquals(PaymentLinkDeclineResult.Declined, f.lifecycle.declinePaymentLink(e, occ))
+            assertEquals(PaymentLinkDeclineResult.Declined, f.lifecycle.declinePaymentLink(RULE_ID, e, occ))
             val afterFirst = snapshot()
 
-            assertEquals(PaymentLinkDeclineResult.AlreadyDeclined, f.lifecycle.declinePaymentLink(e, occ))
+            assertEquals(PaymentLinkDeclineResult.AlreadyDeclined, f.lifecycle.declinePaymentLink(RULE_ID, e, occ))
 
             assertNothingWritten(afterFirst)
             assertEquals(1, f.eventCount(occ, "LINK_SUGGESTION_DECLINED"))
@@ -564,8 +736,8 @@ class RecurringPaymentLinkConfirmDeclineTest {
             val first = f.seedExpense(twoDaysEarly)
             val second = f.seedExpense(TODAY.minusDays(3), amount = 405.0)
 
-            assertEquals(PaymentLinkDeclineResult.Declined, f.lifecycle.declinePaymentLink(first, occ))
-            assertEquals(PaymentLinkDeclineResult.Declined, f.lifecycle.declinePaymentLink(second, occ))
+            assertEquals(PaymentLinkDeclineResult.Declined, f.lifecycle.declinePaymentLink(RULE_ID, first, occ))
+            assertEquals(PaymentLinkDeclineResult.Declined, f.lifecycle.declinePaymentLink(RULE_ID, second, occ))
 
             assertEquals(2, f.eventCount(occ, "LINK_SUGGESTION_DECLINED"))
         }
@@ -577,7 +749,7 @@ class RecurringPaymentLinkConfirmDeclineTest {
         val next = f.seedOccurrence(2L, due.plusDays(2)) // Nov 29, |d| 4
         val e = f.seedExpense(twoDaysEarly)
 
-        assertEquals(PaymentLinkDeclineResult.Declined, f.lifecycle.declinePaymentLink(e, nearest))
+        assertEquals(PaymentLinkDeclineResult.Declined, f.lifecycle.declinePaymentLink(RULE_ID, e, nearest))
 
         val s = f.suggestionItems().single()
         assertEquals(next, s.occurrenceId)
@@ -588,7 +760,7 @@ class RecurringPaymentLinkConfirmDeclineTest {
     fun `INV-14 a declined pair is not auto-linked either`() = runTest(timeout = 60.seconds) {
         val occ = seedRent()
         val e = f.seedExpense(due) // on the due day: inside the auto window
-        assertEquals(PaymentLinkDeclineResult.Declined, f.lifecycle.declinePaymentLink(e, occ))
+        assertEquals(PaymentLinkDeclineResult.Declined, f.lifecycle.declinePaymentLink(RULE_ID, e, occ))
 
         assertFalse(f.lifecycle.linkExpenseToOccurrence(e))
 
@@ -603,8 +775,8 @@ class RecurringPaymentLinkConfirmDeclineTest {
             val e = f.seedExpense(twoDaysEarly)
             val before = snapshot()
 
-            assertEquals(PaymentLinkDeclineResult.NoLongerValid, f.lifecycle.declinePaymentLink(e, occ + 1000L))
-            assertEquals(PaymentLinkDeclineResult.NoLongerValid, f.lifecycle.declinePaymentLink(e + 1000L, occ))
+            assertEquals(PaymentLinkDeclineResult.NoLongerValid, f.lifecycle.declinePaymentLink(RULE_ID, e, occ + 1000L))
+            assertEquals(PaymentLinkDeclineResult.NoLongerValid, f.lifecycle.declinePaymentLink(RULE_ID, e + 1000L, occ))
 
             assertNothingWritten(before)
         }
@@ -620,10 +792,40 @@ class RecurringPaymentLinkConfirmDeclineTest {
             val e = f.seedExpense(twoDaysEarly)
             val before = snapshot()
 
-            assertEquals(PaymentLinkDeclineResult.NoLongerValid, f.lifecycle.declinePaymentLink(e, paid))
-            assertEquals(PaymentLinkDeclineResult.NoLongerValid, f.lifecycle.declinePaymentLink(e, skipped))
+            assertEquals(PaymentLinkDeclineResult.NoLongerValid, f.lifecycle.declinePaymentLink(1L, e, paid))
+            assertEquals(PaymentLinkDeclineResult.NoLongerValid, f.lifecycle.declinePaymentLink(2L, e, skipped))
 
             assertNothingWritten(before)
+        }
+
+    @Test
+    fun `INV-14 decline for a non-rule occurrence is NoLongerValid and writes nothing`() =
+        runTest(timeout = 60.seconds) {
+            f.seedRule(1L)
+            val occ = f.seedOccurrence(1L, TODAY, sourceType = "SUBSCRIPTION")
+            val e = f.seedExpense(TODAY)
+            val before = snapshot()
+
+            assertEquals(PaymentLinkDeclineResult.NoLongerValid, f.lifecycle.declinePaymentLink(RULE_ID, e, occ))
+
+            assertNothingWritten(before)
+        }
+
+    @Test
+    fun `INV-14 decline with a rule id that does not own the occurrence is NoLongerValid and writes nothing`() =
+        runTest(timeout = 60.seconds) {
+            f.seedRule(1L)
+            f.seedRule(2L)
+            val occ = f.seedOccurrence(1L, due)
+            val e = f.seedExpense(twoDaysEarly)
+            val before = snapshot()
+
+            assertEquals(PaymentLinkDeclineResult.NoLongerValid, f.lifecycle.declinePaymentLink(2L, e, occ))
+
+            assertNothingWritten(before)
+            assertEquals(0, f.eventCount(occ, "LINK_SUGGESTION_DECLINED"))
+            // control: the owning rule id records the decline
+            assertEquals(PaymentLinkDeclineResult.Declined, f.lifecycle.declinePaymentLink(1L, e, occ))
         }
 
     @Test
@@ -640,13 +842,35 @@ class RecurringPaymentLinkConfirmDeclineTest {
                 assertEquals(
                     "mode $mode",
                     PaymentLinkDeclineResult.Failed(PaymentLinkFailureCodes.WRITE_BLOCKED),
-                    f.lifecycle.declinePaymentLink(e, occ)
+                    f.lifecycle.declinePaymentLink(RULE_ID, e, occ)
                 )
                 assertNothingWritten(before)
             }
 
             f.maintenanceMode = RestoreMaintenanceMode.Mode.NORMAL
-            assertEquals(PaymentLinkDeclineResult.Declined, f.lifecycle.declinePaymentLink(e, occ)) // not sticky
+            assertEquals(PaymentLinkDeclineResult.Declined, f.lifecycle.declinePaymentLink(RULE_ID, e, occ)) // not sticky
+        }
+
+    @Test
+    fun `AE-18 INV-16 decline with a mismatched rule id during a restore window is WRITE_BLOCKED not INTERNAL`() =
+        runTest(timeout = 60.seconds) {
+            f.seedRule(1L)
+            f.seedRule(2L)
+            val occ = f.seedOccurrence(1L, due)
+            val e = f.seedExpense(twoDaysEarly)
+            val before = snapshot()
+
+            val blockedModes = RestoreMaintenanceMode.Mode.values().filter { it != RestoreMaintenanceMode.Mode.NORMAL }
+            assertTrue(blockedModes.isNotEmpty())
+            for (mode in blockedModes) {
+                f.maintenanceMode = mode
+                assertEquals(
+                    "mode $mode",
+                    PaymentLinkDeclineResult.Failed(PaymentLinkFailureCodes.WRITE_BLOCKED),
+                    f.lifecycle.declinePaymentLink(2L, e, occ)
+                )
+                assertNothingWritten(before)
+            }
         }
 
     @Test
@@ -661,7 +885,7 @@ class RecurringPaymentLinkConfirmDeclineTest {
             val e = f.seedExpense(twoDaysEarly)
             val before = snapshot()
 
-            val result = f.lifecycle.declinePaymentLink(e, occ)
+            val result = f.lifecycle.declinePaymentLink(RULE_ID, e, occ)
 
             assertEquals(PaymentLinkDeclineResult.Failed(PaymentLinkFailureCodes.INTERNAL), result)
             assertFalse(result.toString().contains(SECRET))
@@ -682,7 +906,7 @@ class RecurringPaymentLinkConfirmDeclineTest {
             val before = snapshot()
 
             try {
-                f.lifecycle.declinePaymentLink(e, occ)
+                f.lifecycle.declinePaymentLink(RULE_ID, e, occ)
                 fail("a CancellationException must propagate, but a result was returned")
             } catch (ex: CancellationException) {
                 // expected: never mapped to Failed
@@ -692,6 +916,7 @@ class RecurringPaymentLinkConfirmDeclineTest {
         }
 
     private companion object {
+        const val RULE_ID = 1L
         const val SECRET = "secret-sql-text /data/user/0/private.db"
     }
 }
