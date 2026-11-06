@@ -16,6 +16,10 @@
     <string name="unsupported_db_reason_too_old">La base de datos guardada fue creada por una versión de la aplicación demasiado antigua para actualizarla de forma segura. No se ha modificado ni eliminado nada.</string>
     <string name="unsupported_db_reason_too_new">La base de datos guardada fue creada por una versión más reciente de la aplicación. Instala la última versión de la aplicación para usarla. No se ha modificado ni eliminado nada.</string>
     <string name="unsupported_db_reason_unreadable">No se pudo leer la base de datos guardada. No se ha modificado ni eliminado nada.</string>
+    <!-- J-20-1: DRAFT: owner native sign-off pending -->
+    <string name="unsupported_db_reason_recovery">Los datos de la aplicación están en estado de recuperación y no se pudieron abrir con normalidad.</string>
+    <!-- J-20-1: DRAFT: owner native sign-off pending -->
+    <string name="unsupported_db_recovery_export_note">Esta es una copia sin procesar y puede estar incompleta.</string>
     <string name="unsupported_db_export_button">Exportar archivo de la base de datos</string>
     <string name="unsupported_db_close_button">Cerrar la aplicación</string>
     <string name="unsupported_db_export_success">El archivo de la base de datos se exportó correctamente.</string>
@@ -308,6 +312,8 @@
     <string name="privacy_settings_unreadable_banner">No se pudieron leer tus ajustes de privacidad guardados, así que por ahora se aplican los ajustes de privacidad más estrictos.</string>
     <!-- critical_recovery_open_app_settings: DRAFT: owner native sign-off pending -->
     <string name="critical_recovery_open_app_settings">Abrir ajustes de la app</string>
+    <!-- critical_recovery_export_raw_copy: DRAFT: owner native sign-off pending -->
+    <string name="critical_recovery_export_raw_copy">Exportar una copia sin procesar</string>
     <!-- critical_recovery_clear_data_warning: DRAFT: owner native sign-off pending -->
     <string name="critical_recovery_clear_data_warning">Borrar datos en los Ajustes de Android elimina TODOS los datos que esta app guarda en este teléfono.</string>
     <string name="privacy_blocked_cloud_ai">La IA en la nube está desactivada en la configuración de privacidad o de IA.</string>

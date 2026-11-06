@@ -783,6 +783,40 @@ class RestoreMaintenanceMode @Inject constructor(
         internal fun isSwapLatched(): Boolean = swapLatched
 
         /**
+         * J-20-1: Room-free, instance-free read of the persisted mode, used by the raw-export screen. True only
+         * when the durable state positively decodes to CRITICAL_RECOVERY_REQUIRED (sentinel file or stored
+         * mode). Any unreadable or invalid state answers false (fail closed for the export). Read-only.
+         */
+        internal fun isCriticalRecoveryPersisted(context: Context): Boolean = synchronized(PERSISTED_STATE_LOCK) {
+            try {
+                val sentinelExists: Boolean? = try {
+                    File(context.noBackupFilesDir, CRITICAL_SENTINEL_FILE).exists()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    null
+                }
+                val snapshot: Map<String, *>? = if (sentinelExists == false) {
+                    try {
+                        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).all.toMap()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        null
+                    }
+                } else {
+                    null
+                }
+                decodePersistedState(sentinelExists, snapshot, prefsAvailable = true)
+                    .state?.effectiveMode == Mode.CRITICAL_RECOVERY_REQUIRED
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                false
+            }
+        }
+
+        /**
          * Raises the process-wide swap latch without persisting a mode. Used by destructive
          * live-file operations (rollback, reset) that do not pass through RESTORE_SWAPPING so the
          * gated open helper refuses to reopen the live database mid-operation. Cleared by the next

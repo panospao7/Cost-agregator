@@ -457,6 +457,13 @@ fun MainScreen(
                 append("\n\n")
                 append(clearDataWarning)
             }
+            // J-20-1: offered only when the raw export screen would accept it (persisted critical mode read
+            // Room-free, main DB file present and non-empty). The check runs off the main thread; false until known.
+            val rawExportAvailable by produceState(false, context) {
+                value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    UnsupportedDatabaseActivity.isRecoveryExportAvailable(context.applicationContext)
+                }
+            }
             AppOperationalLockScreen(
                 title = "Critical Recovery Required",
                 message = msg,
@@ -466,6 +473,17 @@ fun MainScreen(
                 // ActivityNotFoundException is handled inside openAppDetailsSettings (no crash).
                 onSecondaryAction = {
                     com.yourname.expensetracker.ui.applock.openAppDetailsSettings(context)
+                },
+                tertiaryActionLabel = if (rawExportAvailable) {
+                    stringResource(R.string.critical_recovery_export_raw_copy)
+                } else {
+                    null
+                },
+                onTertiaryAction = {
+                    context.startActivity(
+                        Intent(context, UnsupportedDatabaseActivity::class.java)
+                            .putExtra(UnsupportedDatabaseActivity.EXTRA_RECOVERY_EXPORT, true)
+                    )
                 }
             )
             return
@@ -1284,7 +1302,9 @@ private fun AppOperationalLockScreen(
     actionLabel: String,
     onAction: () -> Unit,
     secondaryActionLabel: String? = null,
-    onSecondaryAction: (() -> Unit)? = null
+    onSecondaryAction: (() -> Unit)? = null,
+    tertiaryActionLabel: String? = null,
+    onTertiaryAction: (() -> Unit)? = null
 ) {
     androidx.compose.foundation.layout.Box(
         modifier = Modifier.fillMaxSize(),
@@ -1295,7 +1315,12 @@ private fun AppOperationalLockScreen(
             title = { Text(title) },
             text = { Text(message) },
             confirmButton = {
-                TextButton(onClick = onAction) { Text(actionLabel) }
+                Column(horizontalAlignment = Alignment.End) {
+                    if (tertiaryActionLabel != null && onTertiaryAction != null) {
+                        TextButton(onClick = onTertiaryAction) { Text(tertiaryActionLabel) }
+                    }
+                    TextButton(onClick = onAction) { Text(actionLabel) }
+                }
             },
             dismissButton = if (secondaryActionLabel != null && onSecondaryAction != null) {
                 { TextButton(onClick = onSecondaryAction) { Text(secondaryActionLabel) } }

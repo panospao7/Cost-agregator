@@ -35,6 +35,7 @@ import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import com.yourname.expensetracker.R
+import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.DatabaseOpenGate
 import com.yourname.expensetracker.domain.privacy.applock.AuthLaunch
 import com.yourname.expensetracker.domain.privacy.applock.AuthPromptCopy
@@ -99,9 +100,12 @@ class UnsupportedDatabaseActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val reasonCode = DatabaseOpenGate.blockedReasonOrNull(applicationContext)
-        if (reasonCode == null) {
+        // J-20-1: with the gate not blocking, only the persisted critical-recovery mode (read Room-free,
+        // fail closed) keeps this screen open. The intent extra is a copy hint only and never enables export.
+        val recoveryExport = reasonCode == null && isRecoveryExportAvailable(applicationContext)
+        if (reasonCode == null && !recoveryExport) {
             // Fail closed: this export-only screen must never be reachable (e.g. from recents or a
-            // restored task) while the gate does not block the live database.
+            // restored task) while the gate does not block the live database and no critical recovery is persisted.
             finish()
             return
         }
@@ -112,14 +116,14 @@ class UnsupportedDatabaseActivity : FragmentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    UnsupportedDatabaseContent(reasonCode)
+                    UnsupportedDatabaseContent(reasonCode, recoveryExport)
                 }
             }
         }
     }
 
     @Composable
-    private fun UnsupportedDatabaseContent(reasonCode: String?) {
+    private fun UnsupportedDatabaseContent(reasonCode: String?, recoveryExport: Boolean) {
         val launcher = rememberLauncherForActivityResult(
             ActivityResultContracts.CreateDocument(EXPORT_MIME_TYPE)
         ) { uri ->
@@ -138,9 +142,18 @@ class UnsupportedDatabaseActivity : FragmentActivity() {
             )
             Spacer(Modifier.height(16.dp))
             Text(
-                text = stringResource(reasonTextRes(reasonCode)),
+                text = stringResource(
+                    if (recoveryExport) R.string.unsupported_db_reason_recovery else reasonTextRes(reasonCode)
+                ),
                 style = MaterialTheme.typography.bodyLarge
             )
+            if (recoveryExport) {
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    text = stringResource(R.string.unsupported_db_recovery_export_note),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
             Spacer(Modifier.height(24.dp))
             Button(
                 onClick = { onExportRequested { launcher.launch(EXPORT_SUGGESTED_NAME) } },
@@ -353,8 +366,9 @@ class UnsupportedDatabaseActivity : FragmentActivity() {
 
     /** Blocking; call from an IO dispatcher. Throws on any failure so the caller reports it. */
     internal fun writeBackupTo(uri: Uri) {
-        // Defence in depth: never export unless the gate currently blocks the live database.
-        check(DatabaseOpenGate.blockedReasonOrNull(applicationContext) != null) {
+        // Defence in depth: never export unless the gate currently blocks the live database or the persisted
+        // mode is critical recovery (J-20-1).
+        check(DatabaseOpenGate.blockedReasonOrNull(applicationContext) != null || isRecoveryExportAvailable(applicationContext)) {
             "export not permitted"
         }
         val sources = DatabaseOpenGate.liveDatabaseFiles(applicationContext)
@@ -390,6 +404,23 @@ class UnsupportedDatabaseActivity : FragmentActivity() {
          */
         @VisibleForTesting
         internal var exportAuthPromptTimeoutMillisForTest: Long? = null
+
+        /** J-20-1: boolean hint set by the critical-recovery screen. Never read as an authorisation; the persisted mode decides. */
+        internal const val EXTRA_RECOVERY_EXPORT = "com.yourname.expensetracker.extra.RECOVERY_EXPORT"
+
+        /**
+         * J-20-1: true only when the persisted restore-maintenance mode is CRITICAL_RECOVERY_REQUIRED (Room-free,
+         * fail-closed read) and the live main database file exists and is non-empty. Read-only; no content or path
+         * is logged.
+         */
+        internal fun isRecoveryExportAvailable(context: Context): Boolean = try {
+            RestoreMaintenanceMode.isCriticalRecoveryPersisted(context) &&
+                DatabaseOpenGate.liveDatabaseFiles(context).firstOrNull()?.let { it.isFile && it.length() > 0L } == true
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            false
+        }
 
         private const val EXPORT_MIME_TYPE = "application/zip"
         private const val EXPORT_SUGGESTED_NAME = "cost-aggregator-database-backup.zip"
