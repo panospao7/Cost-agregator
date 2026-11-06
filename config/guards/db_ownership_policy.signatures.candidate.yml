@@ -892,21 +892,6 @@ entries:
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.CategoryRepository
   kind: function
-  method: deleteCategory
-  receiver: null
-  parameterTypes:
-  - Long
-  daoAccessor: categoryDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.CategoryDao
-  operation: delete
-  barrierMode: direct
-  reason: "Canonical category deletion \u2014 guarded by budget-reference and isDefault\
-    \ checks"
-  owner: '@panospao7'
-  linkedIssue: MIT-003
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.CategoryRepository
-  kind: function
   method: ensureDefaultCategories
   receiver: null
   parameterTypes: []
