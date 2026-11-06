@@ -11,7 +11,16 @@ class SyncProactiveBriefingWorkUseCase @Inject constructor(
     private val aiWorkScheduler: AiWorkScheduler
 ) {
 
-    suspend operator fun invoke(settingsOverride: AiSettings? = null) {
+    /**
+     * @param previousSettings settings before the change that triggered this sync, when known.
+     *   When supplied and the dashboard briefing toggle went from off to on while the work is
+     *   armed, one immediate briefing run is enqueued (J-09-1). Null never triggers it, so
+     *   startup and other syncs behave exactly as before.
+     */
+    suspend operator fun invoke(
+        settingsOverride: AiSettings? = null,
+        previousSettings: AiSettings? = null
+    ) {
         val settings = settingsOverride ?: aiSettingsRepository.settings().first()
         // INV-25: armed iff aiEnabled and briefing and (allowCloudAi or proactive).
         // Cloud-route users generate the daily artifact regardless of proactive posting;
@@ -23,6 +32,12 @@ class SyncProactiveBriefingWorkUseCase @Inject constructor(
 
         if (shouldSchedule) {
             aiWorkScheduler.scheduleDailyBriefing()
+            if (previousSettings != null &&
+                !previousSettings.dashboardBriefingEnabled &&
+                settings.dashboardBriefingEnabled
+            ) {
+                aiWorkScheduler.enqueueBriefingNow()
+            }
         } else {
             aiWorkScheduler.cancelDailyBriefing()
         }

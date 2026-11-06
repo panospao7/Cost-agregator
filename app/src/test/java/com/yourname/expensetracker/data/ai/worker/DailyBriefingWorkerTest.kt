@@ -447,9 +447,9 @@ class DailyBriefingWorkerTest {
     }
 
     @Test
-    fun `failure does not reschedule next run`() = runTest {
-        // A permanent failure must not re-arm the chain; the next terminal
-        // Success/Skip re-seeds the midnight run.
+    fun `failure still reschedules next run`() = runTest {
+        // enqueueBriefingNow() uses REPLACE, cancelling the pending midnight request;
+        // a terminal Failed must re-arm the chain or it stays broken until app start.
         coEvery {
             executionGuard.runGuardedWithContext(
                 any<WorkerGuardRequest>(),
@@ -460,7 +460,7 @@ class DailyBriefingWorkerTest {
         val result = buildWorker().doWork()
 
         assertEquals(Result.failure(), result)
-        verify(exactly = 0) {
+        verify(atLeast = 1) {
             workManager.enqueueUniqueWork(any(), any(), any<androidx.work.OneTimeWorkRequest>())
         }
     }

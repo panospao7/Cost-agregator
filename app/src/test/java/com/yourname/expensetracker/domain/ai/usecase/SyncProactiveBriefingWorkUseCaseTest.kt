@@ -143,6 +143,95 @@ class SyncProactiveBriefingWorkUseCaseTest {
         confirmVerified(aiWorkScheduler)
     }
 
+    // J-09-1: off to on while armed enqueues exactly one immediate run.
+    @Test
+    fun `off to on with work armed enqueues one immediate briefing`() = runTest {
+        val previous = AiSettings(aiEnabled = true, allowCloudAi = true, dashboardBriefingEnabled = false)
+        val current = previous.copy(dashboardBriefingEnabled = true)
+
+        useCase(current, previousSettings = previous)
+
+        verify(exactly = 1) { aiWorkScheduler.scheduleDailyBriefing() }
+        verify(exactly = 1) { aiWorkScheduler.enqueueBriefingNow() }
+        verify(exactly = 0) { aiWorkScheduler.cancelDailyBriefing() }
+    }
+
+    @Test
+    fun `off to on via proactive route without cloud also enqueues once`() = runTest {
+        val previous = AiSettings(
+            aiEnabled = true,
+            allowCloudAi = false,
+            dashboardBriefingEnabled = false,
+            proactiveBriefingsEnabled = true
+        )
+
+        useCase(previous.copy(dashboardBriefingEnabled = true), previousSettings = previous)
+
+        verify(exactly = 1) { aiWorkScheduler.enqueueBriefingNow() }
+    }
+
+    @Test
+    fun `on to on never enqueues an immediate briefing`() = runTest {
+        val previous = AiSettings(aiEnabled = true, allowCloudAi = true, dashboardBriefingEnabled = true)
+
+        useCase(previous.copy(proactiveBriefingsEnabled = true), previousSettings = previous)
+
+        verify(exactly = 1) { aiWorkScheduler.scheduleDailyBriefing() }
+        verify(exactly = 0) { aiWorkScheduler.enqueueBriefingNow() }
+    }
+
+    @Test
+    fun `null previous settings never enqueue an immediate briefing`() = runTest {
+        useCase(
+            AiSettings(aiEnabled = true, allowCloudAi = true, dashboardBriefingEnabled = true),
+            previousSettings = null
+        )
+
+        verify(exactly = 1) { aiWorkScheduler.scheduleDailyBriefing() }
+        verify(exactly = 0) { aiWorkScheduler.enqueueBriefingNow() }
+    }
+
+    @Test
+    fun `startup sync reading repository settings never enqueues an immediate briefing`() = runTest {
+        every { aiSettingsRepository.settings() } returns flowOf(
+            AiSettings(aiEnabled = true, allowCloudAi = true, dashboardBriefingEnabled = true)
+        )
+
+        useCase()
+
+        verify(exactly = 0) { aiWorkScheduler.enqueueBriefingNow() }
+    }
+
+    @Test
+    fun `off to on while not armed cancels and never enqueues`() = runTest {
+        // aiEnabled false: briefing toggle flips on but the predicate is not armed.
+        val previous = AiSettings(aiEnabled = false, allowCloudAi = true, dashboardBriefingEnabled = false)
+        useCase(previous.copy(dashboardBriefingEnabled = true), previousSettings = previous)
+
+        // cloud off and proactive off: also not armed.
+        val previousNoRoute = AiSettings(
+            aiEnabled = true,
+            allowCloudAi = false,
+            dashboardBriefingEnabled = false,
+            proactiveBriefingsEnabled = false
+        )
+        useCase(previousNoRoute.copy(dashboardBriefingEnabled = true), previousSettings = previousNoRoute)
+
+        verify(exactly = 2) { aiWorkScheduler.cancelDailyBriefing() }
+        verify(exactly = 0) { aiWorkScheduler.scheduleDailyBriefing() }
+        verify(exactly = 0) { aiWorkScheduler.enqueueBriefingNow() }
+    }
+
+    @Test
+    fun `on to off never enqueues and cancels`() = runTest {
+        val previous = AiSettings(aiEnabled = true, allowCloudAi = true, dashboardBriefingEnabled = true)
+
+        useCase(previous.copy(dashboardBriefingEnabled = false), previousSettings = previous)
+
+        verify(exactly = 1) { aiWorkScheduler.cancelDailyBriefing() }
+        verify(exactly = 0) { aiWorkScheduler.enqueueBriefingNow() }
+    }
+
     @Test
     fun `invoke uses provided override settings`() = runTest {
         useCase(

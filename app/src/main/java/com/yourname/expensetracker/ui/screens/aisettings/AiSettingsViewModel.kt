@@ -374,10 +374,16 @@ class AiSettingsViewModel @Inject constructor(
     ) {
         viewModelScope.launch {
             try {
-                val updated = transform(_uiState.value.settings)
+                val previous = _uiState.value.settings
+                val updated = transform(previous)
                 aiSettingsRepository.update(transform)
                 if (syncProactiveBriefings) {
-                    syncProactiveBriefingWorkUseCase(updated)
+                    if (!previous.dashboardBriefingEnabled && updated.dashboardBriefingEnabled) {
+                        // J-09-1: briefing toggle went off to on; ask for one immediate run.
+                        syncProactiveBriefingWorkUseCase(updated, previousSettings = previous)
+                    } else {
+                        syncProactiveBriefingWorkUseCase(updated)
+                    }
                 }
             } catch (e: Exception) {
                 // INV-4: parent cancellation must propagate and must not surface as a settings error.

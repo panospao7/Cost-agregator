@@ -46,6 +46,9 @@ object WorkerSpecScheduler {
      * @param workerClass  The exact [ListenableWorker] subclass to schedule.
      * @param customConstraints  Optional constraints that override [WorkerSpec.constraints].
      * @param diagnosticEventWriter  Optional writer for emitting diagnostic events on failure.
+     * @param oneShotPolicyOverride  When non-null and the spec is a one-shot (no repeat
+     *   interval), wins over both the spec's [WorkerSpec.oneShotPolicy] and the version-bump
+     *   REPLACE. Ignored for periodic specs. Used for an explicit "run now" enqueue.
      * @return [ScheduleResult] describing the scheduling outcome.
      */
     fun scheduleFromSpec(
@@ -53,7 +56,8 @@ object WorkerSpecScheduler {
         workerName: String,
         workerClass: Class<out ListenableWorker>,
         customConstraints: Constraints? = null,
-        diagnosticEventWriter: DiagnosticEventWriter? = null
+        diagnosticEventWriter: DiagnosticEventWriter? = null,
+        oneShotPolicyOverride: ExistingWorkPolicy? = null
     ): ScheduleResult {
         val spec = WorkerSpec.DEFAULTS[workerName] ?: run {
             android.util.Log.w("WorkerSpecScheduler", "No WorkerSpec found for: $workerName")
@@ -127,7 +131,9 @@ object WorkerSpecScheduler {
                 )
             } else {
                 // ── One-shot worker ───────────────────────────────────────────
-                val policy = if (versionChanged) {
+                val policy = if (oneShotPolicyOverride != null) {
+                    oneShotPolicyOverride
+                } else if (versionChanged) {
                     android.util.Log.i(
                         "WorkerSpecScheduler",
                         "Worker '$workerName' version changed (${lastVersion} → ${spec.version}), forcing UPDATE"

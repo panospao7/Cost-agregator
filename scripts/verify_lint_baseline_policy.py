@@ -14,6 +14,11 @@ import sys
 import argparse
 import os
 
+# Pinned ceiling: number of <issue id="MissingTranslation"> elements in app/lint-baseline.xml
+# (counted exactly as this script counts them). Lower it when entries are removed; never raise
+# it without a recorded owner decision.
+MAX_MISSING_TRANSLATIONS = 2223
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -28,8 +33,9 @@ def main():
         "--max-missing-translations",
         type=int,
         default=None,
-        help="Maximum allowed MissingTranslation count. "
-             "If the baseline contains more, it may indicate unauthorized regeneration.",
+        help="Optional tighter MissingTranslation ceiling. The effective ceiling is "
+             "min(this value, the pinned MAX_MISSING_TRANSLATIONS constant); it can never "
+             "be raised above the constant.",
     )
     parser.add_argument(
         "--fail-on-violation",
@@ -79,11 +85,12 @@ def main():
         status = "ALLOWED" if issue_id == "MissingTranslation" else "FORBIDDEN"
         print(f"  {issue_id}: {count} ({status})")
 
-    # Auto-detect max-missing-translations from baseline if not explicitly set
-    if args.max_missing_translations is None:
-        # Count entries from baseline
-        args.max_missing_translations = total
-        print(f"Max missing translations: {args.max_missing_translations} (from baseline)")
+    # I-04-2: the ceiling is pinned in this file, never derived from the baseline being checked.
+    # An explicit flag may only tighten it, never raise it.
+    max_missing_translations = MAX_MISSING_TRANSLATIONS
+    if args.max_missing_translations is not None:
+        max_missing_translations = min(args.max_missing_translations, MAX_MISSING_TRANSLATIONS)
+    print(f"Max missing translations: {max_missing_translations} (pinned)")
 
     violations_found = False
 
@@ -93,15 +100,14 @@ def main():
             print(item)
         violations_found = True
 
-    if args.max_missing_translations is not None:
-        mt_count = issue_counts.get("MissingTranslation", 0)
-        if mt_count > args.max_missing_translations:
-            print(
-                f"\nVIOLATION: MissingTranslation count ({mt_count}) "
-                f"exceeds maximum ({args.max_missing_translations}). "
-                f"Baseline may have been regenerated wholesale."
-            )
-            violations_found = True
+    mt_count = issue_counts.get("MissingTranslation", 0)
+    if mt_count > max_missing_translations:
+        print(
+            f"\nVIOLATION: MissingTranslation count ({mt_count}) "
+            f"exceeds maximum ({max_missing_translations}). "
+            f"Baseline may have been regenerated wholesale."
+        )
+        violations_found = True
 
     if violations_found:
         print("\nFAIL: Baseline policy violations detected.")
