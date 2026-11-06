@@ -62,6 +62,13 @@ interface MerchantNormalizationDao {
     @Update
     suspend fun updateAlias(alias: MerchantAlias)
     
+    /**
+     * E-03-6: repoints every alias of [oldCanonicalId] to [newCanonicalId] in one statement.
+     * Returns the number of rows updated.
+     */
+    @Query("UPDATE merchant_aliases SET canonicalId = :newCanonicalId, isUserDefined = 1, lastUsedAt = :now WHERE canonicalId = :oldCanonicalId")
+    suspend fun reassignAliases(oldCanonicalId: Long, newCanonicalId: Long, now: Long): Int
+
     @Query("SELECT * FROM merchant_aliases WHERE id = :id")
     suspend fun getAliasById(id: Long): MerchantAlias?
     

@@ -66,7 +66,7 @@ class RawDaoArchitectureGuardTest {
      */
     private val DAO_MUTATOR_PATTERNS = listOf(
         Regex("merchantCategoryDao\\.(insert|insertAll|updateNormalizedCanonicalName|deleteAll)\\("),
-        Regex("merchantNormalizationDao\\.(insertCanonical|insertAlias|updateCanonical|updateCanonicalCategory|updateAlias|deleteUnusedAliasesOlderThan|incrementMerchantStats|incrementAliasOccurrence|linkAliasToCanonical)\\("),
+        Regex("merchantNormalizationDao\\.(insertCanonical|insertAlias|updateCanonical|updateCanonicalCategory|updateAlias|reassignAliases|deleteUnusedAliasesOlderThan|incrementMerchantStats|incrementAliasOccurrence|linkAliasToCanonical)\\("),
     )
 
     @Test

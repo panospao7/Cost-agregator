@@ -5644,7 +5644,9 @@ def test_checked_in_structural_only_manifest_contract_via_production_apis():
     # dao.updatePlaceholderRowsIfStillUncategorized), yielding 459.
     # 1.0.4 Batch 3 DR-04 (owner item 138): +1 exact identity
     # (MerchantCategoryRepository.upsertUserCorrection / dao.upsertUserCorrection), yielding 460.
-    assert len(entries) == 460
+    # 1.0.4 Batch 3 E-03-6 (owner item 143): +1 exact identity
+    # (MerchantNormalizationRepository.repointAliases / dao.reassignAliases), yielding 461.
+    assert len(entries) == 461
     sweep_path = (
         "app/src/main/java/com/yourname/expensetracker/data/repository/"
         "SavingsSweepAcceptanceCoordinator.kt"
@@ -6137,8 +6139,10 @@ def test_current_db_gate_activated_policy_real_config_pipeline(tmp_path, monkeyp
     # dao.updatePlaceholderRowsIfStillUncategorized), yielding 459.
     # 1.0.4 Batch 3 DR-04 (owner item 138): +1 exact identity
     # (MerchantCategoryRepository.upsertUserCorrection / dao.upsertUserCorrection), yielding 460.
+    # 1.0.4 Batch 3 E-03-6 (owner item 143): +1 exact identity
+    # (MerchantNormalizationRepository.repointAliases / dao.reassignAliases), yielding 461.
     # Re-derived per the checked-in-manifest contract pin above.
-    assert len(entries) == 460
+    assert len(entries) == 461
 
     # The structural gate really ran (post-activation it is no longer
     # short-circuited by a loader block) and stayed clean.

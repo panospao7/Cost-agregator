@@ -289,4 +289,66 @@ class MerchantNormalizationDaoTest {
         )
         assertEquals(3, result) // CANONICAL_MISSING
     }
+
+    // ── E-03-6: repointAliases ──────────────────────────────────────────────
+
+    @Test
+    fun repointAliases_movesAllAliasesOfOldCanonical_setsUserDefinedAndLastUsed_returnsRowCount() = runTest {
+        val oldId = dao.insertCanonical(makeCanonical("Old Shop", "oldshop"))
+        val newId = dao.insertCanonical(makeCanonical("New Shop", "newshop"))
+        val createdAt = 1_700_000_000_000L
+        val now = createdAt + 5_000L
+        dao.insertAlias(makeAlias("OLD SHOP A", "oldshopa", oldId, createdAt))
+        dao.insertAlias(makeAlias("OLD SHOP B", "oldshopb", oldId, createdAt))
+        dao.insertAlias(makeAlias("OLD SHOP C", "oldshopc", oldId, createdAt))
+
+        val updated = dao.reassignAliases(oldId, newId, now)
+
+        assertEquals(3, updated)
+        assertTrue(dao.getAliasesForCanonical(oldId).isEmpty())
+        val moved = dao.getAliasesForCanonical(newId)
+        assertEquals(3, moved.size)
+        moved.forEach {
+            assertEquals(newId, it.canonicalId)
+            assertTrue("isUserDefined must become true", it.isUserDefined)
+            assertEquals(now, it.lastUsedAt)
+            assertEquals("createdAt is not rewritten", createdAt, it.createdAt)
+        }
+    }
+
+    @Test
+    fun repointAliases_leavesAliasesOfOtherCanonicalsUntouched() = runTest {
+        val oldId = dao.insertCanonical(makeCanonical("Old Shop", "oldshop"))
+        val newId = dao.insertCanonical(makeCanonical("New Shop", "newshop"))
+        val otherId = dao.insertCanonical(makeCanonical("Other Shop", "othershop"))
+        val createdAt = 1_700_000_000_000L
+        dao.insertAlias(makeAlias("OLD SHOP A", "oldshopa", oldId, createdAt))
+        dao.insertAlias(makeAlias("OTHER SHOP A", "othershopa", otherId, createdAt))
+
+        val updated = dao.reassignAliases(oldId, newId, createdAt + 1_000L)
+
+        assertEquals(1, updated)
+        val other = dao.getAliasByNormalizedKey("othershopa")
+        assertNotNull(other)
+        assertEquals(otherId, other!!.canonicalId)
+        assertEquals(false, other.isUserDefined)
+        assertEquals(createdAt, other.lastUsedAt)
+    }
+
+    @Test
+    fun repointAliases_noAliasesForOldCanonical_returnsZeroAndChangesNothing() = runTest {
+        val oldId = dao.insertCanonical(makeCanonical("Old Shop", "oldshop"))
+        val newId = dao.insertCanonical(makeCanonical("New Shop", "newshop"))
+        val createdAt = 1_700_000_000_000L
+        dao.insertAlias(makeAlias("NEW SHOP A", "newshopa", newId, createdAt))
+
+        val updated = dao.reassignAliases(oldId, newId, createdAt + 1_000L)
+
+        assertEquals(0, updated)
+        val existing = dao.getAliasByNormalizedKey("newshopa")
+        assertNotNull(existing)
+        assertEquals(newId, existing!!.canonicalId)
+        assertEquals(false, existing.isUserDefined)
+        assertEquals(createdAt, existing.lastUsedAt)
+    }
 }

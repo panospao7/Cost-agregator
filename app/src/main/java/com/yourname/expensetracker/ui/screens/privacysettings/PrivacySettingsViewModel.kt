@@ -2,11 +2,13 @@ package com.yourname.expensetracker.ui.screens.privacysettings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
 import com.yourname.expensetracker.domain.privacy.PrivacyBlocked
 import com.yourname.expensetracker.domain.privacy.PrivacySettings
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsLoadState
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -32,7 +34,8 @@ enum class RiskyToggleConfirm { ENABLE_CLOUD_AI, DISABLE_REDACTION }
 
 @HiltViewModel
 class PrivacySettingsViewModel @Inject constructor(
-    private val repository: PrivacySettingsRepository
+    private val repository: PrivacySettingsRepository,
+    private val transactionClassifier: TransactionClassifier
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(PrivacySettingsUiState())
@@ -114,7 +117,9 @@ class PrivacySettingsViewModel @Inject constructor(
     fun setRawNotificationRetentionDays(days: Int) = update { it.copy(rawNotificationRetentionDays = days.coerceIn(0, 365)) }
     fun setRawOcrRetentionDays(days: Int) = update { it.copy(rawOcrRetentionDays = days.coerceIn(0, 365)) }
 
-    fun setRawNotificationStorageMode(mode: com.yourname.expensetracker.domain.privacy.RawStorageMode) = update { it.copy(rawNotificationStorageMode = mode) }
+    fun setRawNotificationStorageMode(mode: com.yourname.expensetracker.domain.privacy.RawStorageMode) = update(
+        afterSave = { transactionClassifier.onRawStorageModeChanged(mode) }
+    ) { it.copy(rawNotificationStorageMode = mode) }
     fun setRawOcrStorageMode(mode: com.yourname.expensetracker.domain.privacy.RawStorageMode) = update { it.copy(rawOcrStorageMode = mode) }
     fun setEmailReceiptStorageMode(mode: com.yourname.expensetracker.domain.privacy.RawStorageMode) = update { it.copy(emailReceiptStorageMode = mode) }
     fun setRawBankStatementStorageMode(mode: com.yourname.expensetracker.domain.privacy.RawStorageMode) = update { it.copy(rawBankStatementStorageMode = mode) }
@@ -125,12 +130,27 @@ class PrivacySettingsViewModel @Inject constructor(
 
     private val updateMutex = Mutex()
 
-    private fun update(transform: (PrivacySettings) -> PrivacySettings) {
+    private fun update(
+        afterSave: (suspend () -> Unit)? = null,
+        transform: (PrivacySettings) -> PrivacySettings
+    ) {
         viewModelScope.launch {
             updateMutex.withLock {
                 try {
                     _uiState.value = _uiState.value.copy(isSaving = true, errorMessage = null)
                     repository.updateSettings(transform)
+                    // J-03-1: runs only after a successful save; a hook failure is not a save failure.
+                    if (afterSave != null) {
+                        try {
+                            afterSave()
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            Timber.w("Privacy setting post-save hook failed: reason=post_save_hook_failed")
+                        }
+                    }
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
                     Timber.e(e, "Failed to update privacy setting")
                     _uiState.value = _uiState.value.copy(

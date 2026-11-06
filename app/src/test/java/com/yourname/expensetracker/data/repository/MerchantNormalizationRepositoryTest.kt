@@ -87,6 +87,35 @@ class MerchantNormalizationRepositoryTest {
     }
 
     @Test
+    fun `E-03-6 repointAliases checks the barrier before the DAO call and returns the DAO row count`() = runBlocking {
+        coEvery { dao.reassignAliases(1L, 2L, 1_700_000_000_000L) } returns 4
+
+        val updated = repository.repointAliases(1L, 2L, 1_700_000_000_000L)
+
+        assertEquals(4, updated)
+        coVerifyOrder {
+            writeBarrier.checkWritesAllowed("MerchantNormalizationRepository.repointAliases")
+            dao.reassignAliases(1L, 2L, 1_700_000_000_000L)
+        }
+    }
+
+    @Test
+    fun `E-03-6 repointAliases with a blocked barrier never calls the DAO`() = runBlocking {
+        every {
+            writeBarrier.checkWritesAllowed("MerchantNormalizationRepository.repointAliases")
+        } throws IllegalStateException("synthetic barrier block")
+
+        try {
+            repository.repointAliases(1L, 2L, 1_700_000_000_000L)
+            fail("blocked barrier must propagate")
+        } catch (e: IllegalStateException) {
+            assertEquals("synthetic barrier block", e.message)
+        }
+
+        coVerify(exactly = 0) { dao.reassignAliases(any(), any(), any()) }
+    }
+
+    @Test
     fun `insertAlias coerces zero timestamps`() = runBlocking {
         val alias = MerchantAlias(rawName = "Test", normalizedKey = "test", canonicalId = 1L, createdAt = 0L, lastUsedAt = 0L)
         coEvery { dao.insertAlias(any()) } returns 5L

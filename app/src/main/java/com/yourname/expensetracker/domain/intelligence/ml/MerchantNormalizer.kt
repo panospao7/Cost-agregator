@@ -144,14 +144,7 @@ class MerchantNormalizer @Inject constructor(
         val oldCanonical = repository.getCanonicalBySearchKey(oldSearchKey)
         
         if (oldCanonical != null && oldCanonical.id != brandId) {
-            val aliases = repository.getAliasesForCanonical(oldCanonical.id)
-            aliases.forEach { alias ->
-                repository.updateAlias(alias.copy(
-                    canonicalId = brandId,
-                    isUserDefined = true,
-                    lastUsedAt = timeProvider.now()
-                ))
-            }
+            repository.repointAliases(oldCanonical.id, brandId, timeProvider.now())
         }
 
         // 3. Link the original POS name to this brand ID (just in case it wasn't a canonical)
