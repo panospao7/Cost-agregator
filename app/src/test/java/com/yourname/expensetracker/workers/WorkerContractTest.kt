@@ -75,6 +75,16 @@ class WorkerContractTest {
     }
 
     @Test
+    fun `pauseAllWorkers cancels the on-enable briefing but resume never re-enqueues it`() {
+        val onEnable = com.yourname.expensetracker.domain.config.AppConfig.Ai.WORK_NAME_DAILY_BRIEFING_ON_ENABLE
+        val targets = com.yourname.expensetracker.data.backup.RestoreMaintenanceMode.pauseTargetNames()
+        assertTrue("pause must cancel $onEnable", onEnable in targets)
+        assertTrue("pause must still cancel every default worker", targets.containsAll(WorkerSpec.DEFAULTS.keys))
+        // On-demand job: not a default worker, so schedule/resume (DEFAULTS-driven) never enqueues it.
+        assertTrue("$onEnable must stay out of WorkerSpec.DEFAULTS", onEnable !in WorkerSpec.DEFAULTS.keys)
+    }
+
+    @Test
     fun `WorkerRegistry entries match WorkerSpec DEFAULTS keys`() {
         // P9-CURRENT-021: the pause side (RestoreMaintenanceMode.pauseAllWorkers)
         // derives from WorkerSpec.DEFAULTS.keys while the schedule/resume side

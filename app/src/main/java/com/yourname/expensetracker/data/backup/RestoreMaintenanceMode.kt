@@ -8,6 +8,7 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.util.CancellationSafe
 import com.yourname.expensetracker.domain.util.MonotonicTimeProvider
 import com.yourname.expensetracker.domain.util.SystemMonotonicTimeProvider
+import com.yourname.expensetracker.domain.workers.PrivacyRuntimeWorkerPolicy
 import com.yourname.expensetracker.domain.workers.WorkerLeaseRegistry
 import com.yourname.expensetracker.domain.workers.WorkerRegistry
 import com.yourname.expensetracker.domain.workers.WorkerSpec
@@ -420,7 +421,11 @@ class RestoreMaintenanceMode @Inject constructor(
         }
     }
 
-    /** Cancels every default worker by its unique work name. */
+    /**
+     * Cancels every default worker and every on-demand worker by its unique work name.
+     * On-demand names are cancel-only: resume and schedule-confirm stay on
+     * [WorkerSpec.DEFAULTS] and never re-enqueue them.
+     */
     private fun pauseAllWorkers(): Unit = synchronized(stateLock) {
         // Invalidates confirmations made by every mode owner, not only this instance.
         workerPauseGeneration++
@@ -431,7 +436,7 @@ class RestoreMaintenanceMode @Inject constructor(
         } catch (_: Exception) {
             return@synchronized
         }
-        for (name in WorkerSpec.DEFAULTS.keys) {
+        for (name in pauseTargetNames()) {
             try {
                 workManager.cancelUniqueWork(name)
                 Timber.d("Cancelled unique worker: %s", name)
@@ -762,6 +767,10 @@ class RestoreMaintenanceMode @Inject constructor(
         internal const val KEY_CRITICAL_TIMESTAMP = "critical_recovery_timestamp"
         internal const val CRITICAL_SENTINEL_FILE = "restore_maintenance_critical"
         private val CRITICAL_SENTINEL_CONTENT = byteArrayOf(1)
+
+        /** Unique work names cancelled by pause: default workers plus cancel-only on-demand jobs. */
+        internal fun pauseTargetNames(): Set<String> =
+            WorkerSpec.DEFAULTS.keys + PrivacyRuntimeWorkerPolicy.onDemandWorkerNames
 
         /**
          * Process-wide swap latch (R25/R27). Raised before the RESTORE_SWAPPING commit and cleared
