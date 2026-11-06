@@ -18,6 +18,7 @@ import io.mockk.verify
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -227,11 +228,120 @@ class ReceiptItemCategorizationInputBuilderTest {
         verify(exactly = 0) { receiptParser.lineItemsFromJson(any()) }
     }
 
-    private fun receiptWithTax(currency: String) = ScannedReceipt(
+    // ── P-03-5: tax-inclusive receipts must not be asked to allocate tax again ──
+
+    @Test
+    fun `P-03-5 tax-inclusive receipt by line-item sum yields null totalTax`() = runTest {
+        every { aiPolicy.canUseCloudFor(any(), AiCapability.RECEIPT_ITEM_CATEGORIZATION) } returns false
+        coEvery { categoryRepository.getAll() } returns emptyList()
+        // Items 10 + 2.5 = 12.5 == total, so the 1.25 tax is already inside the total.
+        val items = listOf(
+            ReceiptParser.LineItem("A", null, null, 10.0),
+            ReceiptParser.LineItem("B", null, null, 2.5)
+        )
+
+        val result = builder.build(receiptWithTax("EUR", parsedTotal = 12.5), AiSettings(), items)
+
+        assertNull(result.totalTax)
+        assertEquals(listOf(10.0, 2.5), result.lineItems.map { it.totalPrice })
+    }
+
+    @Test
+    fun `P-03-5 tax-exclusive receipt keeps the parsed tax`() = runTest {
+        every { aiPolicy.canUseCloudFor(any(), AiCapability.RECEIPT_ITEM_CATEGORIZATION) } returns false
+        coEvery { categoryRepository.getAll() } returns emptyList()
+        // Items 10 + 2.5 = 12.5 + tax 1.25 = total 13.75: tax sits on top of the items.
+        val items = listOf(
+            ReceiptParser.LineItem("A", null, null, 10.0),
+            ReceiptParser.LineItem("B", null, null, 2.5)
+        )
+
+        val result = builder.build(receiptWithTax("EUR", parsedTotal = 13.75), AiSettings(), items)
+
+        assertEquals(1.25, requireNotNull(result.totalTax), 0.0)
+    }
+
+    @Test
+    fun `P-03-5 line-item sum outside the tolerance keeps the parsed tax`() = runTest {
+        every { aiPolicy.canUseCloudFor(any(), AiCapability.RECEIPT_ITEM_CATEGORIZATION) } returns false
+        coEvery { categoryRepository.getAll() } returns emptyList()
+        // Sum 11.0 vs total 12.5: difference 1.5 exceeds 5% of the total (0.625).
+        val items = listOf(ReceiptParser.LineItem("A", null, null, 11.0))
+
+        val result = builder.build(receiptWithTax("EUR", parsedTotal = 12.5), AiSettings(), items)
+
+        assertEquals(1.25, requireNotNull(result.totalTax), 0.0)
+    }
+
+    @Test
+    fun `P-03-5 receipt taxInclusive flag alone yields null totalTax`() = runTest {
+        every { aiPolicy.canUseCloudFor(any(), AiCapability.RECEIPT_ITEM_CATEGORIZATION) } returns false
+        coEvery { categoryRepository.getAll() } returns emptyList()
+        // Numbers say exclusive (12.5 + 1.25 = 13.75) but the transient flag set
+        // during receipt processing says inclusive: the flag wins.
+        val receipt = receiptWithTax("EUR", parsedTotal = 13.75).apply { taxInclusive = true }
+        val items = listOf(ReceiptParser.LineItem("A", null, null, 12.5))
+
+        val result = builder.build(receipt, AiSettings(), items)
+
+        assertNull(result.totalTax)
+    }
+
+    @Test
+    fun `P-03-5 inclusive check uses unredacted ephemeral items when redaction is active`() = runTest {
+        every { aiPolicy.canUseCloudFor(any(), AiCapability.RECEIPT_ITEM_CATEGORIZATION) } returns true
+        every { aiPolicy.shouldRedact(any(), AiCapability.RECEIPT_ITEM_CATEGORIZATION) } returns true
+        coEvery { categoryRepository.getAll() } returns emptyList()
+        val items = listOf(
+            ReceiptParser.LineItem("mail evil@example.com", null, null, 10.0),
+            ReceiptParser.LineItem("1234567890123456", null, null, 2.5)
+        )
+
+        val result = builder.build(receiptWithTax("EUR", parsedTotal = 12.5), AiSettings(), items)
+
+        assertTrue(result.redactBeforeCloud)
+        assertNull(result.totalTax)
+        assertEquals("mail [REDACTED_EMAIL]", result.lineItems.first().description)
+        verify(exactly = 0) { receiptParser.lineItemsFromJson(any()) }
+    }
+
+    @Test
+    fun `P-03-5 inclusive check uses unredacted persisted items when redaction is active`() = runTest {
+        every { aiPolicy.canUseCloudFor(any(), AiCapability.RECEIPT_ITEM_CATEGORIZATION) } returns true
+        every { aiPolicy.shouldRedact(any(), AiCapability.RECEIPT_ITEM_CATEGORIZATION) } returns true
+        coEvery { categoryRepository.getAll() } returns emptyList()
+        every { receiptParser.lineItemsFromJson(any()) } returns listOf(
+            ReceiptParser.LineItem("secret evil@example.com", null, null, 12.5)
+        )
+
+        val result = builder.build(receiptWithTax("EUR", parsedTotal = 12.5), AiSettings())
+
+        assertTrue(result.redactBeforeCloud)
+        assertNull(result.totalTax)
+    }
+
+    @Test
+    fun `P-03-5 redacted exclusive receipt keeps the parsed tax`() = runTest {
+        every { aiPolicy.canUseCloudFor(any(), AiCapability.RECEIPT_ITEM_CATEGORIZATION) } returns true
+        every { aiPolicy.shouldRedact(any(), AiCapability.RECEIPT_ITEM_CATEGORIZATION) } returns true
+        coEvery { categoryRepository.getAll() } returns emptyList()
+        val items = listOf(ReceiptParser.LineItem("secret evil@example.com", null, null, 12.5))
+
+        val result = builder.build(receiptWithTax("EUR", parsedTotal = 13.75), AiSettings(), items)
+
+        assertTrue(result.redactBeforeCloud)
+        assertEquals(1.25, requireNotNull(result.totalTax), 0.0)
+    }
+
+    // The default total is 13.75 (items 12.5 + tax 1.25): an EXCLUSIVE receipt. A
+    // total of 12.5 with a 12.5 line item and 1.25 tax is now (correctly) detected
+    // as tax-inclusive by P-03-5 and would null out totalTax, which is not what the
+    // currency/tax-contract tests above mean to exercise.
+    private fun receiptWithTax(currency: String, parsedTotal: Double = 13.75) = ScannedReceipt(
         id = 9L,
         imagePath = null,
         rawOcrText = "",
-        parsedTotal = 12.5,
+        parsedTotal = parsedTotal,
         parsedMerchant = "Merchant",
         parsedDate = null,
         parsedItems = "items",

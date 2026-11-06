@@ -751,10 +751,15 @@ class SpendingMapViewModel @Inject constructor(
                 originalCurrency = e.currency,
                 conversionStatus = conversionStatus,
                 merchant = e.merchant,
-                date = e.date
+                date = e.date,
+                rateBasis = if (conversionStatus == ConversionStatus.CONVERTED) {
+                    com.yourname.expensetracker.domain.core.money.RateBasis.TRANSACTION_DATE
+                } else {
+                    com.yourname.expensetracker.domain.core.money.RateBasis.IDENTITY
+                }
             )
         }
-        val heatmap = heatmapEngine.computeNormalized(moneyExpenses)
+        val heatmap =heatmapEngine.computeNormalized(moneyExpenses)
         val insights = insightsEngine.computeNormalized(moneyExpenses)
 
         val categoriesById = runCatching {

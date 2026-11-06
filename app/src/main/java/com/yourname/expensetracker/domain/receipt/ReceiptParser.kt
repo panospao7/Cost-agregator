@@ -80,10 +80,11 @@ class ReceiptParser @Inject constructor(
         )
 
         /**
-         * RCP-14: Shared 5%-threshold detection for tax-inclusive receipts.
+         * RCP-14: Shared detection for tax-inclusive receipts.
          * Returns `true` when the sum of line item totals is within 5% of the
-         * receipt total AND a separate tax amount was extracted, indicating
-         * that tax is already embedded in both the line items and the total.
+         * receipt total (and, for a positive tax, within half of that tax) AND a
+         * separate tax amount was extracted, indicating that tax is already
+         * embedded in both the line items and the total.
          */
         fun isTaxInclusive(
             parsedTotal: Double?,
@@ -97,7 +98,19 @@ class ReceiptParser @Inject constructor(
             val lineItemsSum = MoneyAggregateBuilder.fromSourceCurrencyAmounts(
                 lineItems.asSequence().map { it.totalPrice }.asIterable(), currency
             ).aggregateOrNull()?.displayAmount ?: return false
-            return kotlin.math.abs(lineItemsSum - parsedTotal) < (parsedTotal * 0.05)
+            return reconcilesAsTaxInclusive(parsedTotal, parsedTaxAmount, lineItemsSum)
+        }
+
+        /**
+         * Single owner of the tax-inclusive tolerance. The gap between the line-item sum and
+         * the total must be under 5% of the total; when a positive tax amount is present it
+         * must also be under half of that tax, so a tax-exclusive receipt (items + tax = total,
+         * gap equal to the tax) is never read as inclusive. Zero tax keeps the 5% rule.
+         */
+        private fun reconcilesAsTaxInclusive(total: Double, tax: Double, itemsSum: Double): Boolean {
+            val fivePercent = total * 0.05
+            val bound = if (tax > 0.0) minOf(fivePercent, tax / 2.0) else fivePercent
+            return kotlin.math.abs(itemsSum - total) < bound
         }
 
         fun sourceMoneyOrNull(amount: Double?, currency: String): MoneyAmount? {
@@ -408,8 +421,7 @@ class ReceiptParser @Inject constructor(
         val taxInclusive = if (finalTotal != null && taxAmount != null &&
             lineItems.isNotEmpty() && lineItemsSum != null
         ) {
-            val difference = (finalTotal - lineItemsSum).abs().amount
-            difference < finalTotal.amount * 0.05
+            reconcilesAsTaxInclusive(finalTotal.amount, taxAmount.amount, lineItemsSum.amount)
         } else false
 
         // 10. Calculate subtotal

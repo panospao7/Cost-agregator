@@ -75,13 +75,25 @@ class ReceiptItemCategorizationInputBuilder @Inject constructor(
             emptyList()
         }
         
+        // P-03-5: a tax-inclusive receipt already contains the tax inside its gross
+        // line amounts, so allocating the tax on top would double count VAT. The
+        // allocator treats a null totalTax as "not requested". The rule is the
+        // shared ReceiptParser.isTaxInclusive (same as ReceiptRepository.detectTaxInclusive);
+        // it is evaluated on the unredacted source items, never on redacted text.
+        val taxInclusive = receipt.taxInclusive || ReceiptParser.isTaxInclusive(
+            receipt.parsedTotal,
+            receipt.parsedTaxAmount,
+            sourceItems,
+            receipt.currency
+        )
+
         return ReceiptItemCategorizationInput(
             receiptId = receipt.id,
             merchant = sanitizeMerchant(receipt.parsedMerchant ?: "Unknown Merchant", shouldRedact),
             lineItems = lineItems,
             userCategories = categoryRefs,
             cloudCategoryOptions = cloudCategoryOptions,
-            totalTax = receipt.parsedTaxAmount,
+            totalTax = if (taxInclusive) null else receipt.parsedTaxAmount,
             currency = receipt.currency,
             redactBeforeCloud = shouldRedact
         )

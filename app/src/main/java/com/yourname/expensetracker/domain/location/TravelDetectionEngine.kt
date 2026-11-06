@@ -231,13 +231,16 @@ class TravelDetectionEngine @Inject constructor() {
      *
      * Same algorithm as [compute] but:
      * - Accepts [LocatedMoneyExpense] with pre-normalised amounts
-     * - Skips expenses where [ConversionStatus] is [ConversionStatus.FAILED]
+     * - Rows without a usable normalised amount (for example FAILED) do not affect
+     *   the home centroid or trip grouping, but are counted as excluded in the
+     *   home/local/travel aggregate for the zone they fall in (and in the trip whose
+     *   date range contains them), so those aggregates are partial
      * - Returns [NormalizedTravelInsight] with [MoneyAggregate] fields instead of
      *   raw [Double] sums
      *
      * @param expenses  Located expenses with normalised amounts.
      * @param homeCurrency  User's home currency code (e.g. "EUR").
-     * @param converter  CurrencyConverter for multi-currency aggregation via [MoneyAggregateBuilder].
+     * @param converter  Unused; retained for API compatibility. No conversion is performed.
      * @return A [NormalizedTravelInsight] if home could be determined, or null if
      *         fewer than [MIN_EXPENSES_FOR_HOME] valid expenses are available.
      */
@@ -288,13 +291,27 @@ class TravelDetectionEngine @Inject constructor() {
             }
         }
 
+        // Dropped (e.g. FAILED) rows: classified by zone only to report exclusions.
+        var homeDropped = 0
+        var localDropped = 0
+        val travelDropped = mutableListOf<LocatedMoneyExpense>()
+        for (exp in expenses) {
+            if (exp.normalizedAmountOrNull != null) continue
+            val distKm = GeoUtils.haversineKm(homeLat, homeLon, exp.latitude, exp.longitude)
+            when {
+                distKm <= HOME_RADIUS_KM  -> homeDropped++
+                distKm <= LOCAL_RADIUS_KM -> localDropped++
+                else -> travelDropped.add(exp)
+            }
+        }
+
         // ── 3. Build MoneyAggregate for each category ──────────────────────
-        val homeAggregate = buildAggregate(homeExpenses, homeCurrency, converter)
-        val localAggregate = buildAggregate(localExpenses, homeCurrency, converter)
-        val travelAggregate = buildAggregate(travelExpenses, homeCurrency, converter)
+        val homeAggregate = buildAggregate(homeExpenses, homeCurrency, homeDropped)
+        val localAggregate = buildAggregate(localExpenses, homeCurrency, localDropped)
+        val travelAggregate = buildAggregate(travelExpenses, homeCurrency, travelDropped.size)
 
         // ── 4. Group travel expenses into trips ────────────────────────────
-        val trips = groupIntoTripsNormalized(travelExpenses, homeCurrency, converter)
+        val trips = groupIntoTripsNormalized(travelExpenses, homeCurrency, travelDropped)
 
         return NormalizedTravelInsight(
             homeLatitude = homeLat,
@@ -310,10 +327,10 @@ class TravelDetectionEngine @Inject constructor() {
      * Groups [LocatedMoneyExpense]s into trips using the same gap logic as
      * [groupIntoTrips], but builds a [MoneyAggregate] per trip.
      */
-    private suspend fun groupIntoTripsNormalized(
+    private fun groupIntoTripsNormalized(
         travelExpenses: List<LocatedMoneyExpense>,
         homeCurrency: String,
-        converter: CurrencyConverter
+        droppedTravel: List<LocatedMoneyExpense>
     ): List<NormalizedTravelTrip> {
         if (travelExpenses.isEmpty()) return emptyList()
 
@@ -340,7 +357,10 @@ class TravelDetectionEngine @Inject constructor() {
                     NormalizedTravelTrip(
                         startDate = tripStart,
                         endDate = tripEnd,
-                        aggregate = buildAggregate(tripExpenses, homeCurrency, converter),
+                        aggregate = buildAggregate(
+                            tripExpenses, homeCurrency,
+                            droppedTravel.count { it.date in tripStart..tripEnd }
+                        ),
                         transactionCount = tripExpenses.size,
                         destinationHint = tripDest
                     )
@@ -356,7 +376,10 @@ class TravelDetectionEngine @Inject constructor() {
             NormalizedTravelTrip(
                 startDate = tripStart,
                 endDate = tripEnd,
-                aggregate = buildAggregate(tripExpenses, homeCurrency, converter),
+                aggregate = buildAggregate(
+                    tripExpenses, homeCurrency,
+                    droppedTravel.count { it.date in tripStart..tripEnd }
+                ),
                 transactionCount = tripExpenses.size,
                 destinationHint = tripDest
             )
@@ -367,16 +390,20 @@ class TravelDetectionEngine @Inject constructor() {
 
     /**
      * Build a [MoneyAggregate] from a list of [LocatedMoneyExpense]s.
-     * Returns an empty aggregate when the list is empty.
+     * Returns an empty aggregate when the list is empty and nothing was dropped;
+     * [droppedCount] rows are reported as excluded (partial result).
      */
-    private suspend fun buildAggregate(
+    private fun buildAggregate(
         expenses: List<LocatedMoneyExpense>,
         homeCurrency: String,
-        converter: CurrencyConverter
+        droppedCount: Int
     ): MoneyAggregate {
-        if (expenses.isEmpty()) return MoneyAggregate.empty(CurrencyCode.parseOr(homeCurrency, CurrencyCode.EUR))
-        val buckets = expenses.map { Pair(it.normalizedAmountOrNull!!, it.normalizedCurrency) }
-        return MoneyAggregateBuilder.fromBuckets(buckets, homeCurrency, converter)
+        if (expenses.isEmpty() && droppedCount == 0) {
+            return MoneyAggregate.empty(CurrencyCode.parseOr(homeCurrency, CurrencyCode.EUR))
+        }
+        // S19-4: rows are already normalized; no conversion. Non-home rows are
+        // excluded and the aggregate is marked partial.
+        return expenses.toHomeCurrencyAggregate(homeCurrency, droppedCount)
     }
 
     private companion object {

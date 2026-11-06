@@ -153,14 +153,18 @@ class AreaSpendingEngine @Inject constructor() {
      * Currency-safe area spending using [LocatedMoneyExpense].
      *
      * Groups expenses by grid cell (~1 km) and builds a [MoneyAggregate] per cell
-     * via [MoneyAggregateBuilder.fromBuckets]. Skips expenses with failed conversion.
+     * via [toHomeCurrencyAggregate] (no conversion; rows are already normalized).
+     * Expenses with failed conversion do not affect centroids or areas, but are
+     * counted as excluded in the aggregate of the area owning their grid cell, so
+     * that aggregate is partial. A failed row in a cell with no valid rows has no
+     * area to attach to and is not reported.
      * Cells sharing the same parsed area name are merged together.
      * Results are sorted by aggregate display amount descending.
      *
      * @param expenses  Located expenses (caller must ensure they are pre-filtered
      *                  to spending-only transaction types).
      * @param homeCurrency  User's home currency code (e.g. "EUR").
-     * @param converter  CurrencyConverter for multi-currency aggregation.
+     * @param converter  Unused; retained for API compatibility. No conversion is performed.
      * @return List of [NormalizedAreaSpending] sorted by total descending.
      */
     suspend fun computeNormalized(
@@ -172,6 +176,10 @@ class AreaSpendingEngine @Inject constructor() {
             it.normalizedAmountOrNull != null
         }
         if (validExpenses.isEmpty()) return emptyList()
+        val droppedByCell = expenses
+            .filter { it.normalizedAmountOrNull == null }
+            .groupingBy { GridCell((it.latitude / GRID_DEG).toLong(), (it.longitude / GRID_DEG).toLong()) }
+            .eachCount()
 
         // ── 1. Group by grid cell, collecting area name candidates ──────────
         val cells = HashMap<GridCell, Accumulator>()
@@ -195,7 +203,8 @@ class AreaSpendingEngine @Inject constructor() {
         data class AreaAccum(
             val expenses: MutableList<LocatedMoneyExpense> = mutableListOf(),
             var latSum: Double = 0.0,
-            var lonSum: Double = 0.0
+            var lonSum: Double = 0.0,
+            var droppedCount: Int = 0
         )
 
         val byArea = HashMap<String, AreaAccum>()
@@ -204,6 +213,7 @@ class AreaSpendingEngine @Inject constructor() {
             val existing = byArea.getOrPut(resolvedAreaName) { AreaAccum() }
             existing.latSum += acc.latSum
             existing.lonSum += acc.lonSum
+            existing.droppedCount += droppedByCell[cell] ?: 0
             // Collect all expenses from this cell
             val cellExpenses = validExpenses.filter { exp ->
                 val latBucket = (exp.latitude / GRID_DEG).toLong()
@@ -215,15 +225,12 @@ class AreaSpendingEngine @Inject constructor() {
 
         // ── 3. Build NormalizedAreaSpending for each area ──────────────────
         return byArea.entries.map { (areaName, areaAcc) ->
-            val aggregate = MoneyAggregateBuilder.fromBuckets(
-                areaAcc.expenses.map { exp ->
-                    Pair(exp.normalizedAmountOrNull!!, exp.normalizedCurrency)
-                },
-                homeCurrency,
-                converter
-            )
+            // S19-4: rows are already normalized; no conversion. Non-home rows are
+            // excluded and the aggregate is marked partial.
+            val aggregate = areaAcc.expenses.toHomeCurrencyAggregate(homeCurrency, areaAcc.droppedCount)
             val transactionCount = areaAcc.expenses.size
-            val avgTransaction = if (transactionCount > 0) aggregate.displayAmount / transactionCount else 0.0
+            val includedCount = aggregate.metadata.includedTransactionCount
+            val avgTransaction = if (includedCount > 0) aggregate.displayAmount / includedCount else 0.0
             NormalizedAreaSpending(
                 areaName = areaName,
                 aggregate = aggregate,
