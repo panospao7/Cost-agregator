@@ -14,12 +14,18 @@ import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifie
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.parser.AppParserRegistry
 import com.yourname.expensetracker.domain.parser.ParseOutcome
+import com.yourname.expensetracker.domain.parser.ParsedTransaction
+import com.yourname.expensetracker.domain.parser.ParsedTransactionType
+import com.yourname.expensetracker.domain.parser.provenance.AiFallbackStatus
+import com.yourname.expensetracker.domain.parser.provenance.ParseProvenance
+import com.yourname.expensetracker.domain.parser.provenance.ParserSource
 import com.yourname.expensetracker.domain.privacy.PrivacySettings
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.domain.privacy.RawStorageMode
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
 import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
+import com.yourname.expensetracker.domain.transaction.ExpenseSource
 import com.yourname.expensetracker.domain.sideeffect.MutationResult
 import com.yourname.expensetracker.domain.sideeffect.PostCommitActionBatch
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
@@ -918,6 +924,102 @@ class ReviewQueueRepositoryTest {
             "Fallback suggestedAmount must be null (synthetic placeholder sentinel), was ${captured.suggestedAmount}",
             captured.suggestedAmount
         )
+    }
+
+    // ── MAJOR-1: markAsRelevant must not auto-create from AI-fallback or ambiguous parses ──
+    // A real AppParserRegistry needs ~10 collaborators (bank parsers, AI fallback, settings,
+    // home-currency lookup); the logic under test lives in the repository, so the registry is
+    // stubbed to return real ParseOutcome/ParseProvenance values.
+
+    private val aiRelevantNotification = RawNotification(
+        id = 950L,
+        packageName = "com.bank.app",
+        appName = "Bank",
+        title = "Payment",
+        text = "You paid 12.50 at Cafe",
+        timestamp = 1700000000000L,
+        capturedAt = 1700000000000L
+    )
+
+    private fun provenanceFor(source: ParserSource) = ParseProvenance(
+        source = source,
+        winningParserId = "test",
+        deterministicAttempted = true,
+        deterministicSucceeded = source == ParserSource.SPECIFIC_DETERMINISTIC ||
+            source == ParserSource.GENERIC_DETERMINISTIC,
+        aiAttempted = source == ParserSource.AI_FALLBACK,
+        aiStatus = if (source == ParserSource.AI_FALLBACK) AiFallbackStatus.SUCCEEDED
+        else AiFallbackStatus.NOT_NEEDED,
+        aiProvider = null,
+        aiModel = null,
+        confidence = 0.9f,
+        failureReason = null,
+        attempts = emptyList()
+    )
+
+    private fun parsedTx(isAmountAmbiguous: Boolean = false) = ParsedTransaction(
+        amount = 12.5,
+        currency = "EUR",
+        merchant = "Cafe",
+        type = ParsedTransactionType.PURCHASE,
+        confidence = 0.9f,
+        isAmountAmbiguous = isAmountAmbiguous
+    )
+
+    private fun stubOutcome(outcome: ParseOutcome) {
+        coEvery { rawNotificationDao.getById(950L) } returns aiRelevantNotification
+        coEvery {
+            parserRegistry.parseWithProvenance(any(), any(), any(), any(), any())
+        } returns outcome
+        coEvery { transactionLifecycleCoordinator.createExpenseDbOnlyV2(any()) } returns
+            MutationResult(CreateExpenseResult.Created(777L), PostCommitActionBatch.empty(""))
+    }
+
+    @Test
+    fun `markAsRelevant treats AI_FALLBACK parse as no parse and takes placeholder path`() = runTest {
+        stubOutcome(ParseOutcome.Parsed(parsedTx(), provenanceFor(ParserSource.AI_FALLBACK)))
+
+        repository.markAsRelevant(950L, isRelevant = true)
+
+        coVerify(exactly = 0) { transactionLifecycleCoordinator.createExpenseDbOnlyV2(any()) }
+        val slot = slot<PendingReview>()
+        coVerify(exactly = 1) { pendingReviewDao.upsertByRawNotificationId(capture(slot)) }
+        assertEquals(ExtractionState.SYNTHETIC_PLACEHOLDER, slot.captured.extractionState)
+        assertNull(slot.captured.suggestedAmount)
+    }
+
+    @Test
+    fun `markAsRelevant treats ambiguous deterministic amount as no parse and takes placeholder path`() = runTest {
+        stubOutcome(
+            ParseOutcome.Parsed(
+                parsedTx(isAmountAmbiguous = true),
+                provenanceFor(ParserSource.SPECIFIC_DETERMINISTIC)
+            )
+        )
+
+        repository.markAsRelevant(950L, isRelevant = true)
+
+        coVerify(exactly = 0) { transactionLifecycleCoordinator.createExpenseDbOnlyV2(any()) }
+        val slot = slot<PendingReview>()
+        coVerify(exactly = 1) { pendingReviewDao.upsertByRawNotificationId(capture(slot)) }
+        assertEquals(ExtractionState.SYNTHETIC_PLACEHOLDER, slot.captured.extractionState)
+    }
+
+    @Test
+    fun `markAsRelevant creates auto-accept expense for unambiguous deterministic parse`() = runTest {
+        stubOutcome(ParseOutcome.Parsed(parsedTx(), provenanceFor(ParserSource.GENERIC_DETERMINISTIC)))
+
+        repository.markAsRelevant(950L, isRelevant = true)
+
+        coVerify(exactly = 1) {
+            transactionLifecycleCoordinator.createExpenseDbOnlyV2(
+                match {
+                    it.amount == 12.5 && it.currency == "EUR" && it.merchant == "Cafe" &&
+                        it.source == ExpenseSource.NOTIFICATION_AUTO_ACCEPT
+                }
+            )
+        }
+        coVerify(exactly = 0) { pendingReviewDao.upsertByRawNotificationId(any()) }
     }
 
     // ── Queue accessors and bulk operations (ported from the retired ReviewQueueRepositoryStressTest) ──
