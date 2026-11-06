@@ -284,15 +284,15 @@ class BudgetSurfaceAgreementTest {
             recurringPatternsProvider = recurring,
             anomalyAlertRepository = anomalies,
             getMonteCarloBudgetImpact = mockk(),
-            monteCarloSimulator = radarSimulator,
             expenseRepository = expenseRepository,
-            budgetRepository = budgetRepository,
             analyticsCurrencyNormalizer =
                 com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer(currencyConverter),
             currencySettingsRepository = settings,
             currencyConverter = currencyConverter,
             timeProvider = timeProvider
-        ).compute()
+        // TODO(test-author, P-05-5): compile-only fixture; the Radar no longer simulates, so `limits`
+        // is never filled. Rebase this on RadarBudgetInput.Simulated(card result).
+        ).compute(RadarBudgetInput.None)
         return limits
     }
 
@@ -465,7 +465,7 @@ class BudgetSurfaceAgreementTest {
         coEvery { monthlySavingsSweepUseCase.computeSweepRecommendationResult() } returns
             SavingsSweepComputationResult.NoRecommendation()
         val computeMoneyRadarUseCase = mockk<ComputeMoneyRadarUseCase>(relaxed = true)
-        coEvery { computeMoneyRadarUseCase.compute() } returns MoneyRadarData(
+        coEvery { computeMoneyRadarUseCase.compute(any()) } returns MoneyRadarData(
             urgencyScore = 0,
             urgencyLevel = UrgencyLevel.GREEN,
             dueBills = emptyList(),

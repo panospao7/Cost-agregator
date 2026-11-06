@@ -241,7 +241,7 @@ class DashboardBudgetProvenanceChainTest {
         val sweep = mockk<MonthlySavingsSweepUseCase>(relaxed = true)
         coEvery { sweep.computeSweepRecommendationResult() } returns SavingsSweepComputationResult.NoRecommendation()
         val radar = mockk<ComputeMoneyRadarUseCase>(relaxed = true)
-        coEvery { radar.compute() } returns MoneyRadarData(
+        coEvery { radar.compute(any()) } returns MoneyRadarData(
             urgencyScore = 0, urgencyLevel = UrgencyLevel.GREEN, dueBills = emptyList(),
             anomalyAlerts = emptyList(), budgetRisk = null, topReasons = emptyList(), primaryCta = null
         )

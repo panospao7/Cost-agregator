@@ -81,7 +81,7 @@ class ComputeMoneyRadarUseCaseTest {
                 1 -> coEvery { anomalyAlertRepository.getActiveAlerts() } throws failure
                 2 -> every { budgetRepository.getBudgetStatuses() } returns kotlinx.coroutines.flow.flow { throw failure }
             }
-            assertRadarUnavailable(useCase.compute())
+            assertRadarUnavailable(useCase.compute(RadarBudgetInput.None))
         }
     }
 
@@ -95,7 +95,7 @@ class ComputeMoneyRadarUseCaseTest {
                 1 -> coEvery { anomalyAlertRepository.getActiveAlerts() } throws cancellation
                 2 -> every { budgetRepository.getBudgetStatuses() } returns kotlinx.coroutines.flow.flow { throw cancellation }
             }
-            val failure = runCatching { useCase.compute() }.exceptionOrNull()
+            val failure = runCatching { useCase.compute(RadarBudgetInput.None) }.exceptionOrNull()
             assertTrue(failure is kotlinx.coroutines.CancellationException)
         }
     }
@@ -106,7 +106,7 @@ class ComputeMoneyRadarUseCaseTest {
         every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(1000.0)))
         coEvery { expenseRepository.getExpensesSince(any()) } returns emptyList()
         coEvery { monteCarloSimulator.simulate(any(), any(), any(), any()) } returns null
-        assertRadarUnavailable(useCase.compute())
+        assertRadarUnavailable(useCase.compute(RadarBudgetInput.None))
     }
 
     @Test
@@ -118,7 +118,7 @@ class ComputeMoneyRadarUseCaseTest {
         coEvery { monteCarloSimulator.simulate(any(), any(), any(), any()) } returns simulation
         for (outcome in listOf(Result.Loading, Result.Duplicate, Result.Error(message = "SECRET payload"))) {
             every { getMonteCarloBudgetImpact(1000.0, simulation) } returns outcome
-            assertRadarUnavailable(useCase.compute())
+            assertRadarUnavailable(useCase.compute(RadarBudgetInput.None))
         }
     }
 
@@ -128,7 +128,7 @@ class ComputeMoneyRadarUseCaseTest {
         coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns
             listOf(recurring("Bill", 10.0, now + dayMs))
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } throws IllegalStateException("private")
-        assertRadarUnavailable(useCase.compute())
+        assertRadarUnavailable(useCase.compute(RadarBudgetInput.None))
     }
 
     private fun stubHealthyRadarSignals() {
@@ -143,7 +143,7 @@ class ComputeMoneyRadarUseCaseTest {
         every { currencySettingsRepository.homeCurrency() } returns flowOf("")
         every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(1000.0)))
 
-        assertRadarUnavailable(useCase.compute())
+        assertRadarUnavailable(useCase.compute(RadarBudgetInput.None))
         coVerify(exactly = 0) { monteCarloSimulator.simulate(any(), any(), any(), any()) }
     }
 
@@ -166,7 +166,7 @@ class ComputeMoneyRadarUseCaseTest {
             status.copy(budget = status.budget.copy(currency = "UNKNOWN"), currency = "UNKNOWN")
         ))
 
-        val result = useCase.compute()
+        val result = useCase.compute(RadarBudgetInput.None)
 
         assertTrue(result.urgencyLevel != UrgencyLevel.UNAVAILABLE)
         assertNotNull(result.urgencyScore)
@@ -184,7 +184,7 @@ class ComputeMoneyRadarUseCaseTest {
             expense(100.0, TransactionType.PURCHASE, now - dayMs).copy(currency = "UNKNOWN")
         )
 
-        assertRadarUnavailable(useCase.compute())
+        assertRadarUnavailable(useCase.compute(RadarBudgetInput.None))
         coVerify(exactly = 0) { monteCarloSimulator.simulate(any(), any(), any(), any()) }
     }
 
@@ -214,7 +214,7 @@ class ComputeMoneyRadarUseCaseTest {
             MonteCarloBudgetImpact(1000.0, 1000.0, 0.0, 0.5, RiskTier.MEDIUM)
         )
 
-        assertNotNull(useCase.compute().budgetRisk)
+        assertNotNull(useCase.compute(RadarBudgetInput.None).budgetRisk)
         coVerify(exactly = 1) { monteCarloSimulator.simulate(300.0, 0.0, 1000.0, "USD") }
     }
 
@@ -244,7 +244,7 @@ class ComputeMoneyRadarUseCaseTest {
             MonteCarloBudgetImpact(1000.0, 950.0, 0.0, 0.3, RiskTier.MEDIUM)
         )
 
-        val result = useCase.compute()
+        val result = useCase.compute(RadarBudgetInput.None)
 
         assertTrue(result.urgencyLevel != UrgencyLevel.UNAVAILABLE)
         assertNotNull(result.urgencyScore)
@@ -273,7 +273,7 @@ class ComputeMoneyRadarUseCaseTest {
                 message = "No USD->EUR rate available"
             )
 
-        assertRadarUnavailable(useCase.compute())
+        assertRadarUnavailable(useCase.compute(RadarBudgetInput.None))
         coVerify(exactly = 0) { monteCarloSimulator.simulate(any(), any(), any(), any()) }
     }
 
@@ -303,9 +303,7 @@ class ComputeMoneyRadarUseCaseTest {
             recurringPatternsProvider = mergedRecurringPatternsProvider,
             anomalyAlertRepository = anomalyAlertRepository,
             getMonteCarloBudgetImpact = getMonteCarloBudgetImpact,
-            monteCarloSimulator = monteCarloSimulator,
             expenseRepository = expenseRepository,
-            budgetRepository = budgetRepository,
             analyticsCurrencyNormalizer = AnalyticsCurrencyNormalizer(currencyConverter),
             currencySettingsRepository = currencySettingsRepository,
             currencyConverter = currencyConverter,
@@ -347,7 +345,7 @@ class ComputeMoneyRadarUseCaseTest {
         )
         every { getMonteCarloBudgetImpact(1000.0, mcResult) } returns Result.Success(impact)
 
-        val result = useCase.compute()
+        val result = useCase.compute(RadarBudgetInput.None)
 
         // Due bills: 3 with large-bill bonus => 80, anomalies: 2 => 60,
         // budget risk: probability 80 + magnitude 10 + critical 20 => capped at 100.
@@ -389,7 +387,7 @@ class ComputeMoneyRadarUseCaseTest {
             expense(5000.0, TransactionType.DEPOSIT, now - dayMs)
         )
 
-        val result = useCase.compute()
+        val result = useCase.compute(RadarBudgetInput.None)
 
         assertEquals(listOf("DueToday", "DueInSeven"), result.dueBills.map { it.merchant })
         assertEquals(listOf(0, 7), result.dueBills.map { it.daysUntilDue })
@@ -409,7 +407,7 @@ class ComputeMoneyRadarUseCaseTest {
             expense(5000.0, TransactionType.DEPOSIT, now - dayMs)
         )
 
-        val result = useCase.compute()
+        val result = useCase.compute(RadarBudgetInput.None)
 
         assertEquals(listOf("Morning Bill"), result.dueBills.map { it.merchant })
         assertEquals(listOf(0), result.dueBills.map { it.daysUntilDue })
@@ -425,7 +423,7 @@ class ComputeMoneyRadarUseCaseTest {
         )
         every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
 
-        val result = useCase.compute()
+        val result = useCase.compute(RadarBudgetInput.None)
 
         assertEquals(2, result.anomalyAlerts.size)
         assertEquals(listOf("Recent", "OlderButValid"), result.anomalyAlerts.map { it.merchant })
@@ -470,7 +468,7 @@ class ComputeMoneyRadarUseCaseTest {
             )
         )
 
-        val result = useCase.compute()
+        val result = useCase.compute(RadarBudgetInput.None)
 
         assertNotNull(result.budgetRisk)
         assertApproxEquals(300.0, capturedSpentToDate, 0.0001)
@@ -484,7 +482,7 @@ class ComputeMoneyRadarUseCaseTest {
         coEvery { anomalyAlertRepository.getActiveAlerts() } returns emptyList()
         every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
 
-        val result = useCase.compute()
+        val result = useCase.compute(RadarBudgetInput.None)
 
         assertTrue(result.dueBills.isEmpty())
         assertEquals(0, result.urgencyScore)
@@ -502,7 +500,7 @@ class ComputeMoneyRadarUseCaseTest {
             expense(2_000.0, TransactionType.DEPOSIT, now - dayMs)
         )
 
-        val result = useCase.compute()
+        val result = useCase.compute(RadarBudgetInput.None)
 
         assertEquals(listOf("Confirmed Rent"), result.dueBills.map { it.merchant })
         assertTrue(requireNotNull(result.urgencyScore) > 0)
@@ -541,7 +539,7 @@ class ComputeMoneyRadarUseCaseTest {
             )
         )
 
-        val result = useCase.compute()
+        val result = useCase.compute(RadarBudgetInput.None)
 
         assertEquals(listOf("Morning Bill"), result.dueBills.map { it.merchant })
         assertApproxEquals(120.0, capturedKnownUpcoming, 0.0001)
@@ -564,7 +562,7 @@ class ComputeMoneyRadarUseCaseTest {
         coEvery { anomalyAlertRepository.getActiveAlerts() } returns emptyList()
         every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
 
-        val result = useCase.compute()
+        val result = useCase.compute(RadarBudgetInput.None)
 
         assertEquals(0, result.urgencyScore)
         assertEquals(UrgencyLevel.GREEN, result.urgencyLevel)
@@ -609,7 +607,7 @@ class ComputeMoneyRadarUseCaseTest {
             )
         )
 
-        useCase.compute()
+        useCase.compute(RadarBudgetInput.None)
 
         assertApproxEquals(300.0, capturedSpentToDate, 0.0001)
     }
@@ -646,8 +644,8 @@ class ComputeMoneyRadarUseCaseTest {
             )
         )
 
-        val lowRisk = useCase.compute()
-        val highRisk = useCase.compute()
+        val lowRisk = useCase.compute(RadarBudgetInput.None)
+        val highRisk = useCase.compute(RadarBudgetInput.None)
 
         assertTrue(requireNotNull(highRisk.urgencyScore) > requireNotNull(lowRisk.urgencyScore))
         assertTrue(highRisk.urgencyLevel >= lowRisk.urgencyLevel)
@@ -684,7 +682,7 @@ class ComputeMoneyRadarUseCaseTest {
     fun `critical budget risk alone floors at 31 YELLOW and never RED`() = runTest {
         stubBudgetRiskOnly(RiskTier.CRITICAL)
 
-        val result = useCase.compute()
+        val result = useCase.compute(RadarBudgetInput.None)
 
         // Budget part: min(100, 80+10+20) * 0.3 = 30, which would be GREEN without the floor.
         assertEquals(31, result.urgencyScore)
@@ -695,7 +693,7 @@ class ComputeMoneyRadarUseCaseTest {
     fun `high budget risk alone floors at 31 YELLOW`() = runTest {
         stubBudgetRiskOnly(RiskTier.HIGH)
 
-        val result = useCase.compute()
+        val result = useCase.compute(RadarBudgetInput.None)
 
         // Budget part: (80+0+10) * 0.3 = 27, floored to 31.
         assertEquals(31, result.urgencyScore)
@@ -706,7 +704,7 @@ class ComputeMoneyRadarUseCaseTest {
     fun `medium budget risk alone is not floored`() = runTest {
         stubBudgetRiskOnly(RiskTier.MEDIUM)
 
-        val result = useCase.compute()
+        val result = useCase.compute(RadarBudgetInput.None)
 
         // Budget part: (80+0+5) * 0.3 = 25.
         assertEquals(25, result.urgencyScore)
@@ -723,7 +721,7 @@ class ComputeMoneyRadarUseCaseTest {
             )
         )
 
-        val result = useCase.compute()
+        val result = useCase.compute(RadarBudgetInput.None)
 
         // Anomalies 60*0.3 = 18 plus budget 30 = 48, above the floor of 31.
         assertEquals(48, result.urgencyScore)
@@ -740,7 +738,7 @@ class ComputeMoneyRadarUseCaseTest {
             )
         )
 
-        val result = useCase.compute()
+        val result = useCase.compute(RadarBudgetInput.None)
 
         assertNull(result.budgetRisk)
         assertEquals(18, result.urgencyScore)
@@ -758,7 +756,7 @@ class ComputeMoneyRadarUseCaseTest {
             expense(5000.0, TransactionType.DEPOSIT, now - dayMs)
         )
 
-        val result = useCase.compute()
+        val result = useCase.compute(RadarBudgetInput.None)
 
         assertEquals(
             "1 bill due soon: Netflix",
@@ -777,7 +775,7 @@ class ComputeMoneyRadarUseCaseTest {
             expense(5000.0, TransactionType.DEPOSIT, now - dayMs)
         )
 
-        val result = useCase.compute()
+        val result = useCase.compute(RadarBudgetInput.None)
 
         assertEquals(listOf("Netflix"), result.dueBills.map { it.merchant })
         assertApproxEquals(15.0, result.dueBills.single().amount, 0.0001)
@@ -814,7 +812,7 @@ class ComputeMoneyRadarUseCaseTest {
             )
         )
 
-        val formattedReasons = useCase.compute().topReasons.map { it.asString(context) }
+        val formattedReasons = useCase.compute(RadarBudgetInput.None).topReasons.map { it.asString(context) }
 
         assertTrue(formattedReasons.contains("2 unusual charges need review"))
         assertTrue(formattedReasons.contains("High risk of exceeding budget (65%)"))
@@ -867,7 +865,7 @@ class ComputeMoneyRadarUseCaseTest {
         coEvery { monteCarloSimulator.simulate(any(), any(), any(), any()) } returns
             monteCarloResult(probabilityUnderBudget = null)
 
-        val result = useCase.compute()
+        val result = useCase.compute(RadarBudgetInput.None)
 
         assertTrue(result.urgencyLevel != UrgencyLevel.UNAVAILABLE)
         assertNotNull(result.urgencyScore)
@@ -886,7 +884,7 @@ class ComputeMoneyRadarUseCaseTest {
         )
         coEvery { monteCarloSimulator.simulate(any(), any(), any(), any()) } returns null
 
-        assertRadarUnavailable(useCase.compute())
+        assertRadarUnavailable(useCase.compute(RadarBudgetInput.None))
     }
 
     @Test
@@ -900,7 +898,7 @@ class ComputeMoneyRadarUseCaseTest {
         coEvery { monteCarloSimulator.simulate(any(), any(), any(), any()) } returns simulation
         every { getMonteCarloBudgetImpact(500.0, simulation) } returns Result.Error(message = "SECRET payload")
 
-        assertRadarUnavailable(useCase.compute())
+        assertRadarUnavailable(useCase.compute(RadarBudgetInput.None))
     }
 
     // ---------------------------------------------------------------- P-05-5 limit derivation
@@ -926,7 +924,7 @@ class ComputeMoneyRadarUseCaseTest {
         val limits = mutableListOf<Double>()
         val simulation = stubSimulationCapturingLimit(limits, limitForImpact = 600.0)
 
-        val result = useCase.compute()
+        val result = useCase.compute(RadarBudgetInput.None)
 
         assertNotNull(result.budgetRisk)
         assertEquals(listOf(600.0), limits)
@@ -945,7 +943,7 @@ class ComputeMoneyRadarUseCaseTest {
         ))
         coEvery { expenseRepository.getExpensesSince(any()) } returns emptyList()
 
-        val result = useCase.compute()
+        val result = useCase.compute(RadarBudgetInput.None)
 
         assertTrue("a missing comparison is not an unavailable radar", result.urgencyLevel != UrgencyLevel.UNAVAILABLE)
         assertNull(result.budgetRisk)
@@ -976,7 +974,7 @@ class ComputeMoneyRadarUseCaseTest {
             every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(status))
             coEvery { expenseRepository.getExpensesSince(any()) } returns emptyList()
 
-            val result = useCase.compute()
+            val result = useCase.compute(RadarBudgetInput.None)
 
             assertTrue(name, result.urgencyLevel != UrgencyLevel.UNAVAILABLE)
             assertNotNull(name, result.urgencyScore)
@@ -997,7 +995,7 @@ class ComputeMoneyRadarUseCaseTest {
             ))
             coEvery { expenseRepository.getExpensesSince(any()) } returns emptyList()
 
-            val result = useCase.compute()
+            val result = useCase.compute(RadarBudgetInput.None)
 
             assertNull("limit $effectiveLimit", result.budgetRisk)
             org.junit.Assert.assertNotEquals("limit $effectiveLimit", UrgencyLevel.UNAVAILABLE, result.urgencyLevel)
@@ -1034,7 +1032,7 @@ class ComputeMoneyRadarUseCaseTest {
             MonteCarloBudgetImpact(1000.0, 1000.0, 0.0, 0.5, RiskTier.MEDIUM)
         )
 
-        useCase.compute()
+        useCase.compute(RadarBudgetInput.None)
 
         assertEquals("only the two bills inside 7 days; the day-12 bill is excluded", 150.0, knownUpcoming, 0.0001)
     }
