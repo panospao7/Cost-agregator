@@ -5873,6 +5873,39 @@ entries:
 - path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
   ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
   kind: function
+  method: releaseClaimedReminderDelivery
+  receiver: null
+  parameterTypes:
+  - Long
+  - Int
+  daoAccessor: lifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao
+  operation: insert
+  barrierMode: helper
+  reason: 'P-04-1 EXACT_POLICY: REMINDER_RELEASED_PERMISSION_RETRY provenance event
+    written only after a successful release, inside the same transaction'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08C
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+  kind: function
+  method: releaseClaimedReminderDelivery
+  receiver: null
+  parameterTypes:
+  - Long
+  - Int
+  daoAccessor: reminderDeliveryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao
+  operation: releaseClaimedDelivery
+  barrierMode: helper
+  reason: 'P-04-1 EXACT_POLICY: bounded CLAIMED to SCHEDULED release of a delivery whose
+    post was denied for the notification permission (attemptCount < maxAttempts) inside
+    the release transaction'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08C
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+  kind: function
   method: claimReminderDelivery
   receiver: null
   parameterTypes:

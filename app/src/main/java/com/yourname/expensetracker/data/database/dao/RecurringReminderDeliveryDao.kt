@@ -172,6 +172,23 @@ interface RecurringReminderDeliveryDao {
     """)
     suspend fun cancelClaimedDelivery(id: Long, reason: String, now: Long): Int
 
+    /**
+     * P-04-1: gives a CLAIMED delivery back (CLAIMED to SCHEDULED) after a permission-denied post
+     * so the next worker run can retry it. Bounded: only while `attemptCount < :maxAttempts`
+     * (each claim already incremented the counter). Returns 0 when the delivery is no longer
+     * CLAIMED or the attempt budget is spent; the caller then cancels instead.
+     */
+    @Query("""
+        UPDATE recurring_reminder_deliveries
+        SET status = 'SCHEDULED',
+            claimedAt = NULL,
+            updatedAt = :now
+        WHERE id = :id
+          AND status = 'CLAIMED'
+          AND attemptCount < :maxAttempts
+    """)
+    suspend fun releaseClaimedDelivery(id: Long, maxAttempts: Int, now: Long): Int
+
     @Query("DELETE FROM recurring_reminder_deliveries WHERE occurrenceId IN (:occurrenceIds)")
     suspend fun deleteByOccurrenceIds(occurrenceIds: List<Long>)
 

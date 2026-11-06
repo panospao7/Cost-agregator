@@ -195,7 +195,10 @@ class BillReminderWorkerInstallmentTest {
                     timeProvider,
                     presentationResolver,
                     NotificationPresentationApplier(context, NotificationPresentationTexts(context)),
-                    billReminderManager
+                    billReminderManager,
+                    object : com.yourname.expensetracker.domain.workers.NotificationPermissionChecker {
+                        override fun areNotificationsEnabled(): Boolean = false
+                    }
                 )
             })
             .build()
@@ -226,7 +229,10 @@ class BillReminderWorkerInstallmentTest {
                     timeProvider,
                     presentationResolver,
                     NotificationPresentationApplier(context, NotificationPresentationTexts(context)),
-                    billReminderManager
+                    billReminderManager,
+                    object : com.yourname.expensetracker.domain.workers.NotificationPermissionChecker {
+                        override fun areNotificationsEnabled(): Boolean = false
+                    }
                 )
             })
             .build()

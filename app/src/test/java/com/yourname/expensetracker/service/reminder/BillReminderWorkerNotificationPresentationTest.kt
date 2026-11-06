@@ -159,7 +159,11 @@ abstract class BillReminderWorkerNotificationPresentationContract {
                     FakeTimeProvider(0L),
                     resolver,
                     applier,
-                    billReminderManager
+                    billReminderManager,
+                    // P-04-1: disabled checker keeps the always-cancel permission_denied pin.
+                    object : com.yourname.expensetracker.domain.workers.NotificationPermissionChecker {
+                        override fun areNotificationsEnabled(): Boolean = false
+                    }
                 )
             })
             .build()

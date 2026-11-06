@@ -149,7 +149,10 @@ class BillNotificationSweepParityTest {
                     FakeTimeProvider(0L),
                     resolver,
                     applier,
-                    billReminderManager
+                    billReminderManager,
+                    object : com.yourname.expensetracker.domain.workers.NotificationPermissionChecker {
+                        override fun areNotificationsEnabled(): Boolean = false
+                    }
                 )
             })
             .build()

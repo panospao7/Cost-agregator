@@ -55,6 +55,17 @@ enum class SpecificLinkResult {
 }
 
 /**
+ * DR-11: how many calendar days before ([earlyDays]) and after ([lateDays]) its due day an expense may
+ * still auto-link to a rule occurrence. Built by [RecurringLifecycleCoordinator.autoLinkWindow].
+ */
+internal data class AutoLinkWindow(val earlyDays: Int, val lateDays: Int) {
+    companion object {
+        /** Same calendar day only (every non-rule source). */
+        val SAME_DAY = AutoLinkWindow(0, 0)
+    }
+}
+
+/**
  * Orchestrates the full lifecycle of recurring-expense occurrences:
  * expansion, conflict resolution, materialization, and linkage.
  *
@@ -88,6 +99,25 @@ class RecurringLifecycleCoordinator @Inject constructor(
     companion object {
         /** Source type used for manual recurring rules. */
         const val SOURCE_TYPE_RECURRING_RULE = "RECURRING_RULE"
+
+        /** DR-11: upper bounds of the auto-link window (days before / after the due day). */
+        internal const val MAX_AUTO_LINK_EARLY_DAYS = 1
+        internal const val MAX_AUTO_LINK_LATE_DAYS = 3
+
+        /**
+         * DR-11: the auto-link window for a rule whose period is [periodDays]. Starts at
+         * [MAX_AUTO_LINK_EARLY_DAYS] / [MAX_AUTO_LINK_LATE_DAYS] and shrinks (late first, then early)
+         * until `2*(early+late) < periodDays`, so two neighbouring windows never overlap:
+         * weekly gives 1/2, daily (1 day) gives 0/0. A period of 0 or less gives 0/0.
+         */
+        internal fun autoLinkWindow(periodDays: Int): AutoLinkWindow {
+            var early = MAX_AUTO_LINK_EARLY_DAYS
+            var late = MAX_AUTO_LINK_LATE_DAYS
+            while ((early > 0 || late > 0) && 2 * (early + late) >= periodDays) {
+                if (late > 0) late-- else early--
+            }
+            return AutoLinkWindow(early, late)
+        }
 
         /** Default reminder windows applied when no explicit windows are provided and reminders are enabled. */
         val DEFAULT_REMINDER_WINDOWS = listOf("3_DAYS_BEFORE", "DUE_DAY", "OVERDUE")
@@ -344,7 +374,11 @@ class RecurringLifecycleCoordinator @Inject constructor(
      *
      * Matching rules (all must hold):
      * 1. Occurrence status is PLANNED and not yet linked.
-     * 2. Same calendar day.
+     * 2. Same calendar day for every source; for a [SOURCE_TYPE_RECURRING_RULE] occurrence the
+     *    expense may also fall up to [autoLinkWindow]`.earlyDays` before or `.lateDays` after the
+     *    due day (at most 1 early and 3 late, shrunk until `2*(early+late) < periodDays`, so weekly
+     *    is 1/2 and daily is 0/0). With several candidates the nearest due day wins, and on a tie
+     *    the earlier one.
      * 3. Merchant key matches (case-insensitive, via [MerchantKeyGenerator]).
      * 4. Amount within ±10% tolerance of the expected amount.
      * 5. Same currency (case-insensitive).
@@ -375,23 +409,37 @@ class RecurringLifecycleCoordinator @Inject constructor(
         // P4-NEW-003: the occurrence lookup runs INSIDE the helper's transaction
         // (selectTarget is invoked in-transaction) — read + claim are atomic.
         val result = claimLinkSuppressInWrite(expenseId, SOURCE_DIRECT_EXPENSE_LINK) {
-            val occurrences = occurrenceDao.getByDateRange(expenseDayStart, expenseDayEnd)
-            occurrences.firstOrNull { occ ->
-                if (occ.status != "PLANNED" || occ.linkedExpenseId != null) return@firstOrNull false
+            // DR-11: widen the read to the largest possible window (3 days late, 1 day early); the
+            // per-occurrence window below narrows it by the rule's period. The end bound is exclusive.
+            val occurrences = occurrenceDao.getByDateRange(
+                TimePeriodUtils.addDays(expenseDayStart, -MAX_AUTO_LINK_LATE_DAYS),
+                TimePeriodUtils.addDays(expenseDayEnd, MAX_AUTO_LINK_EARLY_DAYS)
+            )
+            val windows = HashMap<Long, AutoLinkWindow>()
+            occurrences.filter { occ ->
+                if (occ.status != "PLANNED" || occ.linkedExpenseId != null) return@filter false
 
                 // Merchant key match (case-insensitive)
                 val occMerchantKey = MerchantKeyGenerator.generate(occ.merchant.orEmpty())
-                if (occMerchantKey.isBlank() || expenseMerchantKey.isBlank()) return@firstOrNull false
-                if (occMerchantKey != expenseMerchantKey) return@firstOrNull false
+                if (occMerchantKey.isBlank() || expenseMerchantKey.isBlank()) return@filter false
+                if (occMerchantKey != expenseMerchantKey) return@filter false
 
                 // Amount within ±10% tolerance
-                if (!amountMatches(occ.expectedAmount, expense.amount)) return@firstOrNull false
+                if (!amountMatches(occ.expectedAmount, expense.amount)) return@filter false
 
                 // Same currency (case-insensitive)
-                if (!occ.expectedCurrency.equals(expense.currency, ignoreCase = true)) return@firstOrNull false
+                if (!occ.expectedCurrency.equals(expense.currency, ignoreCase = true)) return@filter false
 
-                true
-            }?.id
+                // DR-11: same day, or inside the rule's period-bounded window.
+                withinAutoLinkWindow(expense.date, occ, windows)
+            }
+                // Nearest occurrence first; on a tie the earlier due date wins.
+                .minWithOrNull(
+                    compareBy<RecurringOccurrence>(
+                        { abs(TimePeriodUtils.daysBetween(it.dueDate, expense.date)) },
+                        { it.dueDate }
+                    )
+                )?.id
         }
 
         if (result.outcome != ClaimLinkOutcome.CLAIMED) return false
@@ -885,13 +933,50 @@ class RecurringLifecycleCoordinator @Inject constructor(
         return installmentEligibility.mayLinkToRecurringOccurrence(expense)
     }
 
-    private fun expenseMatchesOccurrence(
+    /**
+     * DR-11: whether [expenseDate] falls inside the auto-link window of [occ]. A rule occurrence
+     * ([SOURCE_TYPE_RECURRING_RULE]) allows [AutoLinkWindow.earlyDays] before and
+     * [AutoLinkWindow.lateDays] after its due day, bounded by the rule's period; every other source
+     * stays same-day. The window is cached per source in [windows] so the rule is read once.
+     */
+    private suspend fun withinAutoLinkWindow(
+        expenseDate: Long,
+        occ: RecurringOccurrence,
+        windows: MutableMap<Long, AutoLinkWindow>
+    ): Boolean {
+        val window = if (occ.sourceType == SOURCE_TYPE_RECURRING_RULE) {
+            windows.getOrPut(occ.sourceId) { resolveAutoLinkWindow(occ) }
+        } else {
+            AutoLinkWindow.SAME_DAY
+        }
+        // Positive: the expense is after the due day (late); negative: before it (early).
+        val delta = TimePeriodUtils.daysBetween(occ.dueDate, expenseDate)
+        return delta in -window.earlyDays..window.lateDays
+    }
+
+    /**
+     * The rule's period comes from its [RecurrenceFrequency] (the rule row, read in the caller's
+     * transaction; the occurrence's own frequency column is the fallback). Fixed-interval
+     * frequencies use [RecurrenceFrequency.fixedIntervalDays]; calendar-month frequencies use
+     * 28 days per month, the shortest month, so the window never overreaches; an irregular or
+     * unreadable frequency gives period 0 and therefore the same-day window.
+     */
+    private suspend fun resolveAutoLinkWindow(occ: RecurringOccurrence): AutoLinkWindow {
+        val frequency = manualRecurringExpenseDao.getById(occ.sourceId)?.frequency
+            ?: try {
+                RecurrenceFrequency.valueOf(occ.frequency)
+            } catch (e: IllegalArgumentException) {
+                null
+            }
+        val periodDays = frequency?.let { it.fixedIntervalDays ?: it.calendarMonths?.times(28) } ?: 0
+        return autoLinkWindow(periodDays)
+    }
+
+    private suspend fun expenseMatchesOccurrence(
         expense: com.yourname.expensetracker.data.database.entity.Expense,
         occurrence: RecurringOccurrence
     ): Boolean {
-        val expenseDayStart = TimePeriodUtils.getStartOfDay(expense.date)
-        val expenseDayEnd = TimePeriodUtils.getEndOfDay(expense.date)
-        if (occurrence.dueDate !in expenseDayStart..expenseDayEnd) return false
+        if (!withinAutoLinkWindow(expense.date, occurrence, HashMap())) return false
 
         val expenseMerchantKey = MerchantKeyGenerator.generate(expense.merchant)
         val occMerchantKey = MerchantKeyGenerator.generate(occurrence.merchant.orEmpty())
@@ -1412,6 +1497,39 @@ class RecurringLifecycleCoordinator @Inject constructor(
                         metadata = JSONObject().apply {
                             put("deliveryId", deliveryId)
                             put("reason", reason)
+                        }.toString()
+                    )
+                )
+            }
+            rows > 0
+        }
+    }
+
+    /**
+     * P-04-1: gives a CLAIMED reminder delivery back to SCHEDULED after the post was denied for
+     * the notification permission, so a later run can retry once the permission is restored.
+     * Bounded by [maxAttempts] (the claim already incremented `attemptCount`); returns false when
+     * the budget is spent or the delivery is no longer CLAIMED, and the caller cancels instead.
+     * The release and its provenance event share one transaction.
+     */
+    suspend fun releaseClaimedReminderDelivery(deliveryId: Long, maxAttempts: Int): Boolean {
+        writeBarrier.checkWritesAllowed("RecurringLifecycleCoordinator.releaseClaimedReminderDelivery")
+        val now = timeProvider.now()
+
+        return database.withTransaction {
+            val delivery = reminderDeliveryDao.getById(deliveryId) ?: return@withTransaction false
+            val rows = reminderDeliveryDao.releaseClaimedDelivery(deliveryId, maxAttempts, now)
+            if (rows > 0) {
+                lifecycleEventDao.insert(
+                    RecurringLifecycleEvent(
+                        occurrenceId = delivery.occurrenceId,
+                        eventType = "REMINDER_RELEASED_PERMISSION_RETRY",
+                        occurredAt = now,
+                        oldStatus = "CLAIMED",
+                        newStatus = "SCHEDULED",
+                        metadata = JSONObject().apply {
+                            put("deliveryId", deliveryId)
+                            put("reason", "notification_permission_denied")
                         }.toString()
                     )
                 )
