@@ -316,7 +316,7 @@ class PaymentLinkArchitectureGuardTest {
     // -- INV-10 / INV-11 ---------------------------------------------------------------------------------------
 
     private val mutatingCall = Regex(
-        """\.\s*(insert\w*|update\w*|delete\w*|upsert\w*|claim\w*|suppress\w*|writeCritical|set\w*Status\w*|topUpHorizon|advanceNextDate)\s*\("""
+        """\.\s*(insert\w*|update\w*|delete\w*|upsert\w*|claim\w*|suppress\w*|writeCritical|set\w*Status\w*|topUpHorizon|advanceNextDate|link\w*|unlink\w*|cancel\w*|reopen\w*|mark\w*|release\w*|recover\w*|regenerate\w*)\s*\("""
     )
 
     @Test
@@ -386,6 +386,25 @@ class PaymentLinkArchitectureGuardTest {
         )
         for (snippet in benign) {
             assertTrue("detector must not flag: $snippet", forecastForbiddenReferences(code(snippet)).isEmpty())
+        }
+    }
+
+    @Test
+    fun `the mutation detector flags write-style verbs and ignores the read-only matcher helpers`() {
+        for (snippet in listOf(
+            "occurrenceDao.markPaid(1L)", "dao.cancelOccurrence(1L)", "occurrenceDao.linkExpense(1, 2)",
+            "dao.unlinkExpense(1)", "dao.reopenOccurrence(1)", "dao.releaseClaim(1)",
+            "coordinator.recoverOccurrence(1)", "coordinator.regenerateOccurrences(1)"
+        )) {
+            assertTrue("detector must flag: $snippet", mutatingCall.containsMatchIn(code(snippet)))
+        }
+        for (snippet in listOf(
+            "RecurringPaymentLinkMatcher.isDeclined(events, 1L)",
+            "RecurringPaymentLinkMatcher.pairMatches(a, b, c, d, w)",
+            "val w = linkWindowsFor(rule.frequency, occurrence)",
+            "occurrenceDao.getByDateRange(a, b)"
+        )) {
+            assertFalse("detector must not flag: $snippet", mutatingCall.containsMatchIn(code(snippet)))
         }
     }
 
