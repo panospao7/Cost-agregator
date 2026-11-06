@@ -26,7 +26,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.data.database.entity.GroupMember
 import com.yourname.expensetracker.data.database.entity.SplitType
 import com.yourname.expensetracker.domain.groups.GroupSettlementBalancePolicy
-import com.yourname.expensetracker.domain.logic.SplitCalculator
+import com.yourname.expensetracker.domain.groups.MemberBalance
+import com.yourname.expensetracker.domain.groups.SettlementCalculator
 import com.yourname.expensetracker.domain.currency.SupportedCurrency
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.theme.SemanticColors
@@ -159,6 +160,7 @@ fun SharedExpenseGroupsScreen(
                     // Group Detail View
                     GroupDetailContent(
                         group = uiState.selectedGroup!!,
+                        suggestedTransfers = { viewModel.suggestedTransfers(it) },
                         onDeleteGroup = { viewModel.deleteGroup(it) }
                     )
                 }
@@ -355,16 +357,28 @@ internal fun leftOutItemCount(displayed: GroupSettlementBalancePolicy.DisplayedB
 
 /**
  * INV-7: the suggested transfers, or null when the plan must not be composed (PARTIAL or
- * UNAVAILABLE). The solver itself is unchanged.
+ * UNAVAILABLE). DR-10: the plan comes from [SettlementCalculator] (exact DFS solver, greedy
+ * fallback) on integer cents, not from the legacy greedy `simplifyBalances`. Each displayed net
+ * becomes a [MemberBalance] in the group currency; names are resolved by the screen from ids.
  */
-internal fun suggestedSettlementTransfers(
-    displayed: GroupSettlementBalancePolicy.DisplayedBalances
-): List<Triple<Long, Long, Double>>? =
-    if (displayed.settlementPlanAllowed) {
-        SplitCalculator.simplifyBalances(displayed.memberBalances)
-    } else {
-        null
+internal suspend fun suggestedSettlementTransfers(
+    displayed: GroupSettlementBalancePolicy.DisplayedBalances,
+    calculator: SettlementCalculator
+): List<Triple<Long, Long, Double>>? {
+    if (!displayed.settlementPlanAllowed) return null
+    val balances = displayed.memberBalances.mapValues { (memberId, net) ->
+        MemberBalance(
+            memberId = memberId,
+            memberName = "",
+            paid = 0.0,
+            shouldPay = 0.0,
+            netBalance = net,
+            currency = displayed.currency
+        )
     }
+    return calculator.calculateSettlements(balances, displayed.currency)
+        .map { Triple(it.fromMemberId, it.toMemberId, it.amount) }
+}
 
 /** INV-11: the home currency pre-selects only when it is a supported currency; otherwise nothing. */
 internal fun initialGroupCurrencySelection(homeCurrency: String?): String? =
@@ -378,6 +392,7 @@ internal fun canCreateGroup(name: String, selectedCurrency: String?): Boolean =
 @Composable
 private fun GroupDetailContent(
     group: GroupWithDetails,
+    suggestedTransfers: suspend (GroupSettlementBalancePolicy.DisplayedBalances) -> List<Triple<Long, Long, Double>>?,
     onDeleteGroup: (Long) -> Unit
 ) {
     LazyColumn(
@@ -451,7 +466,8 @@ private fun GroupDetailContent(
             item {
                 SettlementPlanSection(
                     members = group.members,
-                    displayed = group.displayed
+                    displayed = group.displayed,
+                    suggestedTransfers = suggestedTransfers
                 )
             }
         }
@@ -498,13 +514,23 @@ private fun GroupDetailContent(
 @Composable
 private fun SettlementPlanSection(
     members: List<GroupMember>,
-    displayed: GroupSettlementBalancePolicy.DisplayedBalances
+    displayed: GroupSettlementBalancePolicy.DisplayedBalances,
+    suggestedTransfers: suspend (GroupSettlementBalancePolicy.DisplayedBalances) -> List<Triple<Long, Long, Double>>?
 ) {
     val memberNames = remember(members) { members.associate { it.id to it.name } }
 
     // The key is the whole result, so a PARTIAL/AVAILABLE change can never reuse a stale plan.
-    val settlementTransfers = remember(displayed) { suggestedSettlementTransfers(displayed) }
-        ?: return
+    // Null (not yet computed, not allowed, or failed) renders nothing: fail closed.
+    // The result is stored with the `displayed` it was computed for and rendered only when it
+    // still matches, so a previous plan is never shown for changed balances.
+    if (!displayed.settlementPlanAllowed) return
+    val settlementResult by produceState<Pair<GroupSettlementBalancePolicy.DisplayedBalances, List<Triple<Long, Long, Double>>?>?>(
+        initialValue = null,
+        key1 = displayed
+    ) {
+        value = displayed to suggestedTransfers(displayed)
+    }
+    val transfers = settlementResult?.takeIf { it.first == displayed }?.second ?: return
     val groupCurrency = displayed.currency
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -521,14 +547,14 @@ private fun SettlementPlanSection(
             color = SemanticColors.TextSecondary
         )
 
-        if (settlementTransfers.isEmpty()) {
+        if (transfers.isEmpty()) {
             Text(
                 text = stringResource(R.string.label_settled_up),
                 style = MaterialTheme.typography.bodyMedium,
                 color = SemanticColors.TextSecondary
             )
         } else {
-            settlementTransfers.forEach { (fromId, toId, amount) ->
+            transfers.forEach { (fromId, toId, amount) ->
                 val fromName = memberNames[fromId] ?: stringResource(R.string.groups_member_fallback_format, fromId)
                 val toName = memberNames[toId] ?: stringResource(R.string.groups_member_fallback_format, toId)
 

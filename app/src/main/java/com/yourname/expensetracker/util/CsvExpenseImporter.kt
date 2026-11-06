@@ -201,7 +201,8 @@ class CsvExpenseImporter @Inject constructor(
             }
 
             val dateStr = col("date") ?: return RowResult.Failed("Missing date column")
-            val merchant = col("merchant") ?: return RowResult.Failed("Missing merchant column")
+            val merchant = col("merchant")?.let { stripFormulaNeutralizer(it) }
+                ?: return RowResult.Failed("Missing merchant column")
 
             // RP-19 (19-B) amount precedence (single rule for every type, see
             // the roundtrip matrix): original `amount` first, `effectiveAmount`
@@ -212,10 +213,10 @@ class CsvExpenseImporter @Inject constructor(
                 ?: parseAmount(effectiveStr)
                 ?: return RowResult.Failed("Invalid amount")
 
-            val categoryName = col("category") ?: "Uncategorized"
+            val categoryName = col("category")?.let { stripFormulaNeutralizer(it) } ?: "Uncategorized"
             // Owner-approvals 41(b): rows the exporter marked as installment-flagged are skipped
             // (counted in the skipped/duplicates counter); re-import never creates a flag.
-            val notesFromCol = col("notes") ?: ""
+            val notesFromCol = col("notes")?.let { stripFormulaNeutralizer(it) } ?: ""
             if (ExportInstallmentMarker.isMarkedNotes(notesFromCol)) {
                 return RowResult.Duplicate("INSTALLMENT_EXPORT_MARKER")
             }
@@ -287,6 +288,25 @@ class CsvExpenseImporter @Inject constructor(
         } catch (e: Exception) {
             RowResult.Failed(e.message ?: "Unknown error")
         }
+    }
+
+    /**
+     * P-12-3: inverse of the leading "'" that [com.yourname.expensetracker.domain.export.CsvCellSanitizer]
+     * prepends to text cells whose trimStart() begins with = + - @ (formula neutralization; a
+     * plain number such as "-5" is exempt). The quote is removed only when the remainder's
+     * trimStart() begins with one of those characters and is not a plain number, so an ordinary
+     * value such as "'abc" or "'-5" is left exactly as written.
+     */
+    private fun stripFormulaNeutralizer(value: String): String {
+        if (value.length > 1 && value[0] == '\'') {
+            val rest = value.substring(1)
+            val trimmed = rest.trimStart()
+            val isPlainNumber = trimmed.matches(Regex("^-?\\d+(\\.\\d+)?$"))
+            if (!isPlainNumber && trimmed.isNotEmpty() && trimmed[0] in "=+-@") {
+                return rest
+            }
+        }
+        return value
     }
 
     /**

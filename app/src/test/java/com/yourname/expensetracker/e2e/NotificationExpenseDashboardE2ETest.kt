@@ -63,6 +63,12 @@ class NotificationExpenseDashboardE2ETest : GoldenTestBase() {
         val merchantCleaner = MerchantCleaner()
         val directionDetector = TransferDirectionDetector()
 
+        // Real multi-currency repository
+        val currencySettings = mockk<CurrencySettingsRepository>().also {
+            every { it.homeCurrency() } returns flowOf("EUR")
+            coEvery { it.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
+        }
+
         parserRegistry = AppParserRegistry(
             greekBankParser = GreekBankParser(currencyNormalizer, merchantCleaner, "EUR"),
             revolutParser = RevolutParser(currencyNormalizer, merchantCleaner),
@@ -72,14 +78,9 @@ class NotificationExpenseDashboardE2ETest : GoldenTestBase() {
             aiFallbackParser = object : NotificationFallbackParser {
                 override suspend fun parse(title: String?, text: String?, bigText: String?, packageName: String) = null
             },
-            timeProvider = timeProvider
+            timeProvider = timeProvider,
+            currencySettingsRepository = currencySettings
         )
-
-        // Real multi-currency repository
-        val currencySettings = mockk<CurrencySettingsRepository>().also {
-            every { it.homeCurrency() } returns flowOf("EUR")
-            coEvery { it.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
-        }
         val exchangeRateStore = ExchangeRateStoreAdapter(database.exchangeRateDao(), writeBarrier)
         val currencyConverter = CurrencyConverter(exchangeRateStore, timeProvider)
         multiCurrencyRepository = MultiCurrencyRepository(

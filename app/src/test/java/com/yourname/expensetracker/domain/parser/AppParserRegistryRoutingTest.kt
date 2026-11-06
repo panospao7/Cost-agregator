@@ -29,7 +29,13 @@ class AppParserRegistryRoutingTest {
             googleWalletParser = GoogleWalletParser(currencyNormalizer, merchantCleaner),
             genericParser = GenericTransactionParser(currencyNormalizer, merchantCleaner, directionDetector, timeProvider = io.mockk.mockk()),
             aiFallbackParser = io.mockk.mockk(),
-            timeProvider = io.mockk.mockk()
+            timeProvider = io.mockk.mockk(),
+            currencySettingsRepository = io.mockk.mockk<com.yourname.expensetracker.domain.currency.CurrencySettingsRepository>().also {
+                io.mockk.coEvery { it.resolveHomeCurrency() } returns
+                    com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Resolved(
+                        com.yourname.expensetracker.domain.core.money.CurrencyCode("EUR")
+                    )
+            }
         )
     }
 

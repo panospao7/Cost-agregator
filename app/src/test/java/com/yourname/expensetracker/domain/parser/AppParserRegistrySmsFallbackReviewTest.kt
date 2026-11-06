@@ -69,8 +69,17 @@ class AppParserRegistrySmsFallbackReviewTest {
         googleWalletParser = GoogleWalletParser(currencyNormalizer, merchantCleaner),
         genericParser = genericMock,
         aiFallbackParser = aiMock,
-        timeProvider = mockk()
+        timeProvider = mockk(),
+        currencySettingsRepository = homeCurrencyRepo()
     )
+
+    private fun homeCurrencyRepo() =
+        mockk<com.yourname.expensetracker.domain.currency.CurrencySettingsRepository>().also {
+            coEvery { it.resolveHomeCurrency() } returns
+                com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Resolved(
+                    com.yourname.expensetracker.domain.core.money.CurrencyCode("EUR")
+                )
+        }
 
     private fun registryWithRealGeneric() = AppParserRegistry(
         greekBankParser = GreekBankParser(currencyNormalizer, merchantCleaner, homeCurrency = "EUR"),
@@ -79,7 +88,8 @@ class AppParserRegistrySmsFallbackReviewTest {
         googleWalletParser = GoogleWalletParser(currencyNormalizer, merchantCleaner),
         genericParser = GenericTransactionParser(currencyNormalizer, merchantCleaner, directionDetector, timeProvider = mockk()),
         aiFallbackParser = aiMock,
-        timeProvider = mockk()
+        timeProvider = mockk(),
+        currencySettingsRepository = homeCurrencyRepo()
     )
 
     private fun stubGeneric(result: ParsedTransaction?) {

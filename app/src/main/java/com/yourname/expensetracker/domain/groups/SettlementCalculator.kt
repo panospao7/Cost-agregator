@@ -38,7 +38,7 @@ data class Settlement(
  * can inject custom values through the constructor or via a Hilt module.
  */
 @Singleton
-class SettlementCalculator @Inject constructor(
+class SettlementCalculator(
     private val currencySettingsRepository: CurrencySettingsRepository,
     private val writeBarrier: com.yourname.expensetracker.data.backup.DatabaseWriteBarrier,
     /** Time budget for the DFS solver in nanoseconds (default 500ms). */
@@ -46,6 +46,16 @@ class SettlementCalculator @Inject constructor(
     /** Maximum iterations before falling back to greedy solver. */
     private val dfsIterationLimit: Int = 100_000
 ) {
+
+    /**
+     * Hilt entry point. Dagger cannot bind the primitive tuning parameters of the primary
+     * constructor, so injection uses the production defaults; tests keep the primary seam.
+     */
+    @Inject
+    constructor(
+        currencySettingsRepository: CurrencySettingsRepository,
+        writeBarrier: com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+    ) : this(currencySettingsRepository, writeBarrier, 500_000_000L, 100_000)
 
     /**
      * Calculate an optimal settlement plan to balance all debts.

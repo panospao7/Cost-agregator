@@ -116,6 +116,7 @@ class CurrencySettingsRepositoryImpl @Inject constructor(
                 HomeCurrencyResolution.Resolved(CurrencyCode(code))
             }
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             Timber.w(e, "Failed to resolve home currency from DataStore")
             HomeCurrencyResolution.Failed(e.message ?: "DataStore read error")
         }

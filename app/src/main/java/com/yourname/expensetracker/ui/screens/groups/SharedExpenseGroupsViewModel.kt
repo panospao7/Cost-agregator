@@ -18,6 +18,7 @@ import com.yourname.expensetracker.domain.logic.CustomSplitParser
 import com.yourname.expensetracker.domain.groups.GroupCreationResult
 import com.yourname.expensetracker.domain.groups.GroupExpenseCreationResult
 import com.yourname.expensetracker.domain.groups.GroupSettlementBalancePolicy
+import com.yourname.expensetracker.domain.groups.SettlementCalculator
 import com.yourname.expensetracker.domain.groups.toUserMessage
 import com.yourname.expensetracker.domain.groups.usecase.AddGroupMemberUseCase
 import com.yourname.expensetracker.domain.groups.usecase.AddGroupExpenseUseCase
@@ -31,6 +32,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
@@ -97,9 +100,28 @@ class SharedExpenseGroupsViewModel @Inject constructor(
     private val deleteGroupUseCase: DeleteGroupUseCase,
     private val manualExpenseRepository: ManualExpenseRepository,
     private val expenseRepository: ExpenseRepository,
-    private val currencySettingsRepository: CurrencySettingsRepository
+    private val currencySettingsRepository: CurrencySettingsRepository,
+    private val settlementCalculator: SettlementCalculator
 ) : ViewModel() {
-    
+
+    /**
+     * DR-10: suggested transfers for [displayed] from [SettlementCalculator], or null when the plan
+     * must not be composed (INV-7) or the solver failed (fail closed; fixed-code log only).
+     */
+    suspend fun suggestedTransfers(
+        displayed: GroupSettlementBalancePolicy.DisplayedBalances
+    ): List<Triple<Long, Long, Double>>? = try {
+        // CPU-bound DFS solver: keep it off Main (the screen calls this via produceState).
+        withContext(Dispatchers.Default) {
+            suggestedSettlementTransfers(displayed, settlementCalculator)
+        }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Log.w(TAG, "op=suggest_transfers error=${e.javaClass.simpleName}")
+        null
+    }
+
     private val _uiState = MutableStateFlow(GroupsUiState())
     val uiState: StateFlow<GroupsUiState> = _uiState.asStateFlow()
     

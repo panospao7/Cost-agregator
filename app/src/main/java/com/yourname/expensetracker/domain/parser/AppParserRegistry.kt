@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.parser
 
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.parser.parsers.GoogleWalletParser
 import com.yourname.expensetracker.domain.parser.parsers.GreekBankParser
 import com.yourname.expensetracker.domain.parser.parsers.RevolutParser
@@ -142,8 +143,39 @@ class AppParserRegistry @Inject constructor(
     private val googleWalletParser: GoogleWalletParser,
     private val genericParser: GenericTransactionParser,
     private val aiFallbackParser: com.yourname.expensetracker.domain.ai.service.NotificationFallbackParser,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val currencySettingsRepository: CurrencySettingsRepository
 ) {
+    /**
+     * I-03-1: resolves the home currency once for this call, so a currency change takes effect
+     * without recreating the singleton parser. When resolution fails the parser's construction
+     * snapshot is used as the fallback currency and the result is flagged ambiguous, which the
+     * router sends to review instead of auto-accepting an assumed currency.
+     * CancellationException is always rethrown.
+     */
+    private suspend fun parseGreekBankWithCurrentHomeCurrency(
+        title: String?,
+        text: String?,
+        bigText: String?,
+        subText: String?,
+        packageName: String
+    ): ParsedTransaction? {
+        val homeCurrency = try {
+            currencySettingsRepository.resolveHomeCurrency().currencyOrNull?.code
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        }
+        return if (homeCurrency != null) {
+            greekBankParser.parse(title, text, bigText, subText, packageName, homeCurrency)
+        } else {
+            Timber.w("Home currency resolution failed; Greek bank result flagged ambiguous")
+            greekBankParser.parse(title, text, bigText, subText, packageName)
+                ?.copy(isAmountAmbiguous = true)
+        }
+    }
+
     /**
      * FL-02: an SMS may be auto-accepted only when [SmsParser] itself read one clean amount.
      * Any SMS result produced by a fallback parser is flagged ambiguous so the router sends it to review.
@@ -169,6 +201,11 @@ class AppParserRegistry @Inject constructor(
         }
     }
 
+    @Deprecated(
+        "Uses the home-currency snapshot taken when GreekBankParser was constructed. " +
+            "Use parseWithProvenance(), which resolves the current home currency per call.",
+        ReplaceWith("parseWithProvenance(title, text, bigText, subText, packageName)")
+    )
     fun parse(
         title: String?,
         text: String?,
@@ -224,7 +261,11 @@ class AppParserRegistry @Inject constructor(
 		if (specificParser != null) {
 			attempts.add(ParserAttempt(specificParser.parserId, ParserSource.SPECIFIC_DETERMINISTIC, true, false))
 			parsed = try {
-				specificParser.parse(title, text, bigText, subText, packageName)
+				if (specificParser === greekBankParser) {
+					parseGreekBankWithCurrentHomeCurrency(title, text, bigText, subText, packageName)
+				} else {
+					specificParser.parse(title, text, bigText, subText, packageName)
+				}
 			} catch (e: Exception) {
 				if (e is kotlinx.coroutines.CancellationException) throw e
 				Timber.w(e, "Specific parser failed for package: $packageName")
