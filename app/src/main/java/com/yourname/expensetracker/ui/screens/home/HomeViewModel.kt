@@ -48,6 +48,7 @@ import com.yourname.expensetracker.service.NavigationAction
 import com.yourname.expensetracker.service.NavigationTargetResolver
 import com.yourname.expensetracker.service.RecommendationDismissalHandler
 import com.yourname.expensetracker.service.RecommendationStateManager
+import com.yourname.expensetracker.ui.screens.recurringmanual.toUiOrNull
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.ui.navigation.InstallmentsFeature
 import com.yourname.expensetracker.ui.util.guardedWrite
@@ -543,12 +544,15 @@ class HomeViewModel @Inject constructor(
         paymentLinkHintJob = viewModelScope.launch {
             val next: PaymentLinkHintUiState = try {
                 when (val result = markRecurringBillPaid.findSuggestions()) {
-                    is PaymentLinkSuggestions.Available ->
-                        if (result.items.isEmpty()) {
+                    is PaymentLinkSuggestions.Available -> {
+                        // Count only items the Recurring screen can render (same toUiOrNull rule).
+                        val renderableCount = result.items.count { it.toUiOrNull() != null }
+                        if (renderableCount == 0) {
                             PaymentLinkHintUiState.None
                         } else {
-                            PaymentLinkHintUiState.Ready(result.items.size)
+                            PaymentLinkHintUiState.Ready(renderableCount)
                         }
+                    }
                     is PaymentLinkSuggestions.Unavailable -> PaymentLinkHintUiState.Unavailable
                 }
             } catch (e: CancellationException) {

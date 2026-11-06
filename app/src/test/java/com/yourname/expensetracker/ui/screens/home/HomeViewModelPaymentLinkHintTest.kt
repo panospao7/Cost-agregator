@@ -194,6 +194,28 @@ class HomeViewModelPaymentLinkHintTest {
     }
 
     @Test
+    fun `an unrenderable item is not counted in Ready`() {
+        suggestionsResult = available(
+            suggestion(1L, 10L),
+            suggestion(2L, 11L).copy(paidAmount = 0.0),
+            suggestion(3L, 12L).copy(paidAmount = Double.NaN),
+            suggestion(4L, 13L).copy(paidCurrency = " ")
+        )
+
+        assertEquals(PaymentLinkHintUiState.Ready(1), createViewModel().paymentLinkHint.value)
+    }
+
+    @Test
+    fun `all unrenderable items map to None and never to Ready zero`() {
+        suggestionsResult = available(
+            suggestion(1L, 10L).copy(paidAmount = -5.0),
+            suggestion(2L, 11L).copy(paidCurrency = "")
+        )
+
+        assertEquals(PaymentLinkHintUiState.None, createViewModel().paymentLinkHint.value)
+    }
+
+    @Test
     fun `INV-11 both unavailable reasons map to Unavailable and never to None`() {
         for (reason in PaymentLinkUnavailableReason.values()) {
             suggestionsResult = PaymentLinkSuggestions.Unavailable(reason)
