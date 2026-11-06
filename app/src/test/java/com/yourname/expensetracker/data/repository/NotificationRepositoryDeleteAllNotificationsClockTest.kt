@@ -128,7 +128,8 @@ class NotificationRepositoryDeleteAllNotificationsClockTest {
         pipeline = pipeline,
         writeBarrier = writeBarrier,
         privacySettingsRepository = privacySettingsRepository,
-        diagnosticEmitter = diagnosticEmitter
+        diagnosticEmitter = diagnosticEmitter,
+        timeProvider = fakeTimeProvider
     )
 
     @Test
@@ -262,7 +263,9 @@ class NotificationRepositoryDeleteAllNotificationsClockTest {
             )
         }
         coVerify(exactly = 1) {
-            blockedPackageDao.block(match { it.packageName == "com.test.blocked" })
+            blockedPackageDao.block(
+                match { it.packageName == "com.test.blocked" && it.blockedAt == fakeTimeProvider.now() }
+            )
         }
         coVerify(exactly = 0) { blockedPackageDao.unblock(any<String>()) }
         coVerify(exactly = 0) { blockedPackageDao.unblock(any<BlockedPackage>()) }
