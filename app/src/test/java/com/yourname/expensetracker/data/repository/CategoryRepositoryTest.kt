@@ -730,7 +730,7 @@ class CategoryRepositoryTest {
         val source = insertCategory("Source")
         val replacement = insertCategory("Replacement")
         val expense = insertExpense(source)
-        every { categorizationEngine.invalidateCache() } throws RuntimeException("synthetic cache failure")
+        coEvery { categorizationEngine.invalidateCache() } throws RuntimeException("synthetic cache failure")
 
         val result = repository.deleteCategory(source, replacement)
 
@@ -745,7 +745,7 @@ class CategoryRepositoryTest {
         val source = insertCategory("Source")
         val replacement = insertCategory("Replacement")
         val expense = insertExpense(source)
-        every { hybridExpenseClassifier.invalidateCategorySnapshot() } throws RuntimeException("synthetic snapshot failure")
+        coEvery { hybridExpenseClassifier.invalidateCategorySnapshot() } throws RuntimeException("synthetic snapshot failure")
 
         val result = repository.deleteCategory(source, replacement)
 
@@ -760,8 +760,8 @@ class CategoryRepositoryTest {
         val source = insertCategory("Source")
         val replacement = insertCategory("Replacement")
         val expense = insertExpense(source)
-        every { categorizationEngine.invalidateCache() } throws RuntimeException("synthetic cache failure")
-        every { hybridExpenseClassifier.invalidateCategorySnapshot() } throws RuntimeException("synthetic snapshot failure")
+        coEvery { categorizationEngine.invalidateCache() } throws RuntimeException("synthetic cache failure")
+        coEvery { hybridExpenseClassifier.invalidateCategorySnapshot() } throws RuntimeException("synthetic snapshot failure")
         coEvery { runner.run(any()) } throws RuntimeException("synthetic batch failure")
 
         val result = repository.deleteCategory(source, replacement)
@@ -778,7 +778,7 @@ class CategoryRepositoryTest {
         val source = insertCategory("Source")
         val replacement = insertCategory("Replacement")
         val expense = insertExpense(source)
-        every { categorizationEngine.invalidateCache() } throws CancellationException("synthetic cache cancel")
+        coEvery { categorizationEngine.invalidateCache() } throws CancellationException("synthetic cache cancel")
 
         try {
             repository.deleteCategory(source, replacement)
@@ -796,7 +796,7 @@ class CategoryRepositoryTest {
         val source = insertCategory("Source")
         val replacement = insertCategory("Replacement")
         val expense = insertExpense(source)
-        every { hybridExpenseClassifier.invalidateCategorySnapshot() } throws CancellationException("synthetic snapshot cancel")
+        coEvery { hybridExpenseClassifier.invalidateCategorySnapshot() } throws CancellationException("synthetic snapshot cancel")
 
         try {
             repository.deleteCategory(source, replacement)
@@ -815,7 +815,7 @@ class CategoryRepositoryTest {
         val target = insertCategory("Target")
         val e1 = insertExpense(source, "Shop One")
         val e2 = insertExpense(source, "Shop Two")
-        every { categorizationEngine.invalidateCache() } throws RuntimeException("synthetic cache failure")
+        coEvery { categorizationEngine.invalidateCache() } throws RuntimeException("synthetic cache failure")
 
         val moved = repository.mergeCategories(source, target)
 
@@ -833,7 +833,7 @@ class CategoryRepositoryTest {
         val source = insertCategory("Source")
         val target = insertCategory("Target")
         val e1 = insertExpense(source, "Shop One")
-        every { hybridExpenseClassifier.invalidateCategorySnapshot() } throws RuntimeException("synthetic snapshot failure")
+        coEvery { hybridExpenseClassifier.invalidateCategorySnapshot() } throws RuntimeException("synthetic snapshot failure")
 
         val moved = repository.mergeCategories(source, target)
 
@@ -866,7 +866,7 @@ class CategoryRepositoryTest {
         val source = insertCategory("Source")
         val target = insertCategory("Target")
         val expense = insertExpense(source)
-        every { categorizationEngine.invalidateCache() } throws CancellationException("synthetic cache cancel")
+        coEvery { categorizationEngine.invalidateCache() } throws CancellationException("synthetic cache cancel")
 
         try {
             repository.mergeCategories(source, target)
@@ -884,7 +884,7 @@ class CategoryRepositoryTest {
         val source = insertCategory("Source")
         val target = insertCategory("Target")
         val expense = insertExpense(source)
-        every { hybridExpenseClassifier.invalidateCategorySnapshot() } throws CancellationException("synthetic snapshot cancel")
+        coEvery { hybridExpenseClassifier.invalidateCategorySnapshot() } throws CancellationException("synthetic snapshot cancel")
 
         try {
             repository.mergeCategories(source, target)
@@ -900,7 +900,7 @@ class CategoryRepositoryTest {
     @Test
     fun `renameCategory still returns Renamed when cache invalidation throws and the snapshot is still invalidated`() = runTest {
         val id = insertCategory("Old Name")
-        every { categorizationEngine.invalidateCache() } throws RuntimeException("synthetic cache failure")
+        coEvery { categorizationEngine.invalidateCache() } throws RuntimeException("synthetic cache failure")
 
         val result = repository.renameCategory(id, "New Name")
 
@@ -912,7 +912,7 @@ class CategoryRepositoryTest {
     @Test
     fun `renameCategory still returns Renamed when snapshot invalidation throws`() = runTest {
         val id = insertCategory("Old Name")
-        every { hybridExpenseClassifier.invalidateCategorySnapshot() } throws RuntimeException("synthetic snapshot failure")
+        coEvery { hybridExpenseClassifier.invalidateCategorySnapshot() } throws RuntimeException("synthetic snapshot failure")
 
         val result = repository.renameCategory(id, "New Name")
 
@@ -924,7 +924,7 @@ class CategoryRepositoryTest {
     @Test
     fun `renameCategory propagates a cancellation from cache invalidation and the rename stays committed`() = runTest {
         val id = insertCategory("Old Name")
-        every { categorizationEngine.invalidateCache() } throws CancellationException("synthetic cache cancel")
+        coEvery { categorizationEngine.invalidateCache() } throws CancellationException("synthetic cache cancel")
 
         try {
             repository.renameCategory(id, "New Name")
@@ -940,7 +940,7 @@ class CategoryRepositoryTest {
     @Test
     fun `renameCategory propagates a cancellation from snapshot invalidation and the rename stays committed`() = runTest {
         val id = insertCategory("Old Name")
-        every { hybridExpenseClassifier.invalidateCategorySnapshot() } throws CancellationException("synthetic snapshot cancel")
+        coEvery { hybridExpenseClassifier.invalidateCategorySnapshot() } throws CancellationException("synthetic snapshot cancel")
 
         try {
             repository.renameCategory(id, "New Name")
