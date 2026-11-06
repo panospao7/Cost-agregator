@@ -75,6 +75,13 @@ object PrivacyRuntimeWorkerPolicy {
     )
 
     /**
+     * Single owner of the on-demand (non-[WorkerSpec.DEFAULTS]) unique work names. Restore
+     * maintenance cancels these too so a running on-demand job cannot hold a worker lease past
+     * the drain window. They are cancel-only: never rescheduled by resume.
+     */
+    val onDemandWorkerNames: Set<String> = cancelOnlyWorkers.values.flatten().toSet()
+
+    /**
      * Workers that must never be cancelled by a privacy toggle.
      *
      * `data_retention` purges already-collected raw data; cancelling it would
