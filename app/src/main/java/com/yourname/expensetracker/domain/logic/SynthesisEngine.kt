@@ -85,6 +85,8 @@ class SynthesisEngine @Inject constructor(
         private const val TAG = "SynthesisEngine"
         private const val LIKELY_EXPENSE_WEIGHT = 0.7 // 70% weight for LIKELY planned expenses - middle ground
         private const val BIWEEKLY_CYCLE_DAYS = 14
+        /** Max relative amount difference for a detected pattern to count as shadowed by a rule. */
+        private const val SHADOW_AMOUNT_TOLERANCE = 0.20
 
         /**
          * Single source of the monthly budget limit: the OVERALL budget when it is
@@ -1097,19 +1099,33 @@ class SynthesisEngine @Inject constructor(
     }
 
     /**
-     * Drops detected-only patterns (id == null) whose merchant key and frequency match any
-     * rule-backed pattern (id != null) in [patterns]. The merchant key mirrors
-     * ForecastInputAssembler.recurringRuleSignature (MerchantKeyGenerator, lowercase-trim fallback),
-     * but amount and currency are deliberately ignored: a re-priced rule (15.00 vs detected 15.49)
-     * is still the same obligation. Rule-backed patterns are never dropped.
+     * Drops detected-only patterns (id == null) that are shadowed by a rule-backed pattern
+     * (id != null) in [patterns]. A detected pattern is shadowed only when ALL hold: its merchant
+     * key matches the rule's (mirrors ForecastInputAssembler.recurringRuleSignature:
+     * MerchantKeyGenerator, lowercase-trim fallback), the frequency matches, the currency is the
+     * same, and its averageAmount is within [SHADOW_AMOUNT_TOLERANCE] (20%) of the rule's amount.
+     * A re-priced rule (Netflix rule 15.00 vs detected 15.49) is still the same obligation and is
+     * dropped; a different obligation at the same merchant (Apple rule/iCloud 0.99 vs detected
+     * Apple Music 10.99) is kept. Blank merchant keys never shadow and are never shadowed.
+     * Currencies are compared as-is (no conversion): a differing currency is not shadowed.
+     * Rule-backed patterns are never dropped.
      */
     private fun dropDetectedShadowedByRules(patterns: List<RecurringPattern>): List<RecurringPattern> {
-        val ruleKeys = patterns
+        val rulesByKey = patterns
             .filter { it.id != null }
-            .mapTo(mutableSetOf()) { recurringMerchantKey(it.merchantName) to it.frequency }
-        if (ruleKeys.isEmpty()) return patterns
-        return patterns.filterNot {
-            it.id == null && (recurringMerchantKey(it.merchantName) to it.frequency) in ruleKeys
+            .map { it to recurringMerchantKey(it.merchantName) }
+            .filter { (_, key) -> key.isNotBlank() }
+            .groupBy({ (rule, key) -> key to rule.frequency }, { (rule, _) -> rule })
+        if (rulesByKey.isEmpty()) return patterns
+        return patterns.filterNot { p ->
+            if (p.id != null) return@filterNot false
+            val key = recurringMerchantKey(p.merchantName)
+            if (key.isBlank()) return@filterNot false
+            rulesByKey[key to p.frequency].orEmpty().any { rule ->
+                rule.currency.equals(p.currency, ignoreCase = true) &&
+                    kotlin.math.abs(p.averageAmount - rule.averageAmount) <=
+                    SHADOW_AMOUNT_TOLERANCE * kotlin.math.abs(rule.averageAmount)
+            }
         }
     }
 
