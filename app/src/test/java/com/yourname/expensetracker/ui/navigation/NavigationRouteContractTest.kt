@@ -138,6 +138,7 @@ class NavigationRouteContractTest {
             NavigationDestination.AiSettings,
             NavigationDestination.PrivacySettings,
             NavigationDestination.AppPinSettings,
+            NavigationDestination.AppsToSkip,
             NavigationDestination.CategoryManagement,
             NavigationDestination.Installments,
             NavigationDestination.InstallmentHistory,
@@ -464,6 +465,23 @@ class NavigationRouteContractTest {
         assertEquals(NavigationDestination.PrivacySettings, destinationFromSaveToken("privacy_settings"))
         assertFalse(NavigationDestination.featureDestinations.contains(NavigationDestination.AppPinSettings))
         // Control: the parent screen stays a features-menu entry.
+        assertTrue(NavigationDestination.featureDestinations.contains(NavigationDestination.PrivacySettings))
+    }
+
+    @Test
+    fun `P-01-3 the apps_to_skip token round trips to AppsToSkip and the screen is not a features-menu entry`() {
+        assertEquals("apps_to_skip", NavigationDestination.AppsToSkip.toSaveToken())
+        assertEquals(NavigationDestination.AppsToSkip, destinationFromSaveToken("apps_to_skip"))
+        assertEquals(
+            NavigationDestination.AppsToSkip,
+            destinationFromSaveToken(NavigationDestination.AppsToSkip.toSaveToken())
+        )
+        // Controls: sibling tokens still resolve to their own screens and an unknown token is rejected.
+        assertEquals(NavigationDestination.PrivacySettings, destinationFromSaveToken("privacy_settings"))
+        assertEquals(NavigationDestination.AppPinSettings, destinationFromSaveToken("app_pin_settings"))
+        assertEquals(null, destinationFromSaveToken("apps_to_skip_extra"))
+        // Reached only from Privacy settings.
+        assertFalse(NavigationDestination.featureDestinations.contains(NavigationDestination.AppsToSkip))
         assertTrue(NavigationDestination.featureDestinations.contains(NavigationDestination.PrivacySettings))
     }
 

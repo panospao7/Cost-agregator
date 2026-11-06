@@ -6,6 +6,7 @@ import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.RawNotificationDao
 import com.yourname.expensetracker.data.database.entity.RawNotification
+import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -46,7 +47,8 @@ class NotificationRepositoryWriteBarrierTest {
         pipeline = mockk(relaxed = true),
         writeBarrier = barrier,
         privacySettingsRepository = mockk(relaxed = true),
-        diagnosticEmitter = mockk(relaxed = true)
+        diagnosticEmitter = mockk(relaxed = true),
+        timeProvider = FakeTimeProvider(1_000L)
     )
 
     private fun notification() = RawNotification(

@@ -1,6 +1,9 @@
 package com.yourname.expensetracker.ui.screens.privacysettings
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -61,6 +64,7 @@ import com.yourname.expensetracker.ui.theme.SemanticColors
 fun PrivacySettingsScreen(
     onDismiss: () -> Unit,
     onOpenAppPinSettings: () -> Unit = {},
+    onOpenAppsToSkip: () -> Unit = {},
     viewModel: PrivacySettingsViewModel = hiltViewModel(),
     notificationStatusViewModel: NotificationCaptureStatusViewModel = hiltViewModel()
 ) {
@@ -192,6 +196,31 @@ fun PrivacySettingsScreen(
                     alwaysShowManage = true,
                     openFailed = notificationAccessOpenFailed
                 )
+            }
+            // P-01-3: entry to the "Apps to skip" capture skip list
+            item {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                        .clickable(
+                            role = Role.Button,
+                            onClick = onOpenAppsToSkip
+                        )
+                        .padding(vertical = 8.dp),
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Text(
+                        text = stringResource(R.string.capture_skip_entry_title),
+                        color = SemanticColors.TextPrimary,
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                    Text(
+                        text = stringResource(R.string.capture_skip_entry_summary),
+                        color = SemanticColors.TextSecondary,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
             }
 
             item { HorizontalDivider() }

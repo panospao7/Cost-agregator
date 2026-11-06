@@ -51,7 +51,8 @@ class NotificationRepository @Inject constructor(
     private val pipeline: NotificationProcessingPipeline,
     private val writeBarrier: DatabaseWriteBarrier,
     private val privacySettingsRepository: com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository,
-    private val diagnosticEmitter: com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
+    private val diagnosticEmitter: com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter,
+    private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider
 ) {
 
     data class DebugNotificationsSnapshot(
@@ -157,7 +158,7 @@ class NotificationRepository @Inject constructor(
     suspend fun blockPackage(packageName: String) {
         writeBarrier.checkWritesAllowed("NotificationRepository.blockPackage")
         writeBarrier.runWrite(DatabaseAccessOperation("NotificationRepository.blockPackage")) {
-            blockedPackageDao.block(BlockedPackage(packageName))
+            blockedPackageDao.block(BlockedPackage(packageName = packageName, blockedAt = timeProvider.now()))
         }
     }
 

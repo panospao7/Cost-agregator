@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- P-01-3 capture skip list (all 14 keys below are DRAFT: owner native sign-off pending) -->
+    <!-- capture_skip_entry_title: DRAFT: owner native sign-off pending -->
+    <string name="capture_skip_entry_title">Εφαρμογές προς παράλειψη</string>
+    <!-- capture_skip_entry_summary: DRAFT: owner native sign-off pending -->
+    <string name="capture_skip_entry_summary">Επιλέξτε εφαρμογές των οποίων οι ειδοποιήσεις δεν καταγράφονται ποτέ</string>
+    <!-- capture_skip_title: DRAFT: owner native sign-off pending -->
+    <string name="capture_skip_title">Εφαρμογές προς παράλειψη</string>
+    <!-- capture_skip_intro: DRAFT: owner native sign-off pending -->
+    <string name="capture_skip_intro">Οι ειδοποιήσεις των εφαρμογών που παραλείπονται δεν καταγράφονται ποτέ. Όσες ειδοποιήσεις τους περιμένουν ακόμη επεξεργασία απορρίπτονται.</string>
+    <!-- capture_skip_section_skipped: DRAFT: owner native sign-off pending -->
+    <string name="capture_skip_section_skipped">Εφαρμογές που παραλείπονται</string>
+    <!-- capture_skip_section_candidates: DRAFT: owner native sign-off pending -->
+    <string name="capture_skip_section_candidates">Εφαρμογές από καταγεγραμμένες ειδοποιήσεις</string>
+    <!-- capture_skip_empty_skipped: DRAFT: owner native sign-off pending -->
+    <string name="capture_skip_empty_skipped">Δεν παραλείπεται καμία εφαρμογή.</string>
+    <!-- capture_skip_empty_candidates: DRAFT: owner native sign-off pending -->
+    <string name="capture_skip_empty_candidates">Καμία άλλη εφαρμογή δεν έχει στείλει ακόμη καταγεγραμμένες ειδοποιήσεις.</string>
+    <!-- capture_skip_action_skip: DRAFT: owner native sign-off pending -->
+    <string name="capture_skip_action_skip">Παράλειψη</string>
+    <!-- capture_skip_action_resume: DRAFT: owner native sign-off pending -->
+    <string name="capture_skip_action_resume">Καταγραφή ξανά</string>
+    <!-- capture_skip_cd_skip_format: DRAFT: owner native sign-off pending -->
+    <string name="capture_skip_cd_skip_format">Παράλειψη ειδοποιήσεων από %1$s</string>
+    <!-- capture_skip_cd_resume_format: DRAFT: owner native sign-off pending -->
+    <string name="capture_skip_cd_resume_format">Καταγραφή ξανά των ειδοποιήσεων από %1$s</string>
+    <!-- capture_skip_error_generic: DRAFT: owner native sign-off pending -->
+    <string name="capture_skip_error_generic">Δεν ήταν δυνατή η ενημέρωση της λίστας. Δοκιμάστε ξανά.</string>
+    <!-- capture_skip_load_failed: DRAFT: owner native sign-off pending -->
+    <string name="capture_skip_load_failed">Δεν ήταν δυνατή η φόρτωση της λίστας εφαρμογών.</string>
+</resources>
