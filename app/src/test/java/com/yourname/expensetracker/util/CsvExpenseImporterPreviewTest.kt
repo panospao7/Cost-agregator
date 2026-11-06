@@ -37,12 +37,13 @@ class CsvExpenseImporterPreviewTest {
     private val categoryDao = mockk<CategoryDao>(relaxed = true)
     private val coordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true)
     private val currencySettingsRepository = mockk<CurrencySettingsRepository>()
-    private val maintenanceMode = mockk<RestoreMaintenanceMode>()
 
     private val coffee = Category(id = 5, name = "Coffee", icon = "C", color = "#FF0000")
     private val uncategorized = Category(id = 9, name = "Uncategorized", icon = "?", color = "#BDBDBD")
 
+    // Each barrier owns its own maintenance-mode mock so importers never share state.
     private fun barrier(mode: RestoreMaintenanceMode.Mode): DatabaseWriteBarrier {
+        val maintenanceMode = mockk<RestoreMaintenanceMode>()
         every { maintenanceMode.currentMode() } returns mode
         every { maintenanceMode.isWritesAllowed() } returns (mode == RestoreMaintenanceMode.Mode.NORMAL)
         return DatabaseWriteBarrier(maintenanceMode)
