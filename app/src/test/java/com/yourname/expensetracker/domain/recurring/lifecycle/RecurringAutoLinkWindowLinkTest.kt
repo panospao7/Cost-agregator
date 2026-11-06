@@ -463,9 +463,9 @@ class RecurringAutoLinkWindowLinkTest {
         val expenseId = seedExpense(DUE.plusDays(2))
         assertTrue(lifecycle.linkExpenseToOccurrence(expenseId))
 
-        // Three days late is outside the weekly window of two.
+        // Four days late is outside the weekly keep window S(P) of three (D-4; A(P) late is two).
         val expense = expenseDao.getById(expenseId)!!
-        expenseDao.update(expense.copy(date = at(DUE.plusDays(3))))
+        expenseDao.update(expense.copy(date = at(DUE.plusDays(4))))
         val result = lifecycle.reconcileExpenseLinkAfterUpdate(expenseId)
 
         assertTrue(result is RecurringExpenseReconcileResult.Unlinked)
@@ -474,7 +474,7 @@ class RecurringAutoLinkWindowLinkTest {
     }
 
     @Test
-    fun `DR-11 moving a monthly late-linked expense from three to four days late unlinks it`() =
+    fun `DR-11 moving a monthly late-linked expense from three to eight days late unlinks it`() =
         runTest(timeout = 60.seconds) {
             seedRule(frequency = RecurrenceFrequency.MONTHLY)
             val occ = seedOccurrence(DUE)
@@ -486,8 +486,9 @@ class RecurringAutoLinkWindowLinkTest {
                     is RecurringExpenseReconcileResult.UpdatedLinkedSnapshot
             )
 
+            // Eight days late is outside the monthly keep window S(P) of seven (D-4).
             val expense = expenseDao.getById(expenseId)!!
-            expenseDao.update(expense.copy(date = at(DUE.plusDays(4))))
+            expenseDao.update(expense.copy(date = at(DUE.plusDays(8))))
             val result = lifecycle.reconcileExpenseLinkAfterUpdate(expenseId)
 
             assertTrue(result is RecurringExpenseReconcileResult.Unlinked)
