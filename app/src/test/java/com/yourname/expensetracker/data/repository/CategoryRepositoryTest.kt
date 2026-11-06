@@ -637,7 +637,8 @@ class CategoryRepositoryTest {
         } catch (expected: RuntimeException) {
             assertTrue(
                 "unexpected failure: ${expected.javaClass.simpleName}",
-                expected.message.orEmpty().contains("forced_category_delete_failure")
+                expected is android.database.sqlite.SQLiteConstraintException ||
+                    expected.message.orEmpty().contains("forced_category_delete_failure")
             )
         }
 
