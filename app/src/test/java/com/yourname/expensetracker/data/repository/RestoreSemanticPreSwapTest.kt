@@ -368,6 +368,9 @@ class RestoreSemanticPreSwapTest {
             stagedImportVerifier = { _, _, _, _, summary -> summary },
             liveImportVerifier = { _, _, _, summary -> summary },
             timeProvider = FakeTimeProvider(FIXED_TIME),
+            currencySettingsRepository = io.mockk.mockk<com.yourname.expensetracker.domain.currency.CurrencySettingsRepository>(relaxed = true) {
+                io.mockk.every { homeCurrency() } returns kotlinx.coroutines.flow.flowOf("EUR")
+            },
             installmentPreBackupReconciler = dagger.Lazy { preBackupReconciler },
             operationRunRecorder = recorder
         )

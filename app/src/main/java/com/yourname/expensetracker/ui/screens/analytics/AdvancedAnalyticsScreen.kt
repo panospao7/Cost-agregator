@@ -15,6 +15,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.domain.analytics.AnalyticsDashboardData
 import com.yourname.expensetracker.domain.analytics.DashboardInsight
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
@@ -138,27 +139,43 @@ private fun CashflowOverviewCard(data: AnalyticsDashboardData, currency: String)
             
             Spacer(modifier = Modifier.height(16.dp))
             
+            // E-02-4: with nothing convertible the totals are unknown, never shown as 0.
+            val unavailableText = stringResource(R.string.groups_total_unavailable)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
                 CashflowItem(
                     label = stringResource(R.string.analytics_income),
-                    value = CurrencyFormatter.formatMoney(data.totalIncome, currency),
+                    value = if (data.totalsUnavailable) unavailableText
+                    else CurrencyFormatter.formatMoney(data.totalIncome, currency),
                     color = MaterialTheme.colorScheme.tertiary
                 )
                 CashflowItem(
                     label = stringResource(R.string.analytics_spent),
-                    value = CurrencyFormatter.formatMoney(data.totalSpent, currency),
+                    value = if (data.totalsUnavailable) unavailableText
+                    else CurrencyFormatter.formatMoney(data.totalSpent, currency),
                     color = MaterialTheme.colorScheme.error
                 )
                 CashflowItem(
                     label = stringResource(R.string.analytics_net),
-                    value = CurrencyFormatter.formatMoney(data.netCashflow, currency),
-                    color = if (data.netCashflow >= 0) 
-                        MaterialTheme.colorScheme.tertiary 
-                    else 
+                    value = if (data.totalsUnavailable) unavailableText
+                    else CurrencyFormatter.formatMoney(data.netCashflow, currency),
+                    color = if (data.totalsUnavailable || data.netCashflow >= 0)
+                        MaterialTheme.colorScheme.tertiary
+                    else
                         MaterialTheme.colorScheme.error
+                )
+            }
+            if (data.leftOutCount > 0 && !data.totalsUnavailable) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = pluralStringResource(
+                        R.plurals.money_total_partial_notice,
+                        data.leftOutCount,
+                        data.leftOutCount
+                    ),
+                    style = MaterialTheme.typography.bodySmall
                 )
             }
         }

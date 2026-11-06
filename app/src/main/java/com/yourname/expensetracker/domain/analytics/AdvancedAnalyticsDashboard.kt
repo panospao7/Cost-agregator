@@ -28,7 +28,17 @@ data class AnalyticsDashboardData(
     val weeklyPattern: List<DayOfWeekSpending>,
     val insights: List<DashboardInsight>,
     val conversionWarnings: List<AnalyticsConversionWarning> = emptyList(),
-    val conversionConfidence: ConversionConfidence = ConversionConfidence.HIGH
+    val conversionConfidence: ConversionConfidence = ConversionConfidence.HIGH,
+    /**
+     * Own (not-mine rows excluded) transactions left out of the totals because they could not be
+     * converted to [displayCurrency]. Not-mine rows count 0 and are never counted here.
+     */
+    val leftOutCount: Int = 0,
+    /**
+     * True when [leftOutCount] > 0 and no own row could be converted, so the totals are unknown
+     * and must be shown as unavailable instead of 0.
+     */
+    val totalsUnavailable: Boolean = false
 )
 
 data class AnalyticsDashboardCategoryBreakdown(
@@ -51,7 +61,11 @@ data class MonthlyDataPoint(
     val month: String,
     val spending: Double,
     val income: Double,
-    val displayCurrency: String
+    val displayCurrency: String,
+    /** Own transactions in this month that could not be converted and are not in the sums. */
+    val leftOutCount: Int = 0,
+    /** True when the month has left-out rows and no convertible own row: show unavailable, not 0. */
+    val isUnavailable: Boolean = false
 )
 
 data class DayOfWeekSpending(
@@ -142,15 +156,21 @@ class AdvancedAnalyticsDashboard @Inject constructor(
         var totalIncome = 0.0
         var totalWithdrawn = 0.0
 
-        for (expense in expenses) {
-            when (expense.transactionType) {
-                DomainTransactionType.PURCHASE -> totalSpent += expense.effectiveAmount
-                DomainTransactionType.DEPOSIT -> totalIncome += expense.effectiveAmount
-                DomainTransactionType.WITHDRAWAL -> totalWithdrawn += expense.effectiveAmount
+        // E-02-4: sums read the normalized rows (amount already in the home currency).
+        for (row in expensesNormalization.normalizedExpenses) {
+            when (row.snapshot.transactionType) {
+                DomainTransactionType.PURCHASE -> totalSpent += row.normalizedEffectiveAmount
+                DomainTransactionType.DEPOSIT -> totalIncome += row.normalizedEffectiveAmount
+                DomainTransactionType.WITHDRAWAL -> totalWithdrawn += row.normalizedEffectiveAmount
                 else -> Unit
             }
         }
-        
+        // E-02-4: rows that could not be converted are left out; not-mine rows count 0 and are
+        // not lost money. With nothing convertible the totals are unavailable, never 0.
+        val leftOutCount = lostOwnRows(expensesRaw, expensesNormalization).size
+        val totalsUnavailable = leftOutCount > 0 &&
+            expensesNormalization.normalizedExpenses.none { !it.snapshot.isNotMine }
+
         // Derive conversion confidence from normalization results
         val conversionConfidence = computeConversionConfidence(
             expensesNormalization, comparisonNormalization
@@ -170,9 +190,25 @@ class AdvancedAnalyticsDashboard @Inject constructor(
             weeklyPattern = getWeeklyPattern(expenses, displayCurrency),
             insights = generateInsights(expenses, totalSpent, totalIncome),
             conversionWarnings = (expensesNormalization.warnings + comparisonNormalization.warnings),
-            conversionConfidence = conversionConfidence
+            conversionConfidence = conversionConfidence,
+            leftOutCount = leftOutCount,
+            totalsUnavailable = totalsUnavailable
         )
     }
+
+    /**
+     * Own (not-mine excluded) rows the normalizer dropped. When the home currency itself is
+     * invalid every own active row is lost. Bounded: returns rows only, no text.
+     */
+    private fun lostOwnRows(
+        raw: List<ExpenseSnapshot>,
+        normalization: AnalyticsNormalizationResult
+    ): List<ExpenseSnapshot> =
+        if (normalization.warnings.any { it.type == AnalyticsConversionWarningType.INVALID_HOME_CURRENCY }) {
+            raw.filter { it.spendingExclusionReason == null && !it.isNotMine }
+        } else {
+            raw.filter { !it.isNotMine && it.id in normalization.excludedReasons }
+        }
     
     private fun getTopCategories(
         expenses: List<ExpenseSnapshot>,
@@ -237,10 +273,11 @@ class AdvancedAnalyticsDashboard @Inject constructor(
         val result = mutableListOf<MonthlyDataPoint>()
         if (endDate <= startDate) return result
 
-        val monthlyBuckets = analyticsCurrencyNormalizer
-            .normalizeSnapshots(expenseRepository.getExpenseSnapshotsBetween(startDate, endDate), displayCurrency)
-            .includedExpenses
-            .groupBy(::buildMonthKey)
+        val rawExpenses = expenseRepository.getExpenseSnapshotsBetween(startDate, endDate)
+        val normalization = analyticsCurrencyNormalizer.normalizeSnapshots(rawExpenses, displayCurrency)
+        val monthlyBuckets = normalization.normalizedExpenses
+            .groupBy { buildMonthKey(it.snapshot) }
+        val lostByMonth = lostOwnRows(rawExpenses, normalization).groupBy(::buildMonthKey)
 
         // Iterate with a month-start cursor; stop when the cursor reaches endDate
         // (half-open: buckets cover [startDate, endDate), so stop when monthStart >= endDate)
@@ -262,22 +299,36 @@ class AdvancedAnalyticsDashboard @Inject constructor(
 
             val monthKey = TimePeriodUtils.formatMonthKey(monthStart)
 
-            val expenses = monthlyBuckets[monthKey].orEmpty().filter {
+            val rows = monthlyBuckets[monthKey].orEmpty().filter {
+                it.snapshot.date >= bucketStart && it.snapshot.date < bucketEnd
+            }
+            val leftOut = lostByMonth[monthKey].orEmpty().count {
                 it.date >= bucketStart && it.date < bucketEnd
             }
 
             var spending = 0.0
             var income = 0.0
 
-            for (expense in expenses) {
-                when (expense.transactionType) {
-                    DomainTransactionType.PURCHASE -> spending += expense.effectiveAmount
-                    DomainTransactionType.DEPOSIT -> income += expense.effectiveAmount
+            for (row in rows) {
+                when (row.snapshot.transactionType) {
+                    DomainTransactionType.PURCHASE -> spending += row.normalizedEffectiveAmount
+                    DomainTransactionType.DEPOSIT -> income += row.normalizedEffectiveAmount
                     else -> Unit
                 }
             }
 
-            result.add(MonthlyDataPoint(monthKey, spending, income, displayCurrency))
+            // E-02-4: a month whose own rows all failed conversion is unavailable, not 0.
+            val unavailable = leftOut > 0 && rows.none { !it.snapshot.isNotMine }
+            result.add(
+                MonthlyDataPoint(
+                    month = monthKey,
+                    spending = spending,
+                    income = income,
+                    displayCurrency = displayCurrency,
+                    leftOutCount = leftOut,
+                    isUnavailable = unavailable
+                )
+            )
 
             // Move to next month
             monthStart = nextMonthStart

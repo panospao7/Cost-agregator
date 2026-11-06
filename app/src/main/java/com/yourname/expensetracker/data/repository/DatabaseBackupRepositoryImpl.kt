@@ -49,6 +49,8 @@ import com.yourname.expensetracker.domain.privacy.PrivacyDeniedException
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.privacy.PrivacyGateReasonCodes
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.diagnostics.NoOpOperationRunHandle
 import com.yourname.expensetracker.domain.diagnostics.OperationRunHandle
@@ -61,6 +63,7 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.io.File
@@ -117,6 +120,11 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
      * which depends on the transaction lifecycle graph. Used only by [runCostBackupExport].
      */
     private val installmentPreBackupReconciler: dagger.Lazy<InstallmentPreBackupReconciler>,
+    /**
+     * FL-07: reads the home currency for the backup manifest on export and applies the restored
+     * value after the restore journal commits. Privacy and AI settings are never carried.
+     */
+    private val currencySettingsRepository: CurrencySettingsRepository,
     private val databaseReadBarrier: com.yourname.expensetracker.data.backup.DatabaseReadBarrier =
         com.yourname.expensetracker.data.backup.DatabaseReadBarrier(restoreMaintenanceMode),
     private val databaseWriteBarrier: com.yourname.expensetracker.data.backup.DatabaseWriteBarrier =
@@ -145,6 +153,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         liveImportVerifier: suspend (AppDatabase, File, Int, DatabaseImportSummary) -> DatabaseImportSummary,
         timeProvider: TimeProvider,
         installmentPreBackupReconciler: dagger.Lazy<InstallmentPreBackupReconciler>,
+        currencySettingsRepository: CurrencySettingsRepository,
         operationRunRecorder: OperationRunRecorder = NoOpOperationRunRecorder
     ) : this(
         context, database, ioDispatcher, privacyGate, privacySettingsRepository,
@@ -162,7 +171,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         operationRunRecorder,
         com.yourname.expensetracker.data.backup.TimberMaintenanceSafeDiagnosticSink(),
         timeProvider,
-        installmentPreBackupReconciler
+        installmentPreBackupReconciler,
+        currencySettingsRepository
     ) {
         this.stagedImportVerifier = stagedImportVerifier
         this.liveImportVerifier = liveImportVerifier
@@ -653,7 +663,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             includeReceiptImages = snapshot.includeReceiptImages,
             encryptionService = backupEncryptionService,
             privacyModeName = privacyMode?.name,
-            semanticAggregates = snapshot.semanticAggregates
+            semanticAggregates = snapshot.semanticAggregates,
+            homeCurrency = snapshot.homeCurrency
         )
     }
 
@@ -686,8 +697,47 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         val includeReceiptImages: Boolean,
         val redacted: Boolean,
         /** Semantic aggregate section captured from the snapshot; null only if it could not be built. */
-        val semanticAggregates: SemanticAggregateSet? = null
+        val semanticAggregates: SemanticAggregateSet? = null,
+        /** FL-07: home currency read at export time; null when it could not be read. */
+        val homeCurrency: String? = null
     )
+
+    /**
+     * FL-07: reads the home currency for the manifest. A read failure never fails the export (the
+     * manifest key is optional); cancellation propagates. Logs a bounded code only.
+     */
+    private suspend fun readHomeCurrencyForManifest(): String? = try {
+        currencySettingsRepository.homeCurrency().first()
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Timber.w("Backup: HOME_CURRENCY_READ_FAILED stage=export class=%s", e::class.java.simpleName)
+        null
+    }
+
+    /**
+     * FL-07: applies the manifest home currency after the restore journal commit. Absent or
+     * unsupported codes are ignored. Any failure is logged with a bounded code and swallowed (the
+     * restore is already committed and is never rolled back for it); [CancellationException]
+     * always propagates. Runs non-cancellable so a late cancel cannot skip the restore epilogue.
+     */
+    private suspend fun applyRestoredHomeCurrency(code: String?) {
+        if (code == null) return
+        val supported = CurrencyCode.parse(code)?.takeIf { it in CurrencyCode.ALL_SUPPORTED }
+        if (supported == null) {
+            Timber.w("Restore: HOME_CURRENCY_UNSUPPORTED stage=apply_home_currency")
+            return
+        }
+        try {
+            withContext(kotlinx.coroutines.NonCancellable) {
+                currencySettingsRepository.setHomeCurrency(supported.code)
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Timber.w("Restore: HOME_CURRENCY_APPLY_FAILED stage=apply_home_currency class=%s", e::class.java.simpleName)
+        }
+    }
 
     private class ReceiptAssetCollectionException : IllegalStateException(
         "RECEIPT_ASSET_COLLECTION_FAILED"
@@ -917,7 +967,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     receiptFiles = receiptFiles,
                     includeReceiptImages = resolvedIncludeReceiptImages,
                     redacted = resolvedRedacted,
-                    semanticAggregates = semanticAggregates
+                    semanticAggregates = semanticAggregates,
+                    homeCurrency = readHomeCurrencyForManifest()
                 )
 
                 // Destination-specific write (SAF Uri or legacy File delegate)
@@ -1036,7 +1087,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     encryptionService = backupEncryptionService,
                     privacyModeName = privacyMode?.name,
                     tempDir = context.cacheDir,
-                    semanticAggregates = snapshot.semanticAggregates
+                    semanticAggregates = snapshot.semanticAggregates,
+                    homeCurrency = snapshot.homeCurrency
                 )
             }
         } catch (t: Throwable) {
@@ -1654,6 +1706,9 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
 
                     journalEntry = restoreJournal.transitionTo(journalEntry, RestoreJournal.JournalState.COMPLETE)
                     restoreJournal.commitJournal(journalEntry)
+                    // FL-07: the restore is committed; the home currency is applied now and a
+                    // failure here never rolls it back. Privacy/AI settings are never carried.
+                    applyRestoredHomeCurrency(manifest.homeCurrency)
                     restoreMaintenanceMode.exit(forceRestartRequired = true)
                     preRestoreFile.delete()
                     stagedDbFile.delete()

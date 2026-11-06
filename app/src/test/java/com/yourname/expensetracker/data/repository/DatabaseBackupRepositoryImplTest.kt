@@ -1804,6 +1804,102 @@ class DatabaseBackupRepositoryImplTest {
             }
         }
 
+    // ── FL-07: home currency applied after the restore journal commit ──
+
+    /**
+     * Runs a restore that reaches the post-commit point (same accepted section-less v152 shape as the
+     * test above) with [manifestHomeCurrency] in the manifest, and returns the result.
+     */
+    private suspend fun restoreWithManifestHomeCurrency(
+        manifestHomeCurrency: String?,
+        settings: com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+    ): Result<com.yourname.expensetracker.domain.backup.DatabaseImportResult> {
+        val fixture = restoreFixture()
+        try {
+            val counts = BackupVerifier.allTableNames().toSet().minus(m1GatedTables.toSet())
+                .associateWith { if (it == "expenses") 1 else 0 }
+            val manifest = tier1Manifest(counts).copy(homeCurrency = manifestHomeCurrency)
+            stubExtractionResult(manifest, fixture.source, withReceiptAsset = true)
+
+            val result = createRepository(journal = fixture.journal, currencySettings = settings)
+                .restoreCostBackup(File(tempDir, "bundle.costbackup"), "pw")
+
+            // Guard: every assertion below is only meaningful if the restore reached COMPLETE.
+            assertTrue("restore must reach the post-commit point: ${result.exceptionOrNull()}", result.isSuccess)
+            assertEquals(RestoreJournal.JournalState.COMPLETE, fixture.journal.readSuccessJournal()?.state)
+            return result
+        } finally {
+            releaseRestoreFixture()
+        }
+    }
+
+    private fun relaxedCurrencySettings(): com.yourname.expensetracker.domain.currency.CurrencySettingsRepository =
+        mockk(relaxed = true) {
+            every { homeCurrency() } returns flowOf("EUR")
+        }
+
+    @Test
+    fun `FL07 restore applies a supported manifest home currency after the journal commit`() =
+        runTest(testDispatcher) {
+            val settings = relaxedCurrencySettings()
+
+            restoreWithManifestHomeCurrency("USD", settings)
+
+            coVerify(exactly = 1) { settings.setHomeCurrency("USD") }
+            // Applied before maintenance mode is released, never after the restore epilogue.
+            io.mockk.coVerifyOrder {
+                settings.setHomeCurrency("USD")
+                mockRestoreMaintenanceMode.exit(forceRestartRequired = true)
+            }
+        }
+
+    @Test
+    fun `FL07 restore applies the normalized form of a lowercase manifest code`() =
+        runTest(testDispatcher) {
+            // The manifest parser normalizes before restore; a manifest built in memory with a
+            // lowercase value must still reach setHomeCurrency as the upper-case supported code.
+            val settings = relaxedCurrencySettings()
+
+            restoreWithManifestHomeCurrency("gbp", settings)
+
+            coVerify(exactly = 1) { settings.setHomeCurrency("GBP") }
+        }
+
+    @Test
+    fun `FL07 restore never applies an unsupported manifest home currency`() =
+        runTest(testDispatcher) {
+            val settings = relaxedCurrencySettings()
+
+            restoreWithManifestHomeCurrency("ZZZ", settings)
+
+            coVerify(exactly = 0) { settings.setHomeCurrency(any()) }
+        }
+
+    @Test
+    fun `FL07 restore still succeeds when applying the home currency throws`() =
+        runTest(testDispatcher) {
+            val settings = relaxedCurrencySettings()
+            coEvery { settings.setHomeCurrency(any()) } throws IllegalStateException("synthetic failure")
+
+            val result = restoreWithManifestHomeCurrency("USD", settings)
+
+            coVerify(exactly = 1) { settings.setHomeCurrency("USD") }
+            assertTrue(
+                result.getOrThrow() is com.yourname.expensetracker.domain.backup.DatabaseImportResult.SuccessNeedsRestart
+            )
+            verify { mockRestoreMaintenanceMode.exit(forceRestartRequired = true) }
+        }
+
+    @Test
+    fun `FL07 legacy manifest without a home currency never calls setHomeCurrency`() =
+        runTest(testDispatcher) {
+            val settings = relaxedCurrencySettings()
+
+            restoreWithManifestHomeCurrency(null, settings)
+
+            coVerify(exactly = 0) { settings.setHomeCurrency(any()) }
+        }
+
     /**
      * Drives a restore whose v152 manifest lacks the nine gated counts and carries the semantic marker (a present
      * section or a present-but-malformed one). It must fail closed BEFORE staging with the reused bounded
@@ -2980,7 +3076,10 @@ class DatabaseBackupRepositoryImplTest {
                     operationRunRecorder = mockk(relaxed = true),
                     diagnosticSink = com.yourname.expensetracker.data.backup.TimberMaintenanceSafeDiagnosticSink(),
                     timeProvider = FakeTimeProvider(fixedTime),
-                    installmentPreBackupReconciler = dagger.Lazy { mockPreBackupReconciler },
+                    currencySettingsRepository = io.mockk.mockk<com.yourname.expensetracker.domain.currency.CurrencySettingsRepository>(relaxed = true) {
+                io.mockk.every { homeCurrency() } returns kotlinx.coroutines.flow.flowOf("EUR")
+            },
+            installmentPreBackupReconciler = dagger.Lazy { mockPreBackupReconciler },
                     databaseWriteBarrier = barrier
                 )
 
@@ -3339,7 +3438,11 @@ class DatabaseBackupRepositoryImplTest {
         timeProvider: TimeProvider = FakeTimeProvider(fixedTime),
         journal: RestoreJournal = mockRestoreJournal,
         operationRunRecorder: OperationRunRecorder = mockk(relaxed = true),
-        gate: PrivacyGate = privacyGate
+        gate: PrivacyGate = privacyGate,
+        currencySettings: com.yourname.expensetracker.domain.currency.CurrencySettingsRepository =
+            io.mockk.mockk<com.yourname.expensetracker.domain.currency.CurrencySettingsRepository>(relaxed = true) {
+                io.mockk.every { homeCurrency() } returns kotlinx.coroutines.flow.flowOf("EUR")
+            }
     ): DatabaseBackupRepositoryImpl {
         return DatabaseBackupRepositoryImpl(
             context = context,
@@ -3356,6 +3459,7 @@ class DatabaseBackupRepositoryImplTest {
             stagedImportVerifier = stagedVerifier,
             liveImportVerifier = liveVerifier,
             timeProvider = timeProvider,
+            currencySettingsRepository = currencySettings,
             installmentPreBackupReconciler = dagger.Lazy { mockPreBackupReconciler },
             operationRunRecorder = operationRunRecorder
         )
@@ -3801,6 +3905,61 @@ class DatabaseBackupRepositoryImplTest {
         )
 
         runCatching { bundleFile.delete() }
+    }
+
+    // ── FL-07: home currency written into the export manifest ──
+
+    private suspend fun exportAndReadManifest(
+        settings: com.yourname.expensetracker.domain.currency.CurrencySettingsRepository,
+        label: String
+    ): CostbackupBundle.BackupManifest {
+        createFullSchemaDatabase(file = dbFile)
+        every { context.cacheDir } returns File(tempDir, "cache").apply { mkdirs() }
+        val encryption = lowIterationBackupEncryptionService()
+        val repo = createRepository(encryptionService = encryption, currencySettings = settings)
+
+        val result = repo.createCostBackup(
+            password = "fl07_export_password",
+            includeReceiptImages = false,
+            redacted = true,
+            privacyMode = null
+        )
+
+        assertTrue("backup must succeed: ${result.exceptionOrNull()}", result.isSuccess)
+        return extractExport(result.getOrThrow(), "fl07_export_password", encryption, label).manifest
+    }
+
+    @Test
+    fun `FL07 export writes the current home currency into the manifest`() = runTest(testDispatcher) {
+        val settings = relaxedCurrencySettings()
+
+        val manifest = exportAndReadManifest(settings, "fl07_eur")
+
+        assertEquals("EUR", manifest.homeCurrency)
+    }
+
+    @Test
+    fun `FL07 export writes a non default home currency, proving it is read not assumed`() = runTest(testDispatcher) {
+        val settings = mockk<com.yourname.expensetracker.domain.currency.CurrencySettingsRepository>(relaxed = true) {
+            every { homeCurrency() } returns flowOf("GBP")
+        }
+
+        val manifest = exportAndReadManifest(settings, "fl07_gbp")
+
+        assertEquals("GBP", manifest.homeCurrency)
+    }
+
+    @Test
+    fun `FL07 export read failure leaves the manifest key out and the backup still succeeds`() = runTest(testDispatcher) {
+        val settings = mockk<com.yourname.expensetracker.domain.currency.CurrencySettingsRepository>(relaxed = true) {
+            every { homeCurrency() } returns kotlinx.coroutines.flow.flow<String> {
+                throw IllegalStateException("synthetic read failure")
+            }
+        }
+
+        val manifest = exportAndReadManifest(settings, "fl07_read_failure")
+
+        assertNull(manifest.homeCurrency)
     }
 
     // ── UF-46 S2: semantic capture at export (INV-5, INV-6, INV-14, INV-16; AE-5, AE-6, AE-7, AE-15, AE-18) ──

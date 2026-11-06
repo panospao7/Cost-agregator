@@ -12,6 +12,7 @@ import com.yourname.expensetracker.domain.util.GlobalTimeZoneTestLock
 import io.mockk.coEvery
 import io.mockk.mockk
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -558,6 +559,125 @@ class AdvancedAnalyticsDashboardTest : AnalyticsEngineTestBase() {
         dashboard.generateDashboardData(ms("2026-01-15"), ms("2026-02-20"))
         assertEquals(ms("2025-12-10") to ms("2026-01-15"), ranges[1])
     }
+
+    @Test
+    fun `E-02-4 month with only unrated foreign rows is unavailable and not zero`() = runTest {
+        val start = ms("2026-03-01")
+        val end = ms("2026-04-01")
+        val data = listOf(
+            currencyRow(1L, "2026-03-03", 40.0, "USD"),
+            currencyRow(2L, "2026-03-09", 60.0, "USD")
+        )
+        coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } returns data.toExpenseSnapshots()
+
+        val result = dashboard.generateDashboardData(start, end)
+
+        assertEquals(2, result.leftOutCount)
+        assertTrue(result.totalsUnavailable)
+        val march = result.monthlyTrend.single()
+        assertEquals("2026-03", march.month)
+        assertEquals(2, march.leftOutCount)
+        assertTrue(march.isUnavailable)
+    }
+
+    @Test
+    fun `E-02-4 mixed home currency and unrated foreign month keeps the home total and counts one left out`() = runTest {
+        val start = ms("2026-03-01")
+        val end = ms("2026-04-01")
+        val data = listOf(
+            currencyRow(1L, "2026-03-03", 100.0, "EUR"),
+            currencyRow(2L, "2026-03-09", 60.0, "USD")
+        )
+        coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } returns data.toExpenseSnapshots()
+
+        val result = dashboard.generateDashboardData(start, end)
+
+        assertEquals(1, result.leftOutCount)
+        assertFalse(result.totalsUnavailable)
+        assertApproxEquals(100.0, result.totalSpent)
+        val march = result.monthlyTrend.single()
+        assertEquals(1, march.leftOutCount)
+        assertFalse(march.isUnavailable)
+        assertApproxEquals(100.0, march.spending)
+    }
+
+    @Test
+    fun `E-02-4 not-mine rows failing conversion are not counted as left out`() = runTest {
+        val start = ms("2026-03-01")
+        val end = ms("2026-04-01")
+        val data = listOf(
+            currencyRow(1L, "2026-03-03", 100.0, "EUR"),
+            currencyRow(2L, "2026-03-09", 60.0, "USD", isNotMine = true)
+        )
+        coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } returns data.toExpenseSnapshots()
+
+        val result = dashboard.generateDashboardData(start, end)
+
+        assertEquals(0, result.leftOutCount)
+        assertFalse(result.totalsUnavailable)
+        assertApproxEquals(100.0, result.totalSpent)
+        val march = result.monthlyTrend.single()
+        assertEquals(0, march.leftOutCount)
+        assertFalse(march.isUnavailable)
+    }
+
+    @Test
+    fun `E-02-4 month with only not-mine unrated rows is neither unavailable nor left out`() = runTest {
+        val start = ms("2026-03-01")
+        val end = ms("2026-04-01")
+        val data = listOf(currencyRow(1L, "2026-03-09", 60.0, "USD", isNotMine = true))
+        coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } returns data.toExpenseSnapshots()
+
+        val result = dashboard.generateDashboardData(start, end)
+
+        assertEquals(0, result.leftOutCount)
+        assertFalse(result.totalsUnavailable)
+        assertFalse(result.monthlyTrend.single().isUnavailable)
+    }
+
+    @Test
+    fun `E-02-4 unavailability is per month so a converted month beside an unrated month stays available`() = runTest {
+        val start = ms("2026-03-01")
+        val end = ms("2026-05-01")
+        val data = listOf(
+            currencyRow(1L, "2026-03-03", 40.0, "USD"),
+            currencyRow(2L, "2026-04-03", 70.0, "EUR")
+        )
+        coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } answers {
+            val rangeStart = firstArg<Long>()
+            val rangeEnd = secondArg<Long>()
+            data.filter { it.date >= rangeStart && it.date < rangeEnd }.toExpenseSnapshots()
+        }
+
+        val result = dashboard.generateDashboardData(start, end)
+
+        val march = result.monthlyTrend.first { it.month == "2026-03" }
+        val april = result.monthlyTrend.first { it.month == "2026-04" }
+        assertTrue(march.isUnavailable)
+        assertEquals(1, march.leftOutCount)
+        assertFalse(april.isUnavailable)
+        assertEquals(0, april.leftOutCount)
+        assertApproxEquals(70.0, april.spending)
+        // Range-wide: one own row converted, so totals are partial rather than unavailable.
+        assertEquals(1, result.leftOutCount)
+        assertFalse(result.totalsUnavailable)
+    }
+
+    private fun currencyRow(
+        id: Long,
+        date: String,
+        amount: Double,
+        currency: String,
+        isNotMine: Boolean = false
+    ): Expense = Expense(
+        id = id,
+        amount = amount,
+        currency = currency,
+        merchant = "M$id",
+        transactionType = TransactionType.PURCHASE,
+        date = ms(date),
+        isNotMine = isNotMine
+    )
 
     private fun zonedMs(
         year: Int,
