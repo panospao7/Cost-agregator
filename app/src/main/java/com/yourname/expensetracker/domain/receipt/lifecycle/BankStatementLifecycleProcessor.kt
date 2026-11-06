@@ -99,6 +99,20 @@ internal const val STATEMENT_AI_TEXT_SLICE: Int = 4_100
 /** The raw-text window the AI use case keeps (chars); the text handed over is already cut to it. */
 internal const val STATEMENT_AI_PROMPT_WINDOW: Int = 4_000
 
+/**
+ * Boundary scrub for statement-derived text that is stored or deduplicated: IBANs, then 12+ digit runs.
+ * Deliberately does NOT apply the letter-adjacent digit mask: stored merchants keep their digits
+ * (MerchantKeyGenerator), so masking here would break merchant-key matching and learned categories.
+ */
+internal fun scrubStoredStatementText(text: String): String =
+    CounterpartyLabel.scrubLongDigitRuns(CounterpartyLabel.maskIbans(text))
+
+/** AI-bound merchant scrub: IBANs, letter-adjacent digit runs (9+), then 12+ digit runs. Never stored. */
+internal fun scrubStatementTextForAi(text: String): String =
+    CounterpartyLabel.scrubLongDigitRuns(
+        CounterpartyLabel.scrubLetterAdjacentDigitRuns(CounterpartyLabel.maskIbans(text))
+    )
+
 /** True for any whitespace or Unicode space/zero-width separator (NBSP U+00A0, U+202F, newlines, ...). */
 private fun isStatementSpace(c: Char): Boolean =
     c.isWhitespace() || Character.isSpaceChar(c) || Character.getType(c) == Character.FORMAT.toInt()
@@ -106,7 +120,8 @@ private fun isStatementSpace(c: Char): Boolean =
 /**
  * Statement text for the AI prompt, in this order: (1) collapse every whitespace/Unicode space run to
  * one space (so an IBAN or card number split by NBSP, newlines or runs of spaces is one scannable
- * token), over a head slightly wider than the window; (2) mask IBANs, then 12+ digit runs; (3) cut to
+ * token), over a head slightly wider than the window; (2) mask IBANs, then letter-adjacent digit runs
+ * of 9+ digits (AI-only; stored merchants are not masked this way), then 12+ digit runs; (3) cut to
  * [STATEMENT_AI_PROMPT_WINDOW] at the last whitespace boundary, dropping a trailing partial token, so
  * no cut-off identifier fragment reaches the prompt. Returns blank when the window holds no complete
  * token. Pure and linear in the input head.
@@ -393,7 +408,9 @@ class BankStatementLifecycleProcessor @Inject constructor(
             val debugTransactions = aiCandidateIndexes.mapIndexed { candidateId, rowIndex ->
                 val tx = parsedTransactions[rowIndex]
                 DebugTransaction.fromParsedTransaction(tx, candidateId = candidateId).copy(
-                    merchant = scrubStatementText(tx.merchant),
+                    // AI-bound only: candidate merchants also get the letter-adjacent digit mask. The
+                    // stored merchant is rebuilt from parsedTransactions via scrubStatementText below.
+                    merchant = scrubStatementTextForAi(tx.merchant),
                     currencyAssumption = if (sourceCurrencyEvidence[rowIndex]) {
                         CurrencyAssumption.PARSED_FROM_SOURCE
                     } else {
@@ -406,8 +423,8 @@ class BankStatementLifecycleProcessor @Inject constructor(
             } else {
                 transactionValidator.validateTransactions(
                     // Privacy: the AI prompt gets only a bounded, scrubbed head of the statement text.
-                    // Whitespace is collapsed first (NBSP, narrow NBSP, newlines, space runs), then IBANs
-                    // and 12+ digit runs are masked, then the text is cut to the use case's 4000-char
+                    // Whitespace is collapsed first (NBSP, narrow NBSP, newlines, space runs), then IBANs,
+                    // letter-adjacent digit runs of 9+ digits and 12+ digit runs are masked, then the text is cut to the use case's 4000-char
                     // window at a whitespace boundary so no identifier fragment is sent.
                     rawOcrText = statementTextForAi(ocrResult.fullText),
                     candidateTransactions = debugTransactions,
@@ -1497,10 +1514,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
     }
 
     /** Boundary scrub for any statement-derived text that is stored: IBANs, then long digit runs. */
-    private fun scrubStatementText(text: String): String =
-        CounterpartyLabel.scrubLongDigitRuns(
-            CounterpartyLabel.scrubLetterAdjacentDigitRuns(CounterpartyLabel.maskIbans(text))
-        )
+    private fun scrubStatementText(text: String): String = scrubStoredStatementText(text)
 
     /** Bounded ledger/summary code for a layout skip reason; exhaustive so a new reason cannot be dropped. */
     private fun skipReasonCode(reason: StatementSkipReason): String = when (reason) {

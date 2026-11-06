@@ -46,6 +46,13 @@ class StatementAiTextLetterAdjacentDigitsTest {
     }
 
     @Test
+    fun storedMerchantKeepsLetterAdjacentDigitsWhileAiTextMasksThem() {
+        assertEquals("ACC123456789", scrubStoredStatementText("ACC123456789"))
+        assertEquals("ACC****", scrubStatementTextForAi("ACC123456789"))
+        assertEquals("PAYMENT TO ACC**** OK", statementTextForAi("PAYMENT TO ACC123456789 OK"))
+    }
+
+    @Test
     fun ibanStillBecomesLastFourInAiText() {
         assertEquals(
             "PAY ****0123 TO SHOP",
