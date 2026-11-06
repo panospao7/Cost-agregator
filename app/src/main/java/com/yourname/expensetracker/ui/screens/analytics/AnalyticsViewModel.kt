@@ -846,7 +846,14 @@ class AnalyticsViewModel @Inject constructor(
                     conversionStatus = if (normalized.rateBasis == "IDENTITY") ConversionStatus.HOME_CURRENCY else ConversionStatus.CONVERTED,
                     merchant = exp.merchant,
                     date = exp.date,
-                    resolvedAddress = exp.resolvedAddress
+                    resolvedAddress = exp.resolvedAddress,
+                    rateBasis = if (normalized.rateBasis == "IDENTITY") {
+                        com.yourname.expensetracker.domain.core.money.RateBasis.IDENTITY
+                    } else {
+                        com.yourname.expensetracker.domain.core.money.RateBasis.entries
+                            .firstOrNull { it.name == normalized.rateBasis }
+                            ?: com.yourname.expensetracker.domain.core.money.RateBasis.TRANSACTION_DATE
+                    }
                 )
                 excluded != null -> LocatedMoneyExpense(
                     expenseId = exp.id,

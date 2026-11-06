@@ -97,6 +97,21 @@ class ReceiptParserTaxInclusiveAdjustmentTest {
     }
 
     @Test
+    fun `items 100 plus tax 5 equal total 105 is tax exclusive`() {
+        assertFalse(ReceiptParser.isTaxInclusive(105.0, 5.0, listOf(line("Goods", 100.0)), "EUR"))
+    }
+
+    @Test
+    fun `items summing to the total 105 with tax 5 is tax inclusive`() {
+        assertTrue(ReceiptParser.isTaxInclusive(105.0, 5.0, listOf(line("Goods", 105.0)), "EUR"))
+    }
+
+    @Test
+    fun `items 104_9 against total 105 with tax 20 is tax inclusive despite an OCR rounding gap`() {
+        assertTrue(ReceiptParser.isTaxInclusive(105.0, 20.0, listOf(line("Goods", 104.9)), "EUR"))
+    }
+
+    @Test
     fun `adjustment case still needs a separate tax amount`() {
         val items = listOf(line("Item ten", 10.0), line("Item five", 5.0), line("Discount", -3.0, isAdjustment = true))
 

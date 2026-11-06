@@ -179,10 +179,11 @@ class ReceiptParserMoneyBoundaryTest {
 
     @Test
     fun `tax inclusion keeps the strict five percent threshold in receipt currency`() {
-        assertTrue(ReceiptParser.isTaxInclusive(100.0, 5.0, items(95.01), "USD"))
-        assertTrue(ReceiptParser.isTaxInclusive(100.0, 5.0, items(104.99), "USD"))
-        assertFalse(ReceiptParser.isTaxInclusive(100.0, 5.0, items(95.0), "USD"))
-        assertFalse(ReceiptParser.isTaxInclusive(100.0, 5.0, items(105.0), "USD"))
+        // Tax 20 keeps tax/2 (10) above the 5 percent bound (5), so the 5 percent bound decides.
+        assertTrue(ReceiptParser.isTaxInclusive(100.0, 20.0, items(95.01), "USD"))
+        assertTrue(ReceiptParser.isTaxInclusive(100.0, 20.0, items(104.99), "USD"))
+        assertFalse(ReceiptParser.isTaxInclusive(100.0, 20.0, items(95.0), "USD"))
+        assertFalse(ReceiptParser.isTaxInclusive(100.0, 20.0, items(105.0), "USD"))
         assertFalse(ReceiptParser.isTaxInclusive(100.0, null, items(100.0), "USD"))
     }
 
@@ -200,7 +201,7 @@ class ReceiptParserMoneyBoundaryTest {
 
     @Test
     fun `parser tax inclusion and subtotal retain existing receipt semantics`() {
-        val parsed = parser.parse("MARKET\nCoffee   40.00\nBread   56.00\nVAT 1.00\nTOTAL 100.00 EUR")
+        val parsed = parser.parse("MARKET\nCoffee   40.00\nBread   59.80\nVAT 1.00\nTOTAL 100.00 EUR")
 
         assertTrue(parsed.taxInclusive)
         assertEquals(1.0, parsed.tax!!.amount, 0.0)
