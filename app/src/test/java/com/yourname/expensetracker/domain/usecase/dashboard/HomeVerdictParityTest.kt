@@ -304,14 +304,60 @@ class HomeVerdictParityTest {
         assertEquals(0.0, withSuggestionShown.runway.discretionaryRemaining, 1e-6)
     }
 
+    // ---------------------------------------------------------------- (f) knownUpcoming = committed + likely
+
+    /**
+     * P-05-5 reviewer MINOR-3: the simulator's knownUpcoming is the runway's committed PLUS likely
+     * obligations. A detected monthly pattern at 0.80 confidence due later this month (50) is a
+     * likely (not committed) obligation; the PLANNED must-pay rent (400) is committed.
+     */
+    @Test
+    fun `knownUpcoming passed to the simulator includes likely as well as committed obligations`() = runTest {
+        val o = outcome(listOf(rentPlanned("PLANNED", 400.0)), recurringPatterns = listOf(likelyRecurring(50.0)))
+
+        assertEquals(450.0, o.knownArg, 1e-6)
+        assertEquals(450.0, requireNotNull(o.card).result.knownUpcoming, 1e-6)
+        assertEquals(700.0, o.spentArg, 1e-6)
+    }
+
+    @Test
+    fun `knownUpcoming is the likely amount alone when nothing is committed`() = runTest {
+        val o = outcome(emptyList(), recurringPatterns = listOf(likelyRecurring(50.0)))
+
+        assertEquals(50.0, o.knownArg, 1e-6)
+    }
+
+    @Test
+    fun `control knownUpcoming is zero without committed or likely obligations`() = runTest {
+        val o = outcome(emptyList())
+
+        assertEquals(0.0, o.knownArg, 1e-6)
+    }
+
     // ---------------------------------------------------------------- harness
 
     private var totalSimulateCalls = 0
 
+    /** Detected-only (id null) monthly pattern at 0.80 confidence, due June 20: a LIKELY bill. */
+    private fun likelyRecurring(amount: Double) = RecurringPattern(
+        merchantName = "Streaming",
+        averageAmount = amount,
+        currency = "EUR",
+        frequency = RecurrenceFrequency.MONTHLY,
+        periodVarianceDays = 0,
+        amountVariancePercent = 0.0,
+        nextExpectedDate = at(20, 12),
+        confidence = 0.8f,
+        previousDates = emptyList(),
+        categoryId = null,
+        id = null
+    )
+
     private suspend fun outcome(
         planned: List<PlannedExpense>,
         budgets: List<BudgetStatusSnapshot> = listOf(juneBudget()),
-        budgetReadFailed: Boolean = false
+        budgetReadFailed: Boolean = false,
+        recurringPatterns: List<RecurringPattern> = emptyList()
     ): Outcome {
         fixedNowMs = at(15, 12)
         simulateCalls = 0
@@ -320,7 +366,7 @@ class HomeVerdictParityTest {
             purchase(1L, 400.0, at(2, 12), "Landlord"),
             purchase(2L, 300.0, at(3, 12), "Groceries")
         )
-        val result = computeUseCase.compute(data(expenses, budgets, planned, budgetReadFailed))
+        val result = computeUseCase.compute(data(expenses, budgets, planned, budgetReadFailed, recurringPatterns))
         val spent = lastSpentArg
         val known = lastKnownArg
         return Outcome(
@@ -400,7 +446,8 @@ class HomeVerdictParityTest {
         expenses: List<DashboardExpense>,
         budgets: List<BudgetStatusSnapshot>,
         planned: List<PlannedExpense>,
-        budgetReadFailed: Boolean
+        budgetReadFailed: Boolean,
+        recurringPatterns: List<RecurringPattern> = emptyList()
     ): ProcessedDashboardData {
         val dashboardData = DashboardData(
             expenses = expenses,
@@ -418,7 +465,7 @@ class HomeVerdictParityTest {
                 predictedDiscretionary = 0.0,
                 discretionaryBudget = 0.0
             ),
-            recurringPatterns = emptyList(),
+            recurringPatterns = recurringPatterns,
             plannedExpenses = planned,
             goals = emptyList(),
             budgetReadFailed = budgetReadFailed

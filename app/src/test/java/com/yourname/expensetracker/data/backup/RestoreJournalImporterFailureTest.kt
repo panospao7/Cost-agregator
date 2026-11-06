@@ -6,9 +6,11 @@ import com.yourname.expensetracker.data.database.dao.OperationRunEventDao
 import com.yourname.expensetracker.data.database.entity.OperationRun
 import com.yourname.expensetracker.data.database.entity.OperationRunEvent
 import com.yourname.expensetracker.domain.util.TimeProvider
+import io.mockk.Runs
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
+import io.mockk.just
 import io.mockk.mockk
 import io.mockk.slot
 import kotlinx.coroutines.CancellationException
@@ -403,6 +405,273 @@ class RestoreJournalImporterFailureTest {
         assertEquals(null, events.single().exceptionMessage)
         assertFalse(events.single().toString().contains("secret-456"))
         assertEquals("IOException", events.single().exceptionClass)
+    }
+
+    // ── fix-1.0.4 follow-up: every journal insert is a counted write-barrier write ──
+
+    private val successOp = "RestoreJournalImporter.importLastSuccessJournalIfPresent"
+    private val failureOp = "RestoreJournalImporter.importLastFailureJournalIfPresent"
+
+    /** Records every runWrite label and the in-flight depth observed by each DAO insert. */
+    private class BarrierSpy {
+        val ops = mutableListOf<DatabaseAccessOperation>()
+        val insertDepths = mutableListOf<Int>()
+        var depth = 0
+    }
+
+    private fun spyBarrier(spy: BarrierSpy): DatabaseWriteBarrier {
+        val barrier = mockk<DatabaseWriteBarrier>()
+        every { barrier.checkWritesAllowed(any<String>()) } just Runs
+        coEvery { barrier.runWrite<Any?>(capture(spy.ops), any()) } coAnswers {
+            spy.depth++
+            try {
+                secondArg<suspend () -> Any?>().invoke()
+            } finally {
+                spy.depth--
+            }
+        }
+        return barrier
+    }
+
+    private fun stubInsertsRecordingDepth(spy: BarrierSpy, cid: String) {
+        coEvery { operationRunDao.getByCorrelationId(cid) } returns null
+        coEvery { operationRunDao.insert(any()) } coAnswers {
+            spy.insertDepths += spy.depth
+            21L
+        }
+        coEvery { operationRunEventDao.getByRunId(21L) } returns emptyList()
+        coEvery { operationRunEventDao.insert(any()) } coAnswers {
+            spy.insertDepths += spy.depth
+            1L
+        }
+    }
+
+    private fun importerWith(barrier: DatabaseWriteBarrier) = RestoreJournalImporter(
+        journal, operationRunDao, operationRunEventDao, timeProvider, barrier
+    )
+
+    /** Real barrier whose early admission passes but whose next admission (inside runWrite) is blocked. */
+    private fun barrierBlockedAfterEarlyCheck(): DatabaseWriteBarrier {
+        every { maintenanceMode.currentMode() } returnsMany listOf(
+            RestoreMaintenanceMode.Mode.NORMAL,
+            RestoreMaintenanceMode.Mode.RESTORE_PREPARING
+        )
+        every { maintenanceMode.isWritesAllowed() } returns false
+        return DatabaseWriteBarrier(maintenanceMode)
+    }
+
+    private fun unblockMaintenance() {
+        every { maintenanceMode.currentMode() } returns RestoreMaintenanceMode.Mode.NORMAL
+        every { maintenanceMode.isWritesAllowed() } returns true
+    }
+
+    private fun writeSuccessJournalWithEvents(count: Int): String {
+        val entry = journal.beginJournal(
+            sourceBackupPath = "/cache/s.costbackup",
+            stagedDbPath = "/data/staged.db",
+            liveDbPath = "/data/live.db"
+        )
+        repeat(count) { i ->
+            journal.appendEvent(
+                correlationId = entry.operationCorrelationId,
+                stage = "STAGE_$i",
+                outcome = "SUCCESS",
+                severity = "INFO",
+                reasonCode = null,
+                isTerminal = i == count - 1
+            )
+        }
+        journal.commitJournal(entry)
+        return entry.operationCorrelationId
+    }
+
+    private fun writeSuccessJournalWithoutEvents(): String {
+        val entry = journal.beginJournal(
+            sourceBackupPath = "/cache/s.costbackup",
+            stagedDbPath = "/data/staged.db",
+            liveDbPath = "/data/live.db"
+        )
+        journal.commitJournal(entry)
+        return entry.operationCorrelationId
+    }
+
+    private fun existingRun(cid: String) = OperationRun(
+        id = 9L, correlationId = cid, operationType = "RESTORE_COSTBACKUP", status = "SUCCESS",
+        startedAt = 1L, finishedAt = 2L, actor = "user", errorSummary = null
+    )
+
+    @Test
+    fun `success import runs the run insert and every event insert inside a barrier write`() = runTest {
+        val cid = writeSuccessJournalWithEvents(2)
+        val spy = BarrierSpy()
+        stubInsertsRecordingDepth(spy, cid)
+
+        importerWith(spyBarrier(spy)).importLastSuccessJournalIfPresent()
+
+        // One run insert plus two event inserts: three counted writes, each labelled, each in-flight.
+        assertEquals(List(3) { successOp }, spy.ops.map { it.name })
+        assertEquals(listOf(1, 1, 1), spy.insertDepths)
+        coVerify(exactly = 1) { operationRunDao.insert(any()) }
+        coVerify(exactly = 2) { operationRunEventDao.insert(any()) }
+        assertTrue(journal.isSuccessJournalImported(cid))
+    }
+
+    @Test
+    fun `legacy zero-event success import runs its summary insert inside a barrier write`() = runTest {
+        val cid = writeSuccessJournalWithoutEvents()
+        val spy = BarrierSpy()
+        stubInsertsRecordingDepth(spy, cid)
+
+        importerWith(spyBarrier(spy)).importLastSuccessJournalIfPresent()
+
+        assertEquals(listOf(successOp), spy.ops.map { it.name })
+        assertEquals(listOf(1), spy.insertDepths)
+        coVerify(exactly = 0) { operationRunEventDao.insert(any()) }
+        assertTrue(journal.isSuccessJournalImported(cid))
+    }
+
+    @Test
+    fun `failure import runs the run insert and every event insert inside a barrier write`() = runTest {
+        val cid = writeFailureJournal("Incorrect password")
+        val spy = BarrierSpy()
+        stubInsertsRecordingDepth(spy, cid)
+
+        importerWith(spyBarrier(spy)).importLastFailureJournalIfPresent()
+
+        assertEquals(List(2) { failureOp }, spy.ops.map { it.name })
+        assertEquals(listOf(1, 1), spy.insertDepths)
+        assertTrue(journal.isFailureJournalImported(cid))
+    }
+
+    @Test
+    fun `barrier blocked after the early check inserts no run row and leaves the success journal retryable`() = runTest {
+        val cid = writeSuccessJournalWithEvents(1)
+        val barrier = barrierBlockedAfterEarlyCheck()
+        coEvery { operationRunDao.getByCorrelationId(cid) } returns null
+        coEvery { operationRunDao.insert(any()) } returns 7L
+        coEvery { operationRunEventDao.getByRunId(7L) } returns emptyList()
+        coEvery { operationRunEventDao.insert(any()) } returns 1L
+        val blockedImporter = importerWith(barrier)
+
+        blockedImporter.importLastSuccessJournalIfPresent()
+
+        coVerify(exactly = 0) { operationRunDao.insert(any()) }
+        coVerify(exactly = 0) { operationRunEventDao.insert(any()) }
+        assertFalse(journal.isSuccessJournalImported(cid))
+        assertEquals("a rejected write must not stay counted in flight", 0, barrier.inFlightWriteCount())
+
+        // Next healthy startup retries the same journal to completion.
+        unblockMaintenance()
+        blockedImporter.importLastSuccessJournalIfPresent()
+
+        coVerify(exactly = 1) { operationRunDao.insert(any()) }
+        coVerify(exactly = 1) { operationRunEventDao.insert(any()) }
+        assertTrue(journal.isSuccessJournalImported(cid))
+    }
+
+    @Test
+    fun `barrier blocked before an event insert writes no event and does not mark the success journal`() = runTest {
+        val cid = writeSuccessJournalWithEvents(1)
+        val barrier = barrierBlockedAfterEarlyCheck()
+        // The run row already exists, so the first write attempted is the event insert.
+        coEvery { operationRunDao.getByCorrelationId(cid) } returns existingRun(cid)
+        coEvery { operationRunEventDao.getByRunId(9L) } returns emptyList()
+        coEvery { operationRunEventDao.insert(any()) } returns 1L
+        val blockedImporter = importerWith(barrier)
+
+        blockedImporter.importLastSuccessJournalIfPresent()
+
+        coVerify(exactly = 0) { operationRunEventDao.insert(any()) }
+        assertFalse(journal.isSuccessJournalImported(cid))
+        assertEquals(0, barrier.inFlightWriteCount())
+
+        unblockMaintenance()
+        blockedImporter.importLastSuccessJournalIfPresent()
+
+        coVerify(exactly = 1) { operationRunEventDao.insert(any()) }
+        coVerify(exactly = 0) { operationRunDao.insert(any()) }
+        assertTrue(journal.isSuccessJournalImported(cid))
+    }
+
+    @Test
+    fun `barrier blocked after the early check does not mark a legacy zero-event journal imported`() = runTest {
+        val cid = writeSuccessJournalWithoutEvents()
+        val barrier = barrierBlockedAfterEarlyCheck()
+        coEvery { operationRunDao.getByCorrelationId(cid) } returns null
+        coEvery { operationRunDao.insert(any()) } returns 7L
+        val blockedImporter = importerWith(barrier)
+
+        blockedImporter.importLastSuccessJournalIfPresent()
+
+        coVerify(exactly = 0) { operationRunDao.insert(any()) }
+        assertFalse(journal.isSuccessJournalImported(cid))
+
+        unblockMaintenance()
+        blockedImporter.importLastSuccessJournalIfPresent()
+
+        coVerify(exactly = 1) { operationRunDao.insert(any()) }
+        assertTrue(journal.isSuccessJournalImported(cid))
+    }
+
+    @Test
+    fun `barrier blocked after the early check does not mark the failure journal imported`() = runTest {
+        val cid = writeFailureJournal("Incorrect password")
+        val barrier = barrierBlockedAfterEarlyCheck()
+        coEvery { operationRunDao.getByCorrelationId(cid) } returns null
+        coEvery { operationRunDao.insert(any()) } returns 7L
+        coEvery { operationRunEventDao.getByRunId(7L) } returns emptyList()
+        coEvery { operationRunEventDao.insert(any()) } returns 1L
+        val blockedImporter = importerWith(barrier)
+
+        blockedImporter.importLastFailureJournalIfPresent()
+
+        coVerify(exactly = 0) { operationRunDao.insert(any()) }
+        coVerify(exactly = 0) { operationRunEventDao.insert(any()) }
+        assertFalse(journal.isFailureJournalImported(cid))
+        assertEquals(0, barrier.inFlightWriteCount())
+
+        unblockMaintenance()
+        blockedImporter.importLastFailureJournalIfPresent()
+
+        coVerify(exactly = 1) { operationRunDao.insert(any()) }
+        coVerify(exactly = 1) { operationRunEventDao.insert(any()) }
+        assertTrue(journal.isFailureJournalImported(cid))
+    }
+
+    @Test
+    fun `cancellation thrown by the barrier write propagates from every insert site and marks nothing`() = runTest {
+        val cancellation = CancellationException("cancelled during write")
+        val cancellingBarrier = mockk<DatabaseWriteBarrier>()
+        every { cancellingBarrier.checkWritesAllowed(any<String>()) } just Runs
+        coEvery { cancellingBarrier.runWrite<Any?>(any(), any()) } throws cancellation
+        val cancellingImporter = importerWith(cancellingBarrier)
+
+        // Success journal, run insert site.
+        val successCid = writeSuccessJournalWithEvents(1)
+        coEvery { operationRunDao.getByCorrelationId(successCid) } returns null
+        assertSame(cancellation, runCatching { cancellingImporter.importLastSuccessJournalIfPresent() }.exceptionOrNull())
+        assertFalse(journal.isSuccessJournalImported(successCid))
+
+        // Success journal, event insert site (run row already present).
+        coEvery { operationRunDao.getByCorrelationId(successCid) } returns existingRun(successCid)
+        coEvery { operationRunEventDao.getByRunId(9L) } returns emptyList()
+        assertSame(cancellation, runCatching { cancellingImporter.importLastSuccessJournalIfPresent() }.exceptionOrNull())
+        assertFalse(journal.isSuccessJournalImported(successCid))
+
+        // Legacy zero-event success journal.
+        val legacyCid = writeSuccessJournalWithoutEvents()
+        coEvery { operationRunDao.getByCorrelationId(legacyCid) } returns null
+        assertSame(cancellation, runCatching { cancellingImporter.importLastSuccessJournalIfPresent() }.exceptionOrNull())
+        assertFalse(journal.isSuccessJournalImported(legacyCid))
+
+        // Failure journal, run insert site.
+        val failureCid = writeFailureJournal("Incorrect password")
+        coEvery { operationRunDao.getByCorrelationId(failureCid) } returns null
+        assertSame(cancellation, runCatching { cancellingImporter.importLastFailureJournalIfPresent() }.exceptionOrNull())
+        assertFalse(journal.isFailureJournalImported(failureCid))
+
+        coVerify(exactly = 0) { operationRunDao.insert(any()) }
+        coVerify(exactly = 0) { operationRunEventDao.insert(any()) }
     }
 
     /** Writes a terminal success journal (active journal renamed to the success file). */

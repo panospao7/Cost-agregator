@@ -337,6 +337,46 @@ class BudgetSurfaceAgreementTest {
         )
     }
 
+    @Test
+    fun `P-05-5 a failed budget read makes the card not comparable and never No budget set`() = runTest {
+        val (card, radar) = cardAndRadarFor(emptyList(), budgetReadFailed = true)
+
+        assertTrue(
+            "read failure must not render as an absent budget",
+            requireNotNull(card) { "card shown" }.budgetNotComparable
+        )
+        assertEquals(listOf<RadarBudgetInput>(RadarBudgetInput.Unreadable), radar)
+    }
+
+    @Test
+    fun `P-05-5 control a successful read with no budget leaves the card comparable and the Radar None`() = runTest {
+        val (card, radar) = cardAndRadarFor(emptyList(), budgetReadFailed = false)
+
+        assertFalse(
+            "a genuinely absent budget is the No budget set state",
+            requireNotNull(card) { "card shown" }.budgetNotComparable
+        )
+        assertEquals(listOf<RadarBudgetInput>(RadarBudgetInput.None), radar)
+    }
+
+    private suspend fun cardAndRadarFor(
+        snapshots: List<BudgetStatusSnapshot>,
+        budgetReadFailed: Boolean
+    ): Pair<DashboardWidget.MonteCarloForecast?, List<RadarBudgetInput>> {
+        fixedNowMs = at(15, 12)
+        simulatedBudgetAmounts.clear()
+        radarInputs.clear()
+        seedCardResult = true
+        val purchase = DashboardExpense(
+            id = 1L, amount = 300.0, effectiveAmount = 300.0, currency = "EUR", merchant = "M1",
+            transactionType = DashboardTransactionType.PURCHASE, date = at(2, 12),
+            categoryId = 7L, isNotMine = false, isManualEntry = false
+        )
+        val result = computeUseCase.compute(data(listOf(purchase), snapshots, budgetReadFailed))
+        return result.allWidgets.filterIsInstance<DashboardWidget.MonteCarloForecast>().singleOrNull() to
+            radarInputs.toList()
+    }
+
     /**
      * Radar inputs only: with no budget and no income the Home headline and Runway widgets are
      * legitimately absent, so [surfacesFor] (which needs them) does not apply.
