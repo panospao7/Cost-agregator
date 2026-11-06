@@ -29,14 +29,16 @@ import timber.log.Timber
  * P7-P1-07: Replaces the hardcoded worker lists in
  * [com.yourname.expensetracker.data.backup.RestoreMaintenanceMode.scheduleAllWorkers]
  * and [com.yourname.expensetracker.startup.AppStartupCoordinator.scheduleStartupWork]
- * with a single registry that both pause (via [WorkerSpec.DEFAULTS.keys]) and
- * resume/schedule can derive from.
+ * with a single registry that pause (via [WorkerSpec.DEFAULTS.keys] plus the
+ * cancel-only on-demand names in [PrivacyRuntimeWorkerPolicy]) and
+ * resume/schedule (DEFAULTS only) can derive from.
  *
  * ## Adding a new worker
  * 1. Add its spec to [WorkerSpec.DEFAULTS].
  * 2. Add an [Entry] to [entries] with the same name.
  * 3. The worker is automatically paused by [RestoreMaintenanceMode.pauseAllWorkers]
- *    and scheduled by [scheduleAll].
+ *    and scheduled by [scheduleAll]. On-demand workers are cancel-only on pause
+ *    and are never re-enqueued by resume or schedule-confirm.
  *
  * ## Privacy gating
  * Privacy-setting changes do NOT cancel/reschedule workers by hardcoded name.

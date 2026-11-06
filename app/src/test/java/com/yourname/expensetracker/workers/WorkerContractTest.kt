@@ -68,8 +68,10 @@ class WorkerContractTest {
 
     @Test
     fun `worker count matches pauseAllWorkers in RestoreMaintenanceMode`() {
-        // RestoreMaintenanceMode.pauseAllWorkers() iterates WorkerSpec.DEFAULTS.keys
-        // and cancels each by name. If a new worker is added without updating
+        // RestoreMaintenanceMode.pauseAllWorkers() iterates pauseTargetNames()
+        // (WorkerSpec.DEFAULTS.keys plus the cancel-only on-demand names from
+        // PrivacyRuntimeWorkerPolicy) and cancels each by name. Resume/schedule-confirm
+        // stay on DEFAULTS only. If a new worker is added without updating
         // the DEFAULTS map (or vice versa), this test catches the mismatch.
         assertEquals(9, WorkerSpec.DEFAULTS.size)
     }
