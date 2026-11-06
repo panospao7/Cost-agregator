@@ -307,7 +307,11 @@ class RestoreJournalImporterFailureTest {
 
         coEvery { operationRunDao.getByCorrelationId(cid) } returns null
         coEvery { operationRunDao.insert(any()) } throws cancellation
-        assertSame(cancellation, runCatching { importer.importLastFailureJournalIfPresent() }.exceptionOrNull())
+        // The real barrier crosses withContext(InFlightWriteElement); kotlinx.coroutines
+        // stack-trace recovery may deliver a copy whose cause chain holds the original.
+        val thrown = runCatching { importer.importLastFailureJournalIfPresent() }.exceptionOrNull()
+        assertTrue(thrown is CancellationException)
+        assertTrue(generateSequence(thrown) { it.cause }.any { it === cancellation })
         assertFalse(journal.isFailureJournalImported(cid))
         coVerify(exactly = 0) { operationRunEventDao.insert(any()) }
     }
