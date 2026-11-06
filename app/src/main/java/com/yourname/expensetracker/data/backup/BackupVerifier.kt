@@ -738,7 +738,16 @@ object BackupVerifier {
             "SELECT COUNT(*) FROM expenses WHERE spendingExclusionReason = 'INSTALLMENT_REVERSED' " +
                 "AND id NOT IN (SELECT linkedExpenseId FROM installment_entries " +
                 "WHERE status = 'REVERSED' AND linkedExpenseId IS NOT NULL)"
-                to "Expenses flagged as installment reversed that no reversed entry references"
+                to "Expenses flagged as installment reversed that no reversed entry references",
+            // Refund netting (INV-20, schema 153). Fixed count-only messages: no amounts, ids or
+            // currencies ever reach the error text. Either count above 0 fails verification.
+            "SELECT COUNT(*) FROM expense_refund_links WHERE refundExpenseId NOT IN (SELECT id FROM expenses) " +
+                "OR purchaseExpenseId NOT IN (SELECT id FROM expenses)"
+                to "Orphan expense_refund_links referencing non-existent expenses",
+            "SELECT COUNT(*) FROM expenses e WHERE ABS(e.refundNettedAmount - COALESCE(" +
+                "(SELECT SUM(l.appliedAmount) FROM expense_refund_links l " +
+                "WHERE l.refundExpenseId = e.id OR l.purchaseExpenseId = e.id), 0.0)) > 1e-6"
+                to "Expenses whose refundNettedAmount differs from the sum of their refund links"
         )
         for ((sql, description) in checks) {
             try {
