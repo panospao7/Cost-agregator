@@ -8,6 +8,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -41,6 +46,13 @@ fun CategoryScreen(
             snackbarHostState.showSnackbar(message.asString(context))
         }
     }
+    LaunchedEffect(viewModel) {
+        viewModel.messages.collect { message ->
+            snackbarHostState.showSnackbar(message.asString(context))
+        }
+    }
+    val renameDialog by viewModel.renameDialog.collectAsState()
+    val deleteDialog by viewModel.deleteDialog.collectAsState()
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -82,10 +94,31 @@ fun CategoryScreen(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             items(categories, key = { it.id }) { category ->
-                CategoryItem(category)
+                CategoryItem(
+                    category = category,
+                    onRename = { viewModel.requestRename(category.id) },
+                    onDelete = { viewModel.requestDelete(category.id) }
+                )
             }
         }
-        
+
+        renameDialog?.let { state ->
+            RenameCategoryDialog(
+                state = state,
+                onDismiss = viewModel::dismissRename,
+                onConfirm = { name -> viewModel.renameCategory(state.categoryId, name) }
+            )
+        }
+
+        deleteDialog?.let { state ->
+            DeleteCategoryDialog(
+                state = state,
+                onSelectReplacement = viewModel::selectReplacement,
+                onDismiss = viewModel::dismissDelete,
+                onConfirm = { replacementId -> viewModel.confirmDelete(state.categoryId, replacementId) }
+            )
+        }
+
         if (showAddDialog) {
             AddCategoryDialog(
                 onDismiss = { showAddDialog = false },
@@ -99,7 +132,11 @@ fun CategoryScreen(
 }
 
 @Composable
-fun CategoryItem(category: Category) {
+fun CategoryItem(
+    category: Category,
+    onRename: () -> Unit = {},
+    onDelete: () -> Unit = {}
+) {
     val color = remember(category.color) {
         try {
             Color(android.graphics.Color.parseColor(category.color))
@@ -156,10 +193,193 @@ fun CategoryItem(category: Category) {
                     color = Color.Gray,
                     modifier = Modifier.semantics { contentDescription = defaultLabel }
                 )
+            } else {
+                // Overflow menu (rename, delete) on non-default rows only.
+                Spacer(modifier = Modifier.weight(1f))
+                CategoryOverflowMenu(
+                    categoryName = category.name,
+                    onRename = onRename,
+                    onDelete = onDelete
+                )
             }
         }
     }
 }
+
+@Composable
+private fun CategoryOverflowMenu(
+    categoryName: String,
+    onRename: () -> Unit,
+    onDelete: () -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val menuDescription = stringResource(R.string.category_manage_menu_cd, categoryName)
+    Box {
+        IconButton(
+            onClick = { expanded = true },
+            modifier = Modifier
+                .size(48.dp)
+                .semantics { contentDescription = menuDescription }
+        ) {
+            Icon(Icons.Default.MoreVert, contentDescription = null)
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.category_manage_rename)) },
+                onClick = {
+                    expanded = false
+                    onRename()
+                },
+                modifier = Modifier.heightIn(min = 48.dp)
+            )
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.category_manage_delete)) },
+                onClick = {
+                    expanded = false
+                    onDelete()
+                },
+                modifier = Modifier.heightIn(min = 48.dp)
+            )
+        }
+    }
+}
+
+@Composable
+fun RenameCategoryDialog(
+    state: RenameDialogState,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    var name by remember(state.categoryId) { mutableStateOf(state.currentName) }
+    val canConfirm = name.isNotBlank() && !state.inFlight
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.category_rename_title)) },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it.take(MAX_NAME_LENGTH) },
+                label = { Text(stringResource(R.string.category_dialog_label_name)) },
+                isError = state.error != null,
+                supportingText = { state.error?.let { Text(it.asString()) } },
+                singleLine = true,
+                enabled = !state.inFlight
+            )
+        },
+        confirmButton = {
+            Button(
+                onClick = { onConfirm(name) },
+                enabled = canConfirm,
+                modifier = Modifier.heightIn(min = 48.dp)
+            ) {
+                Text(stringResource(R.string.category_manage_rename))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, modifier = Modifier.heightIn(min = 48.dp)) {
+                Text(stringResource(R.string.action_cancel))
+            }
+        }
+    )
+}
+
+@Composable
+fun DeleteCategoryDialog(
+    state: DeleteDialogState,
+    onSelectReplacement: (Long) -> Unit,
+    onDismiss: () -> Unit,
+    onConfirm: (Long) -> Unit
+) {
+    val replacement = state.replacement
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.category_delete_title, state.categoryName)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                when (val count = state.expenseCount) {
+                    is ExpenseCountState.Loading ->
+                        Text(stringResource(R.string.category_delete_count_loading))
+                    is ExpenseCountState.Unavailable ->
+                        Text(stringResource(R.string.category_delete_count_unavailable))
+                    is ExpenseCountState.Loaded ->
+                        if (replacement != null) {
+                            Text(
+                                pluralStringResource(
+                                    R.plurals.category_delete_move_summary,
+                                    count.count,
+                                    count.count,
+                                    replacement.name
+                                )
+                            )
+                        }
+                }
+                Text(
+                    stringResource(R.string.category_delete_budget_note),
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Text(
+                    stringResource(R.string.category_delete_picker_label),
+                    style = MaterialTheme.typography.labelLarge
+                )
+                LazyColumn(
+                    modifier = Modifier
+                        .heightIn(max = 240.dp)
+                        .selectableGroup()
+                ) {
+                    items(state.candidates, key = { it.id }) { candidate ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 48.dp)
+                                .selectable(
+                                    selected = candidate.id == state.replacementId,
+                                    enabled = !state.inFlight,
+                                    role = Role.RadioButton,
+                                    onClick = { onSelectReplacement(candidate.id) }
+                                ),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = candidate.id == state.replacementId,
+                                onClick = null,
+                                enabled = !state.inFlight
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Text(
+                                text = "${candidate.icon} ${candidate.name}",
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                        }
+                    }
+                }
+                state.error?.let {
+                    Text(
+                        it.asString(),
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { replacement?.let { onConfirm(it.id) } },
+                enabled = state.canConfirm,
+                modifier = Modifier.heightIn(min = 48.dp)
+            ) {
+                Text(stringResource(R.string.category_manage_delete))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, modifier = Modifier.heightIn(min = 48.dp)) {
+                Text(stringResource(R.string.action_cancel))
+            }
+        }
+    )
+}
+
+private const val MAX_NAME_LENGTH = 50
 
 @Composable
 fun AddCategoryDialog(

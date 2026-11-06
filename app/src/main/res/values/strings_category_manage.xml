@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Category delete and rename (owner item 144) -->
+    <string name="category_manage_menu_cd">More options for %1$s</string>
+    <string name="category_manage_rename">Rename</string>
+    <string name="category_manage_delete">Delete</string>
+    <string name="category_manage_default_protected">Default categories cannot be renamed or deleted.</string>
+    <string name="category_manage_not_found">This category no longer exists.</string>
+    <string name="category_manage_failed">Something went wrong. Please try again.</string>
+    <string name="category_rename_title">Rename category</string>
+    <string name="category_rename_error_duplicate">A category with this name already exists</string>
+    <string name="category_rename_success">Renamed to %1$s.</string>
+    <string name="category_delete_title">Delete %1$s?</string>
+    <plurals name="category_delete_move_summary">
+        <item quantity="one">%1$d expense will move to %2$s.</item>
+        <item quantity="other">%1$d expenses will move to %2$s.</item>
+    </plurals>
+    <string name="category_delete_count_loading">Counting expenses…</string>
+    <string name="category_delete_count_unavailable">The expense count is unavailable. Any expenses in this category will move to the category you choose.</string>
+    <string name="category_delete_picker_label">Move expenses to</string>
+    <string name="category_delete_budget_note">Budgets for this category are merged into the chosen category.</string>
+    <string name="category_delete_error_replacement">Choose a different category to move expenses to.</string>
+    <string name="category_delete_success">Deleted %1$s. Expenses moved to %2$s.</string>
+</resources>
