@@ -14,7 +14,10 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import javax.inject.Inject
 import javax.inject.Singleton
+import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+import com.yourname.expensetracker.domain.sideeffect.PostCommitActionBatch
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import timber.log.Timber
 
 @Singleton
@@ -25,7 +28,10 @@ class CategoryRepository @Inject constructor(
     private val merchantCategoryDao: MerchantCategoryDao,
     private val budgetDao: BudgetDao,
     private val categorizationEngine: CategorizationEngine,
-    private val hybridExpenseClassifier: dagger.Lazy<HybridExpenseClassifier>
+    private val hybridExpenseClassifier: dagger.Lazy<HybridExpenseClassifier>,
+    // Lazy: breaks the construction cycle; expense category moves go through the
+    // transaction lifecycle coordinator only (LEGAL_PATHS category delete/merge/rename).
+    private val transactionLifecycleCoordinator: dagger.Lazy<TransactionLifecycleCoordinator>
 ) {
 
     val allCategories: Flow<List<Category>> = categoryDao.getAllFlow()
@@ -145,6 +151,11 @@ class CategoryRepository @Inject constructor(
      * active budget for the same category scope, the source's budget is
      * deactivated to avoid unique constraint violations.
      *
+     * Expense rows move through [TransactionLifecycleCoordinator.reassignCategoryBulkDbOnly]
+     * (one aggregate BULK_UPDATED event, post-commit side effects after the commit); every other
+     * reference moves through [CategoryDao.reassignAllReferencesExceptExpenses]; both run in the
+     * same transaction as the source delete (shared with [deleteCategory]).
+     *
      * The classifier snapshot is invalidated after the merge so future
      * categorization queries use the updated category set.
      *
@@ -155,13 +166,93 @@ class CategoryRepository @Inject constructor(
      */
     suspend fun mergeCategories(sourceCategoryId: Long, targetCategoryId: Long): Int {
         writeBarrier.checkWritesAllowed("CategoryRepository.mergeCategories")
-        return withContext(Dispatchers.IO) {
-        val expensesMoved = categoryDao.mergeCategories(sourceCategoryId, targetCategoryId)
+        val expensesMoved = reassignAndDeleteCategory(sourceCategoryId, targetCategoryId, "mergeCategories")
+        Timber.i("Merged category %d into %d: %d expenses reassigned", sourceCategoryId, targetCategoryId, expensesMoved)
+        return expensesMoved
+    }
+
+    /**
+     * Shared delete/merge path (single owner of the re-point-then-delete transaction):
+     * `runWrite` + `withTransaction { TLC expense move; DAO reference re-point; source delete }`.
+     * The post-commit batch runs only AFTER the transaction committed (a failure inside rolls the
+     * expense move, its lifecycle event and every reference change back together and the batch is
+     * never run). Cancellation is never swallowed.
+     *
+     * @return The number of expenses moved to [targetCategoryId].
+     * @throws IllegalArgumentException if either category is missing, they are identical, or the
+     *   source is a default category (DAO protection); the transaction is rolled back.
+     */
+    private suspend fun reassignAndDeleteCategory(
+        sourceCategoryId: Long,
+        targetCategoryId: Long,
+        operation: String
+    ): Int {
+        writeBarrier.checkWritesAllowed("CategoryRepository.$operation")
+        val coordinator = transactionLifecycleCoordinator.get()
+        var batch: PostCommitActionBatch? = null
+        val expensesMoved = writeBarrier.runWrite(DatabaseAccessOperation("CategoryRepository.$operation")) {
+            database.withTransaction {
+                require(sourceCategoryId != targetCategoryId) { "Cannot reassign a category into itself" }
+                val source = requireNotNull(categoryDao.getById(sourceCategoryId)) { "Source category not found" }
+                require(categoryDao.getById(targetCategoryId) != null) { "Target category not found" }
+                val mutation = coordinator.reassignCategoryBulkDbOnly(sourceCategoryId, targetCategoryId, "USER_EDIT")
+                categoryDao.reassignAllReferencesExceptExpenses(sourceCategoryId, targetCategoryId)
+                categoryDao.delete(source)
+                batch = mutation.postCommitActions
+                mutation.value
+            }
+        }
+        // Committed: refresh caches first so a cancelled post-commit run can never leave a
+        // classifier snapshot that still references the deleted category.
         categorizationEngine.invalidateCache()
         hybridExpenseClassifier.get().invalidateCategorySnapshot()
-        Timber.i("Merged category %d into %d: %d expenses reassigned", sourceCategoryId, targetCategoryId, expensesMoved)
-        expensesMoved
+        batch?.let { coordinator.runPostCommit(it) }
+        return expensesMoved
+    }
+
+    /**
+     * Renames [categoryId] to [name] (trimmed). Default categories cannot be renamed. The
+     * case-insensitive duplicate check and the update run in one transaction; renaming a category
+     * to a different casing of its own name is allowed. [RenameCategoryResult.InvalidCharacters]
+     * also covers names over [MAX_CATEGORY_NAME_LENGTH] characters.
+     */
+    suspend fun renameCategory(categoryId: Long, name: String): RenameCategoryResult {
+        writeBarrier.checkWritesAllowed("CategoryRepository.renameCategory")
+        val displayName = name.trim()
+        if (displayName.isEmpty()) return RenameCategoryResult.EmptyName
+        if (displayName.length > MAX_CATEGORY_NAME_LENGTH || displayName.any { it.isISOControl() }) {
+            return RenameCategoryResult.InvalidCharacters
         }
+        val result = withContext(Dispatchers.IO) {
+            writeBarrier.runWrite(DatabaseAccessOperation("CategoryRepository.renameCategory")) {
+                database.withTransaction {
+                    val category = categoryDao.getById(categoryId)
+                    when {
+                        category == null -> RenameCategoryResult.NotFound
+                        category.isDefault -> RenameCategoryResult.CannotRenameDefault
+                        else -> {
+                            val existing = categoryDao.getByName(displayName)
+                            if (existing != null && existing.id != categoryId) {
+                                RenameCategoryResult.Duplicate
+                            } else {
+                                categoryDao.updateNameById(categoryId, displayName)
+                                RenameCategoryResult.Renamed
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (result == RenameCategoryResult.Renamed) {
+            categorizationEngine.invalidateCache()
+            hybridExpenseClassifier.get().invalidateCategorySnapshot()
+        }
+        return result
+    }
+
+    /** Read-only count of expenses assigned to [categoryId] (for the delete confirmation). */
+    suspend fun countExpensesForCategory(categoryId: Long): Int = withContext(Dispatchers.IO) {
+        categoryDao.countExpensesForCategory(categoryId)
     }
 
     /**
@@ -204,29 +295,46 @@ class CategoryRepository @Inject constructor(
         }
     }
 
-    suspend fun deleteCategory(categoryId: Long): DeleteCategoryResult {
+    /**
+     * Deletes [categoryId] after moving everything that references it to [replacementId]:
+     * expenses (via the lifecycle coordinator), budgets (MERGED into the replacement; a
+     * conflicting active source budget is deactivated) and every other reference. Shares one
+     * transaction path with [mergeCategories]. Default categories cannot be deleted; the
+     * replacement must be an existing category different from the source.
+     */
+    suspend fun deleteCategory(categoryId: Long, replacementId: Long): DeleteCategoryResult {
         writeBarrier.checkWritesAllowed("CategoryRepository.deleteCategory")
         return withContext(Dispatchers.IO) {
-        val category = categoryDao.getById(categoryId)
-            ?: return@withContext DeleteCategoryResult.NotFound
+            val category = categoryDao.getById(categoryId)
+                ?: return@withContext DeleteCategoryResult.NotFound
 
-        if (category.isDefault) {
-            return@withContext DeleteCategoryResult.CannotDeleteDefault
-        }
+            if (category.isDefault) {
+                return@withContext DeleteCategoryResult.CannotDeleteDefault
+            }
+            if (replacementId == categoryId) {
+                return@withContext DeleteCategoryResult.SameAsSource
+            }
+            if (categoryDao.getById(replacementId) == null) {
+                return@withContext DeleteCategoryResult.ReplacementInvalid
+            }
 
-        // Check for ANY budgets (active or inactive) referencing this category,
-        // because the FK RESTRICT on budgets.categoryId will block deletion
-        // even if all referencing budgets are inactive.
-        val budgetCount = budgetDao.countBudgetsForCategory(categoryId)
-        if (budgetCount > 0) {
-            return@withContext DeleteCategoryResult.HasBudgets(budgetCount)
+            try {
+                reassignAndDeleteCategory(categoryId, replacementId, "deleteCategory")
+            } catch (e: IllegalArgumentException) {
+                // A category vanished between the pre-checks and the transaction (rolled back).
+                return@withContext if (categoryDao.getById(categoryId) == null) {
+                    DeleteCategoryResult.NotFound
+                } else {
+                    DeleteCategoryResult.ReplacementInvalid
+                }
+            }
+            DeleteCategoryResult.Deleted
         }
+    }
 
-        categoryDao.delete(category)
-        categorizationEngine.invalidateCache()
-        hybridExpenseClassifier.get().invalidateCategorySnapshot()
-        DeleteCategoryResult.Deleted
-        }
+    private companion object {
+        /** Mirrors the [Category] entity invariant (name at most 50 characters). */
+        const val MAX_CATEGORY_NAME_LENGTH = 50
     }
 }
 
@@ -262,6 +370,20 @@ sealed class CategoryCorrectionResult {
 sealed class DeleteCategoryResult {
     data object NotFound : DeleteCategoryResult()
     data object CannotDeleteDefault : DeleteCategoryResult()
-    data class HasBudgets(val budgetCount: Int) : DeleteCategoryResult()
+    /** The chosen replacement category does not exist. */
+    data object ReplacementInvalid : DeleteCategoryResult()
+    /** The replacement is the category being deleted. */
+    data object SameAsSource : DeleteCategoryResult()
     data object Deleted : DeleteCategoryResult()
+}
+
+sealed class RenameCategoryResult {
+    data object Renamed : RenameCategoryResult()
+    data object EmptyName : RenameCategoryResult()
+    /** Control characters, or longer than the 50-character category name limit. */
+    data object InvalidCharacters : RenameCategoryResult()
+    /** Another category already has this name (case-insensitive). */
+    data object Duplicate : RenameCategoryResult()
+    data object CannotRenameDefault : RenameCategoryResult()
+    data object NotFound : RenameCategoryResult()
 }

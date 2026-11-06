@@ -2737,6 +2737,98 @@ class TransactionLifecycleCoordinator @Inject constructor(
         }.toString()
 
     /**
+     * DB-only bulk category re-assignment (category delete / merge, owner item 144): moves every
+     * expense from [fromCategoryId] to [toCategoryId] and writes ONE aggregate BULK_UPDATED
+     * lifecycle event atomically, then returns the post-commit batch WITHOUT running it.
+     *
+     * Safe inside a caller-held `writeBarrier.runWrite { database.withTransaction { ... } }`
+     * (CategoryRepository): [DatabaseWriteBarrier.runWrite] is re-entrant and Room joins the open
+     * transaction, so the expense move, the event, the caller's reference re-pointing and the
+     * category delete commit or roll back together. The caller runs the batch through
+     * [runPostCommit] only after its outer transaction commits; it must NOT run it when the
+     * transaction rolled back.
+     *
+     * No event is written (and the returned batch is empty) when no expense row moved, or when
+     * the two ids are equal. Event metadata is bounded: both category ids and the affected count
+     * (no merchant names, amounts, notes or free text).
+     *
+     * @param fromCategoryId Category whose expenses are moved.
+     * @param toCategoryId   Category receiving the expenses.
+     * @param source         Origin recorded on the event and batch (default `USER_EDIT`).
+     * @param correlationId  Correlation ID for traceability (generated if null).
+     * @return The number of expenses moved plus the not-yet-run post-commit batch.
+     */
+    suspend fun reassignCategoryBulkDbOnly(
+        fromCategoryId: Long,
+        toCategoryId: Long,
+        source: String = "USER_EDIT",
+        correlationId: String? = null
+    ): MutationResult<Int> {
+        writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.reassignCategoryBulkDbOnly")
+
+        val corrId = correlationId ?: com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId()
+        if (fromCategoryId == toCategoryId) {
+            return MutationResult(0, PostCommitActionBatch.empty(corrId))
+        }
+        val now = timeProvider.now()
+        var affectedCount = 0
+
+        // GR-14p-a: canonical direct scope; re-entrant inside a caller-held write scope.
+        writeBarrier.runWrite(
+            DatabaseAccessOperation("TransactionLifecycleCoordinator.reassignCategoryBulkDbOnly")
+        ) {
+            database.withTransaction {
+                affectedCount = expenseDao.updateCategoryForCategory(fromCategoryId, toCategoryId)
+                // Only write the aggregate event when rows were actually affected.
+                if (affectedCount > 0) {
+                    transactionEventDao.insert(
+                        TransactionEvent(
+                            expenseId = null,
+                            eventType = LifecycleEventType.BULK_UPDATED.name,
+                            source = source,
+                            actor = null,
+                            occurredAt = now,
+                            dedupeKey = null,
+                            duplicateExpenseId = null,
+                            beforeSnapshot = null,
+                            afterSnapshot = null,
+                            metadata = JSONObject().apply {
+                                put("fromCategoryId", fromCategoryId)
+                                put("toCategoryId", toCategoryId)
+                                put("affectedCount", affectedCount)
+                            }.toString(),
+                            reason = CATEGORY_REASSIGN_REASON,
+                            correlationId = corrId
+                        )
+                    )
+                }
+            }
+        }
+
+        val batch = if (affectedCount > 0) {
+            planner.planBulkUpdated(source, affectedCount, corrId, setOf(BulkChangedField.CATEGORY))
+        } else {
+            PostCommitActionBatch.empty(corrId)
+        }
+        return MutationResult(affectedCount, batch)
+    }
+
+    /**
+     * Runs a post-commit batch returned by [reassignCategoryBulkDbOnly] AFTER the caller's outer
+     * transaction committed. Best effort: a failed side effect is logged with a bounded message
+     * (exception class name only) and never propagates; [CancellationException] is rethrown.
+     */
+    suspend fun runPostCommit(batch: PostCommitActionBatch) {
+        try {
+            runner.run(batch)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Timber.w("Non-critical: category reassign post-commit side effects failed (%s)", e.javaClass.simpleName)
+        }
+    }
+
+    /**
      * Bulk-updates the category for all expenses matching a merchant key.
      * Writes a single BULK_UPDATED TransactionEvent (not per-row) with
      * JSON metadata describing the operation.
@@ -3275,6 +3367,9 @@ private const val CREATE_ATTEMPTED_REASON = "Create attempted"
 
 /** Constant, payload-free `reason` of the SPENDING_INCLUSION event when the flag is cleared. */
 private const val SPENDING_INCLUSION_CLEARED_REASON = "SPENDING_INCLUSION_CLEARED"
+
+/** Constant, payload-free `reason` of the BULK_UPDATED event written by a category re-assignment. */
+private const val CATEGORY_REASSIGN_REASON = "CATEGORY_REASSIGN"
 
 /**
  * Exception thrown when an update would create a duplicate expense.

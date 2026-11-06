@@ -50,15 +50,16 @@ class CategoryViewModel @Inject constructor(
         }
     }
 
-    fun deleteCategory(categoryId: Long) {
+    fun deleteCategory(categoryId: Long, replacementId: Long) {
         viewModelScope.launch {
             val result = guardedWrite(::emitWriteBlocked) {
-                repository.deleteCategory(categoryId)
+                repository.deleteCategory(categoryId, replacementId)
             } ?: return@launch
             when (result) {
                 is DeleteCategoryResult.NotFound -> { /* update state with error */ }
                 is DeleteCategoryResult.CannotDeleteDefault -> { /* show cannot delete default */ }
-                is DeleteCategoryResult.HasBudgets -> { /* store in state for UI dialog */ }
+                is DeleteCategoryResult.ReplacementInvalid -> { /* replacement picker error */ }
+                is DeleteCategoryResult.SameAsSource -> { /* replacement picker error */ }
                 is DeleteCategoryResult.Deleted -> { /* refresh categories */ }
             }
         }

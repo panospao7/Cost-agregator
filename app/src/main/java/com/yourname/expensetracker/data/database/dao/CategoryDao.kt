@@ -118,10 +118,26 @@ interface CategoryDao {
         return true
     }
 
-    // ── Category merge helpers (used by mergeCategories) ─────────────────────
+    // ── Category rename / read-only helpers ───────────────────────────────────
 
-    @Query("UPDATE expenses SET categoryId = :targetCategoryId WHERE categoryId = :sourceCategoryId")
-    suspend fun reassignExpensesToCategory(sourceCategoryId: Long, targetCategoryId: Long): Int
+    /**
+     * Renames the category row. The caller owns trimming, validation and the
+     * case-insensitive duplicate check (it runs inside the same transaction).
+     * Returns the number of rows updated.
+     */
+    @Query("UPDATE categories SET name = :name WHERE id = :id")
+    suspend fun updateNameById(id: Long, name: String): Int
+
+    /**
+     * Read-only count of expenses currently assigned to [categoryId], used to
+     * tell the user how many expenses a delete will move. Never a write path:
+     * expense rows are re-assigned only through TransactionLifecycleCoordinator.
+     */
+    // spending-exempt: ROW_COUNT
+    @Query("SELECT COUNT(*) FROM expenses WHERE categoryId = :categoryId")
+    suspend fun countExpensesForCategory(categoryId: Long): Int
+
+    // ── Category reference reassignment helpers (used by reassignAllReferencesExceptExpenses) ──
 
     @Query("""
         UPDATE budgets SET isActive = 0, activeOverallKey = NULL, activeCategoryKey = NULL
@@ -162,31 +178,51 @@ interface CategoryDao {
     @Query("UPDATE merchant_canonicals SET categoryId = :targetCategoryId WHERE categoryId = :sourceCategoryId")
     suspend fun reassignMerchantCanonicalsToCategory(sourceCategoryId: Long, targetCategoryId: Long): Int
 
+    @Query("UPDATE manual_recurring_expenses SET categoryId = :targetCategoryId WHERE categoryId = :sourceCategoryId")
+    suspend fun reassignManualRecurringExpensesToCategory(sourceCategoryId: Long, targetCategoryId: Long): Int
+
+    @Query("UPDATE installment_plans SET categoryId = :targetCategoryId WHERE categoryId = :sourceCategoryId")
+    suspend fun reassignInstallmentPlansToCategory(sourceCategoryId: Long, targetCategoryId: Long): Int
+
+    @Query("UPDATE bank_connections SET defaultCategoryId = :targetCategoryId WHERE defaultCategoryId = :sourceCategoryId")
+    suspend fun reassignBankConnectionDefaultCategoryToCategory(sourceCategoryId: Long, targetCategoryId: Long): Int
+
+    @Query("UPDATE user_corrections SET originalCategoryId = :targetCategoryId WHERE originalCategoryId = :sourceCategoryId")
+    suspend fun reassignUserCorrectionOriginalCategoryToCategory(sourceCategoryId: Long, targetCategoryId: Long): Int
+
+    @Query("UPDATE user_corrections SET correctedCategoryId = :targetCategoryId WHERE correctedCategoryId = :sourceCategoryId")
+    suspend fun reassignUserCorrectionCorrectedCategoryToCategory(sourceCategoryId: Long, targetCategoryId: Long): Int
+
+    @Query("UPDATE receipt_item_categorizations SET userCorrectedCategoryId = :targetCategoryId WHERE userCorrectedCategoryId = :sourceCategoryId")
+    suspend fun reassignReceiptItemUserCorrectedCategoryToCategory(sourceCategoryId: Long, targetCategoryId: Long): Int
+
     /**
-     * Merges [sourceCategoryId] into [targetCategoryId]: all expenses, budgets,
-     * merchant mappings, planned expenses, recurring occurrences, pending reviews,
-     * receipt categorizations, spending challenges, and budget adjustment
-     * recommendations pointing to the source are reassigned to the target.
+     * Moves every reference to [sourceCategoryId] EXCEPT expense rows over to
+     * [targetCategoryId]: budgets, budget adjustment recommendations, merchant
+     * mappings and canonicals, pending reviews, receipt item categorizations
+     * (suggested and user-corrected), recurring occurrences, manual recurring
+     * expenses, installment plans, planned expenses, spending challenges,
+     * bank connection defaults, and user corrections (both columns).
      *
-     * After all references are moved, the source category is deleted.
+     * Expense rows are deliberately NOT touched here: they move only through
+     * `TransactionLifecycleCoordinator.reassignCategoryBulkDbOnly` (lifecycle
+     * event plus post-commit side effects). The repository calls both inside
+     * one transaction, then deletes the source.
      *
-     * **Budget conflict resolution:** if both the source and target have an
-     * active budget for the same category scope, the source's budget is
-     * deactivated (isActive = 0) to avoid violating the unique constraint on
-     * `(categoryId) WHERE isActive = 1`.
+     * **Budget conflict resolution:** budgets MERGE into the target. If both
+     * the source and target have an active budget, the source's active budget
+     * is deactivated first (to respect the unique active-category key), then
+     * all remaining source budgets are re-pointed at the target. Merchant
+     * mappings move before the source delete so the CASCADE cannot drop them.
      *
-     * The entire operation runs inside a single database transaction so it
-     * either fully succeeds or rolls back.
+     * Runs in a single database transaction (joins an outer one when present).
      *
-     * @param sourceCategoryId The ID of the category to merge from (will be deleted).
-     * @param targetCategoryId The ID of the category to merge into (preserved).
-     * @return The number of expenses reassigned.
-     * @throws IllegalArgumentException if either ID is invalid or they are the same.
+     * @throws IllegalArgumentException if either ID is missing or they are equal.
      */
     @Transaction
-    suspend fun mergeCategories(sourceCategoryId: Long, targetCategoryId: Long): Int {
+    suspend fun reassignAllReferencesExceptExpenses(sourceCategoryId: Long, targetCategoryId: Long) {
         require(sourceCategoryId != targetCategoryId) {
-            "Cannot merge a category into itself (id=$sourceCategoryId)"
+            "Cannot reassign a category into itself (id=$sourceCategoryId)"
         }
         require(getById(sourceCategoryId) != null) {
             "Source category not found: id=$sourceCategoryId"
@@ -195,27 +231,25 @@ interface CategoryDao {
             "Target category not found: id=$targetCategoryId"
         }
 
-        // 1. Reassign expenses (primary concern)
-        val expensesMoved = reassignExpensesToCategory(sourceCategoryId, targetCategoryId)
-
-        // 2. Handle budgets: deactivate conflicting source budgets first, then move remaining
+        // Budgets: deactivate conflicting source budgets first, then move the rest.
         deactivateConflictingBudgets(sourceCategoryId, targetCategoryId)
         reassignBudgetsToCategory(sourceCategoryId, targetCategoryId)
 
-        // 3. Move all other referencing tables
-        reassignBudgetAdjustmentsToCategory(sourceCategoryId, targetCategoryId)
+        // Merchant mappings move before the source delete (FK CASCADE would drop them).
         reassignMerchantCategoriesToCategory(sourceCategoryId, targetCategoryId)
+
+        reassignBudgetAdjustmentsToCategory(sourceCategoryId, targetCategoryId)
         reassignPendingReviewsToCategory(sourceCategoryId, targetCategoryId)
         reassignReceiptItemCategorizationsToCategory(sourceCategoryId, targetCategoryId)
+        reassignReceiptItemUserCorrectedCategoryToCategory(sourceCategoryId, targetCategoryId)
         reassignRecurringOccurrencesToCategory(sourceCategoryId, targetCategoryId)
+        reassignManualRecurringExpensesToCategory(sourceCategoryId, targetCategoryId)
+        reassignInstallmentPlansToCategory(sourceCategoryId, targetCategoryId)
         reassignPlannedExpensesToCategory(sourceCategoryId, targetCategoryId)
         reassignSpendingChallengesToCategory(sourceCategoryId, targetCategoryId)
         reassignMerchantCanonicalsToCategory(sourceCategoryId, targetCategoryId)
-
-        // 4. Delete the source category (now unreferenced)
-        val sourceCategory = getById(sourceCategoryId)!!
-        delete(sourceCategory)
-
-        return expensesMoved
+        reassignBankConnectionDefaultCategoryToCategory(sourceCategoryId, targetCategoryId)
+        reassignUserCorrectionOriginalCategoryToCategory(sourceCategoryId, targetCategoryId)
+        reassignUserCorrectionCorrectedCategoryToCategory(sourceCategoryId, targetCategoryId)
     }
 }

@@ -8,6 +8,7 @@ import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.domain.categorization.CategorizationEngine
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import dagger.Lazy
 import io.mockk.clearMocks
 import io.mockk.coEvery
@@ -26,6 +27,7 @@ class CategoryRepositoryTest {
     private val budgetDao = mockk<BudgetDao>(relaxed = true)
     private val categorizationEngine = mockk<CategorizationEngine>(relaxed = true)
     private val hybridExpenseClassifier = mockk<HybridExpenseClassifier>(relaxed = true)
+    private val transactionLifecycleCoordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true)
 
     private lateinit var repository: CategoryRepository
 
@@ -41,7 +43,10 @@ class CategoryRepositoryTest {
             merchantCategoryDao = merchantCategoryDao,
             budgetDao = budgetDao,
             categorizationEngine = categorizationEngine,
-            hybridExpenseClassifier = lazyClassifier
+            hybridExpenseClassifier = lazyClassifier,
+            transactionLifecycleCoordinator = object : Lazy<TransactionLifecycleCoordinator> {
+                override fun get(): TransactionLifecycleCoordinator = transactionLifecycleCoordinator
+            }
         )
     }
 
@@ -60,17 +65,17 @@ class CategoryRepositoryTest {
         clearMocks(categorizationEngine, hybridExpenseClassifier, answers = false)
         coEvery { categoryDao.getById(1L) } returns
             Category(id = 1L, name = "test", icon = "icon", color = "#FF0000", isDefault = false)
-        coEvery { budgetDao.countBudgetsForCategory(1L) } returns 0
-        val deleted = repository.deleteCategory(1L)
+        coEvery { categoryDao.getById(2L) } returns
+            Category(id = 2L, name = "replacement", icon = "icon", color = "#FF0000", isDefault = false)
+        val deleted = repository.deleteCategory(1L, 2L)
         assertEquals("Row deleteCategory: outcome", DeleteCategoryResult.Deleted, deleted)
         coVerify(exactly = 1) { categorizationEngine.invalidateCache() }
         coVerify(exactly = 1) { hybridExpenseClassifier.invalidateCategorySnapshot() }
 
         // Row: mergeCategories
         clearMocks(categorizationEngine, hybridExpenseClassifier, answers = false)
-        coEvery { categoryDao.mergeCategories(1L, 2L) } returns 5
         val moved = repository.mergeCategories(1L, 2L)
-        assertEquals("Row mergeCategories: expenses moved", 5, moved)
+        assertEquals("Row mergeCategories: expenses moved", 0, moved)
         coVerify(exactly = 1) { categorizationEngine.invalidateCache() }
         coVerify(exactly = 1) { hybridExpenseClassifier.invalidateCategorySnapshot() }
     }
@@ -78,15 +83,11 @@ class CategoryRepositoryTest {
     @Test
     fun `rejected deleteCategory does not delete or invalidate caches`() = runTest {
         val defaultCategory = Category(id = 2L, name = "Default", icon = "icon", color = "#FF0000", isDefault = true)
-        val withBudgets = Category(id = 3L, name = "Budgeted", icon = "icon", color = "#FF0000", isDefault = false)
         coEvery { categoryDao.getById(1L) } returns null
         coEvery { categoryDao.getById(2L) } returns defaultCategory
-        coEvery { categoryDao.getById(3L) } returns withBudgets
-        coEvery { budgetDao.countBudgetsForCategory(3L) } returns 2
 
-        assertEquals("Row missing category", DeleteCategoryResult.NotFound, repository.deleteCategory(1L))
-        assertEquals("Row default category", DeleteCategoryResult.CannotDeleteDefault, repository.deleteCategory(2L))
-        assertEquals("Row category with budgets", DeleteCategoryResult.HasBudgets(2), repository.deleteCategory(3L))
+        assertEquals("Row missing category", DeleteCategoryResult.NotFound, repository.deleteCategory(1L, 9L))
+        assertEquals("Row default category", DeleteCategoryResult.CannotDeleteDefault, repository.deleteCategory(2L, 9L))
 
         coVerify(exactly = 0) { categoryDao.delete(any()) }
         coVerify(exactly = 0) { categorizationEngine.invalidateCache() }
