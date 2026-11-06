@@ -213,7 +213,8 @@ class HomeViewModelInstallmentWeatherTest {
             totalsAggregationEngine,
             mockk<AdvancedAnalyticsEngine>(relaxed = true),
             currencySettingsRepository = currencySettingsRepository,
-            homeInstallmentWeatherSource = weatherSource
+            homeInstallmentWeatherSource = weatherSource,
+            markRecurringBillPaid = mockk(relaxed = true)
         )
         created.installmentsEnabled = seamOn
         createdViewModels += created
@@ -412,7 +413,8 @@ class HomeViewModelInstallmentWeatherTest {
             totalsAggregationEngine,
             mockk<AdvancedAnalyticsEngine>(relaxed = true),
             currencySettingsRepository = currencySettingsRepository,
-            homeInstallmentWeatherSource = weatherSource
+            homeInstallmentWeatherSource = weatherSource,
+            markRecurringBillPaid = mockk(relaxed = true)
         )
         createdViewModels += untouched
 

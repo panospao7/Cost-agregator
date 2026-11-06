@@ -18,6 +18,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -47,6 +50,7 @@ fun ManualRecurringExpenseScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val homeCurrency by viewModel.homeCurrency.collectAsState(initial = "")
+    val suggestionsState by viewModel.paymentLinkSuggestions.collectAsState()
     var showAddDialog by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf<ManualRecurringExpense?>(null) }
     var markPaidTarget by remember { mutableStateOf<ManualRecurringExpense?>(null) }
@@ -151,6 +155,14 @@ fun ManualRecurringExpenseScreen(
                             )
                         }
                         
+                        // FC-PAID-UNLINKED: an unreadable suggestion result is said once, never shown as
+                        // "no suggestions". Loading, None and Content render nothing here.
+                        if (suggestionsState is PaymentLinkSuggestionsUiState.Unavailable) {
+                            item(key = "payment_link_suggestions_unavailable") {
+                                PaymentLinkSuggestionsUnavailableLine()
+                            }
+                        }
+
                         val activeExpenses = uiState.recurringExpenses.filter { it.isActive }
                         if (activeExpenses.isNotEmpty()) {
                             item {
@@ -175,7 +187,15 @@ fun ManualRecurringExpenseScreen(
                                     } else {
                                         null
                                     },
-                                    isMarkPaidInFlight = expense.id in uiState.inFlightRuleIds
+                                    isMarkPaidInFlight = expense.id in uiState.inFlightRuleIds,
+                                    suggestions = if (supportsMarkPaid(expense)) {
+                                        (suggestionsState as? PaymentLinkSuggestionsUiState.Content)
+                                            ?.byRuleId?.get(expense.id).orEmpty()
+                                    } else {
+                                        emptyList()
+                                    },
+                                    onLinkSuggestion = { viewModel.linkSuggestedPayment(it) },
+                                    onDeclineSuggestion = { viewModel.declineSuggestedPayment(it) }
                                 )
                             }
                         }
@@ -430,7 +450,11 @@ private fun RecurringExpenseCard(
     onToggleStatus: (ManualRecurringExpense) -> Unit,
     onDelete: (ManualRecurringExpense) -> Unit,
     onMarkPaid: ((ManualRecurringExpense) -> Unit)?,
-    isMarkPaidInFlight: Boolean = false
+    isMarkPaidInFlight: Boolean = false,
+    // FC-PAID-UNLINKED: ordered by due date; empty for inactive and IRREGULAR rules.
+    suggestions: List<PaymentLinkSuggestionUi> = emptyList(),
+    onLinkSuggestion: (PaymentLinkSuggestionUi) -> Unit = {},
+    onDeclineSuggestion: (PaymentLinkSuggestionUi) -> Unit = {}
 ) {
     val dateFormat = DateTimeFormatter.ofPattern("MMM dd", Locale.getDefault())
     val isUpcoming = expense.nextDate <= referenceNowMillis + (7 * TimePeriodUtils.DAY_IN_MILLIS)
@@ -517,9 +541,24 @@ private fun RecurringExpenseCard(
                 }
             }
             
+            // FC-PAID-UNLINKED: one block per suggestion, between the amount/due line and Mark as Paid.
+            // While a call for this rule is in flight the block buttons and Mark as Paid are disabled.
+            if (expense.isActive && onMarkPaid != null) {
+                suggestions.forEach { suggestion ->
+                    Spacer(modifier = Modifier.height(8.dp))
+                    PaymentLinkSuggestionBlock(
+                        merchant = expense.merchant,
+                        suggestion = suggestion,
+                        enabled = !isMarkPaidInFlight,
+                        onLink = { onLinkSuggestion(suggestion) },
+                        onDecline = { onDeclineSuggestion(suggestion) }
+                    )
+                }
+            }
+
             if (expense.isActive && onMarkPaid != null) {
                 Spacer(modifier = Modifier.height(8.dp))
-                
+
                 OutlinedButton(
                     onClick = { onMarkPaid(expense) },
                     enabled = !isMarkPaidInFlight,
@@ -549,6 +588,127 @@ private fun RecurringExpenseCard(
         }
     }
 }
+
+/**
+ * FC-PAID-UNLINKED: one "Paid already?" suggestion. The amount is the expense's own amount with its own
+ * currency via the money formatter (never converted, never zero or blank: the ViewModel drops such
+ * items). Only the rule's merchant, the amount and dates are shown, never the expense note.
+ *
+ * Accessibility: the two text lines are one merged node; each button carries a description naming
+ * merchant, amount and date; both buttons are at least 48dp high; at font scale 1.3 or more the
+ * buttons stack full width; no fixed heights, no truncation.
+ */
+@Composable
+internal fun PaymentLinkSuggestionBlock(
+    merchant: String,
+    suggestion: PaymentLinkSuggestionUi,
+    enabled: Boolean,
+    onLink: () -> Unit,
+    onDecline: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val dateFormat = DateTimeFormatter.ofPattern("MMM dd", Locale.getDefault())
+    val zone = ZoneId.systemDefault()
+    val amountText = CurrencyFormatter.formatMoney(suggestion.paidAmount, suggestion.paidCurrency)
+    val paidDateText = dateFormat.format(Instant.ofEpochMilli(suggestion.expenseDate).atZone(zone))
+    val dueDateText = dateFormat.format(Instant.ofEpochMilli(suggestion.dueDate).atZone(zone))
+    val summaryDescription = stringResource(
+        R.string.recurring_link_suggestion_cd_format, merchant, amountText, paidDateText, dueDateText
+    )
+    val linkDescription = stringResource(
+        R.string.recurring_link_action_cd_format, merchant, amountText, paidDateText
+    )
+    val declineDescription = stringResource(
+        R.string.recurring_link_decline_cd_format, merchant, amountText, paidDateText
+    )
+    val stackButtons = LocalDensity.current.fontScale >= STACK_BUTTONS_FONT_SCALE
+
+    val linkButton: @Composable (Modifier) -> Unit = { buttonModifier ->
+        OutlinedButton(
+            onClick = onLink,
+            enabled = enabled,
+            modifier = buttonModifier
+                .heightIn(min = 48.dp)
+                .semantics { contentDescription = linkDescription },
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = SemanticColors.PrimaryIndigo)
+        ) {
+            Text(stringResource(R.string.recurring_link_action))
+        }
+    }
+    val declineButton: @Composable (Modifier) -> Unit = { buttonModifier ->
+        TextButton(
+            onClick = onDecline,
+            enabled = enabled,
+            modifier = buttonModifier
+                .heightIn(min = 48.dp)
+                .semantics { contentDescription = declineDescription },
+            colors = ButtonDefaults.textButtonColors(contentColor = SemanticColors.TextSecondary)
+        ) {
+            Text(stringResource(R.string.recurring_link_decline))
+        }
+    }
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(SemanticColors.PrimaryIndigo.copy(alpha = 0.15f))
+            .padding(12.dp)
+    ) {
+        Column(
+            modifier = Modifier.semantics(mergeDescendants = true) {
+                contentDescription = summaryDescription
+            }
+        ) {
+            Text(
+                text = stringResource(R.string.recurring_link_suggestion_title_format, amountText, paidDateText),
+                style = MaterialTheme.typography.bodyMedium,
+                color = SemanticColors.TextPrimary,
+                fontWeight = FontWeight.Medium
+            )
+            // Names which bill it is: the occurrence due date, not the rule's nextDate.
+            Text(
+                text = stringResource(R.string.label_due_format, dueDateText),
+                style = MaterialTheme.typography.bodySmall,
+                color = SemanticColors.TextSecondary
+            )
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        if (stackButtons) {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                linkButton(Modifier.fillMaxWidth())
+                declineButton(Modifier.fillMaxWidth())
+            }
+        } else {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                linkButton(Modifier.weight(1f))
+                declineButton(Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+/** FC-PAID-UNLINKED: the single muted line shown when the suggestion read was blocked or failed. */
+@Composable
+internal fun PaymentLinkSuggestionsUnavailableLine(modifier: Modifier = Modifier) {
+    Text(
+        text = stringResource(R.string.recurring_link_suggestions_unavailable),
+        style = MaterialTheme.typography.bodySmall,
+        color = SemanticColors.TextSecondary,
+        modifier = modifier.fillMaxWidth()
+    )
+}
+
+private const val STACK_BUTTONS_FONT_SCALE = 1.3f
 
 @Composable
 private fun AddRecurringExpenseDialog(

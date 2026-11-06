@@ -195,7 +195,8 @@ class HomeViewModelCurrencyReloadTest {
             totalsAggregationEngine,
             mockk<AdvancedAnalyticsEngine>(relaxed = true),
             currencySettingsRepository = currencySettingsRepository,
-            homeInstallmentWeatherSource = mockk(relaxed = true)
+            homeInstallmentWeatherSource = mockk(relaxed = true),
+            markRecurringBillPaid = mockk(relaxed = true)
         )
     }
 
