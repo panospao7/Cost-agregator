@@ -22,6 +22,7 @@ import com.yourname.expensetracker.domain.reminder.BillReminderManager
 import com.yourname.expensetracker.domain.util.NotificationId
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.workers.BlockedPolicy
+import com.yourname.expensetracker.domain.workers.NotificationPermissionChecker
 import com.yourname.expensetracker.domain.workers.WorkerCheckpointBlockedException
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
 import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
@@ -58,7 +59,8 @@ class BillReminderWorker @AssistedInject constructor(
     private val timeProvider: TimeProvider,
     private val presentationResolver: NotificationPresentationResolver,
     private val presentationApplier: NotificationPresentationApplier,
-    private val billReminderManager: BillReminderManager
+    private val billReminderManager: BillReminderManager,
+    private val notificationPermissionChecker: NotificationPermissionChecker
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
@@ -192,10 +194,20 @@ class BillReminderWorker @AssistedInject constructor(
                             }
                             Log.w(TAG, "$failureCode reminderId=${reminder.id}")
                             if (result.reason == "permission_denied") {
-                                coordinator.cancelClaimedReminderDelivery(
-                                    deliveryId = reminder.id,
-                                    reason = "notification_permission_revoked"
-                                )
+                                // P-04-1: a denied post while notifications are enabled is transient, so
+                                // the claim is released for a bounded number of retries. Otherwise (or
+                                // when the budget is spent or the delivery is no longer CLAIMED) cancel.
+                                val released = notificationPermissionChecker.areNotificationsEnabled() &&
+                                    coordinator.releaseClaimedReminderDelivery(
+                                        deliveryId = reminder.id,
+                                        maxAttempts = MAX_PERMISSION_RETRY_ATTEMPTS
+                                    )
+                                if (!released) {
+                                    coordinator.cancelClaimedReminderDelivery(
+                                        deliveryId = reminder.id,
+                                        reason = "notification_permission_revoked"
+                                    )
+                                }
                                 try {
                                     diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
                                         pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.RECURRING,
@@ -205,7 +217,7 @@ class BillReminderWorker @AssistedInject constructor(
                                         entityId = reminder.id,
                                         metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
                                             .put("delivered", false)
-                                            .put("reason", "notification_permission_revoked")
+                                            .put("reason", if (released) "permission_retry" else "notification_permission_revoked")
                                             .build()
                                     ))
                                 } catch (e: Exception) {
@@ -470,6 +482,9 @@ class BillReminderWorker @AssistedInject constructor(
         private const val SMALL_ICON = android.R.drawable.ic_dialog_info
         private const val CHANNEL_NAME = "Bill Reminders"
         private const val CHANNEL_DESCRIPTION = "Notifications for due bill payments"
+
+        /** P-04-1: a permission-denied delivery is released for retry while its claim count is below this. */
+        internal const val MAX_PERMISSION_RETRY_ATTEMPTS = 3
 
         /**
          * Schedules the periodic bill-reminder worker.
