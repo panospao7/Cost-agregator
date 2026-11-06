@@ -30,7 +30,6 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import org.json.JSONObject
 import timber.log.Timber
-import kotlin.math.abs
 
 sealed interface ReminderActionResult {
     data object Updated : ReminderActionResult
@@ -373,12 +372,14 @@ class RecurringLifecycleCoordinator @Inject constructor(
      * Links an actual expense to a planned occurrence (marking it PAID).
      *
      * Matching rules (all must hold):
-     * 1. Occurrence status is PLANNED and not yet linked.
+     * 1. The nearest owner N(E) is PLANNED, not yet linked, and (for a rule) the rule is active.
+     *    N(E) is the nearest matching occurrence of ANY status inside the suggestion window
+     *    S(P) (FC-PAID-UNLINKED D-3); a PAID, SKIPPED or MISSED nearest owner blocks the link,
+     *    and a pair the user declined is not a candidate. Ranking: [RecurringPaymentLinkMatcher].
      * 2. Same calendar day for every source; for a [SOURCE_TYPE_RECURRING_RULE] occurrence the
      *    expense may also fall up to [autoLinkWindow]`.earlyDays` before or `.lateDays` after the
      *    due day (at most 1 early and 3 late, shrunk until `2*(early+late) < periodDays`, so weekly
-     *    is 1/2 and daily is 0/0). With several candidates the nearest due day wins, and on a tie
-     *    the earlier one.
+     *    is 1/2 and daily is 0/0).
      * 3. Merchant key matches (case-insensitive, via [MerchantKeyGenerator]).
      * 4. Amount within ±10% tolerance of the expected amount.
      * 5. Same currency (case-insensitive).
@@ -409,37 +410,45 @@ class RecurringLifecycleCoordinator @Inject constructor(
         // P4-NEW-003: the occurrence lookup runs INSIDE the helper's transaction
         // (selectTarget is invoked in-transaction) — read + claim are atomic.
         val result = claimLinkSuppressInWrite(expenseId, SOURCE_DIRECT_EXPENSE_LINK) {
-            // DR-11: widen the read to the largest possible window (3 days late, 1 day early); the
-            // per-occurrence window below narrows it by the rule's period. The end bound is exclusive.
+            // FC-PAID-UNLINKED INV-7: widen the read to the largest suggestion window (7 days each
+            // side, any status) so M(E) is complete. The end bound is exclusive.
             val occurrences = occurrenceDao.getByDateRange(
-                TimePeriodUtils.addDays(expenseDayStart, -MAX_AUTO_LINK_LATE_DAYS),
-                TimePeriodUtils.addDays(expenseDayEnd, MAX_AUTO_LINK_EARLY_DAYS)
+                TimePeriodUtils.addDays(expenseDayStart, -RecurringPaymentLinkMatcher.MAX_SUGGESTION_WINDOW_DAYS),
+                TimePeriodUtils.addDays(expenseDayEnd, RecurringPaymentLinkMatcher.MAX_SUGGESTION_WINDOW_DAYS)
             )
-            val windows = HashMap<Long, AutoLinkWindow>()
-            occurrences.filter { occ ->
-                if (occ.status != "PLANNED" || occ.linkedExpenseId != null) return@filter false
-
-                // Merchant key match (case-insensitive)
+            val windows = HashMap<Long, LinkWindows>()
+            // M(E): occurrences of any rule where the pair matches inside S(P). D-3 clarified:
+            // CANCELLED and IGNORED rows (e.g. left by a deleted or replaced rule) are not
+            // candidates and never own a payment; only PAID, SKIPPED, MISSED and PLANNED rows rank.
+            val matches = ArrayList<RecurringOccurrence>()
+            for (occ in occurrences) {
+                if (occ.status == RecurringOccurrenceStatus.CANCELLED.dbValue ||
+                    occ.status == RecurringOccurrenceStatus.IGNORED.dbValue
+                ) continue
+                val occWindows = resolveLinkWindows(occ, windows)
                 val occMerchantKey = MerchantKeyGenerator.generate(occ.merchant.orEmpty())
-                if (occMerchantKey.isBlank() || expenseMerchantKey.isBlank()) return@filter false
-                if (occMerchantKey != expenseMerchantKey) return@filter false
-
-                // Amount within ±10% tolerance
-                if (!amountMatches(occ.expectedAmount, expense.amount)) return@filter false
-
-                // Same currency (case-insensitive)
-                if (!occ.expectedCurrency.equals(expense.currency, ignoreCase = true)) return@filter false
-
-                // DR-11: same day, or inside the rule's period-bounded window.
-                withinAutoLinkWindow(expense.date, occ, windows)
+                if (RecurringPaymentLinkMatcher.pairMatches(expense, occ, expenseMerchantKey, occMerchantKey, occWindows.suggestion)) {
+                    matches.add(occ)
+                }
             }
-                // Nearest occurrence first; on a tie the earlier due date wins.
-                .minWithOrNull(
-                    compareBy<RecurringOccurrence>(
-                        { abs(TimePeriodUtils.daysBetween(it.dueDate, expense.date)) },
-                        { it.dueDate }
-                    )
-                )?.id
+
+            // N(E): the nearest owner by (|d|, amount closeness, dueDate, id). A declined pair has
+            // left M(E), so the first non-declined entry in rank order is the owner.
+            val ranked = RecurringPaymentLinkMatcher.rankByNearest(expense, matches)
+            for (candidate in ranked) {
+                val events = lifecycleEventDao.getEventsForOccurrence(candidate.id)
+                if (RecurringPaymentLinkMatcher.isDeclined(events, expenseId)) continue
+
+                // D-3: claim only when N(E) is open and d is inside A(P). Any other owner means no
+                // auto link (a PAID, SKIPPED or MISSED neighbour blocks). An inactive rule does not
+                // block (INV-6 amended): the occurrence links and becomes PAID; the rule is not advanced.
+                if (candidate.status != "PLANNED" || candidate.linkedExpenseId != null) return@claimLinkSuppressInWrite null
+                val candidateWindows = resolveLinkWindows(candidate, windows)
+                val delta = RecurringPaymentLinkMatcher.dayDelta(expense, candidate)
+                if (!RecurringPaymentLinkMatcher.withinWindow(delta, candidateWindows.auto)) return@claimLinkSuppressInWrite null
+                return@claimLinkSuppressInWrite candidate.id
+            }
+            null
         }
 
         if (result.outcome != ClaimLinkOutcome.CLAIMED) return false
@@ -934,72 +943,61 @@ class RecurringLifecycleCoordinator @Inject constructor(
     }
 
     /**
-     * DR-11: whether [expenseDate] falls inside the auto-link window of [occ]. A rule occurrence
-     * ([SOURCE_TYPE_RECURRING_RULE]) allows [AutoLinkWindow.earlyDays] before and
-     * [AutoLinkWindow.lateDays] after its due day, bounded by the rule's period; every other source
-     * stays same-day. The window is cached per source in [windows] so the rule is read once.
-     */
-    private suspend fun withinAutoLinkWindow(
-        expenseDate: Long,
-        occ: RecurringOccurrence,
-        windows: MutableMap<Long, AutoLinkWindow>
-    ): Boolean {
-        val window = if (occ.sourceType == SOURCE_TYPE_RECURRING_RULE) {
-            windows.getOrPut(occ.sourceId) { resolveAutoLinkWindow(occ) }
-        } else {
-            AutoLinkWindow.SAME_DAY
-        }
-        // Positive: the expense is after the due day (late); negative: before it (early).
-        val delta = TimePeriodUtils.daysBetween(occ.dueDate, expenseDate)
-        return delta in -window.earlyDays..window.lateDays
-    }
-
-    /**
+     * The auto window A(P) and the suggestion window S(P) for [occ]. A rule
+     * occurrence ([SOURCE_TYPE_RECURRING_RULE]) uses the windows of its rule's period; every other
+     * source stays same-day on both and never reads the rule. The result is cached per rule in
+     * [windows] so the rule is read once.
+     *
      * The rule's period comes from its [RecurrenceFrequency] (the rule row, read in the caller's
-     * transaction; the occurrence's own frequency column is the fallback). Fixed-interval
-     * frequencies use [RecurrenceFrequency.fixedIntervalDays]; calendar-month frequencies use
-     * 28 days per month, the shortest month, so the window never overreaches; an irregular or
-     * unreadable frequency gives period 0 and therefore the same-day window.
+     * transaction; the occurrence's own frequency column is the fallback), through
+     * [RecurringPaymentLinkMatcher.resolvePeriodDays]. A missing rule row does not block (the
+     * occurrence still links, as before); an inactive rule does not block either.
      */
-    private suspend fun resolveAutoLinkWindow(occ: RecurringOccurrence): AutoLinkWindow {
-        val frequency = manualRecurringExpenseDao.getById(occ.sourceId)?.frequency
+    private suspend fun resolveLinkWindows(
+        occ: RecurringOccurrence,
+        windows: MutableMap<Long, LinkWindows>
+    ): LinkWindows {
+        if (occ.sourceType != SOURCE_TYPE_RECURRING_RULE) return LinkWindows.SAME_DAY
+        windows[occ.sourceId]?.let { return it }
+        val rule = manualRecurringExpenseDao.getById(occ.sourceId)
+        val frequency = rule?.frequency
             ?: try {
                 RecurrenceFrequency.valueOf(occ.frequency)
             } catch (e: IllegalArgumentException) {
                 null
             }
-        val periodDays = frequency?.let { it.fixedIntervalDays ?: it.calendarMonths?.times(28) } ?: 0
-        return autoLinkWindow(periodDays)
+        val periodDays = RecurringPaymentLinkMatcher.resolvePeriodDays(frequency)
+        val resolved = LinkWindows(
+            auto = autoLinkWindow(periodDays),
+            suggestion = RecurringPaymentLinkMatcher.suggestionWindow(periodDays)
+        )
+        windows[occ.sourceId] = resolved
+        return resolved
     }
 
+    /** A(P) and S(P) for one occurrence (see [resolveLinkWindows]). */
+    private class LinkWindows(
+        val auto: AutoLinkWindow,
+        val suggestion: AutoLinkWindow
+    ) {
+        companion object {
+            val SAME_DAY = LinkWindows(AutoLinkWindow.SAME_DAY, AutoLinkWindow.SAME_DAY)
+        }
+    }
+
+    /**
+     * INV-15 (D-4): the keep check of an existing link. The merchant keys, amount (±10%), currency
+     * and a day delta inside S(P), not A(P), must all still hold, so a link paid early survives an
+     * edit. An existing link is never re-ranked or displaced.
+     */
     private suspend fun expenseMatchesOccurrence(
         expense: com.yourname.expensetracker.data.database.entity.Expense,
         occurrence: RecurringOccurrence
     ): Boolean {
-        if (!withinAutoLinkWindow(expense.date, occurrence, HashMap())) return false
-
+        val windows = resolveLinkWindows(occurrence, HashMap())
         val expenseMerchantKey = MerchantKeyGenerator.generate(expense.merchant)
         val occMerchantKey = MerchantKeyGenerator.generate(occurrence.merchant.orEmpty())
-        if (expenseMerchantKey.isBlank() || occMerchantKey.isBlank()) return false
-        if (expenseMerchantKey != occMerchantKey) return false
-
-        if (!amountMatches(occurrence.expectedAmount, expense.amount)) return false
-        if (!occurrence.expectedCurrency.equals(expense.currency, ignoreCase = true)) return false
-
-        return true
-    }
-
-    /**
-     * Checks whether [actualAmount] is within ±10% of [expectedAmount].
-     * Both values must be finite; returns `false` for zero or negative expected amounts.
-     */
-    private fun amountMatches(expectedAmount: Double, actualAmount: Double): Boolean {
-        if (!expectedAmount.isFinite() || !actualAmount.isFinite()) return false
-        if (expectedAmount == 0.0) return false
-
-        val tolerance = abs(expectedAmount * 0.10)
-        val difference = abs(actualAmount - expectedAmount)
-        return difference <= tolerance
+        return RecurringPaymentLinkMatcher.pairMatches(expense, occurrence, expenseMerchantKey, occMerchantKey, windows.suggestion)
     }
 
     /**

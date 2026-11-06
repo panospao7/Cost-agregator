@@ -2,9 +2,9 @@ package com.yourname.expensetracker.domain.recurring
 
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.domain.recurring.RecurringOccurrenceExpander.OccurrenceCandidate
+import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringPaymentLinkMatcher
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
-import kotlin.math.abs
 import javax.inject.Inject
 
 /**
@@ -150,12 +150,6 @@ class OccurrenceConflictResolver @Inject constructor(
      * Tolerance is computed as `abs(expectedAmount * 0.10)`. Both values must
      * be finite; returns `false` for zero or negative expected amounts.
      */
-    private fun amountMatches(expectedAmount: Double, actualAmount: Double): Boolean {
-        if (!expectedAmount.isFinite() || !actualAmount.isFinite()) return false
-        if (expectedAmount == 0.0) return false
-
-        val tolerance = abs(expectedAmount * 0.10)
-        val difference = abs(actualAmount - expectedAmount)
-        return difference <= tolerance
-    }
+    private fun amountMatches(expectedAmount: Double, actualAmount: Double): Boolean =
+        RecurringPaymentLinkMatcher.amountMatches(expectedAmount, actualAmount)
 }
