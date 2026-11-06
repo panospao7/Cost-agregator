@@ -1586,7 +1586,6 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         expenses: List<DashboardExpense>,
         startOfMonth: Long
     ): Triple<Int, Int, Int> {
-        val oneDayMs = TimePeriodUtils.DAY_IN_MILLIS
         val todayStart = TimePeriodUtils.getStartOfDay(now)
         val dayOfMonth = TimePeriodUtils.getDayOfMonth(now)
         
@@ -1617,7 +1616,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         while (checkDate >= oldestPurchaseDay) {
             if (!purchaseDaySet.contains(checkDate)) {
                 currentStreak++
-                checkDate -= oneDayMs
+                checkDate = TimePeriodUtils.getStartOfDay(TimePeriodUtils.addDays(checkDate, -1))
             } else {
                 break
             }
@@ -1671,10 +1670,9 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
 
         var streak = 0
         var checkDay = today
-        val oneDayMs = TimePeriodUtils.DAY_IN_MILLIS
         while (checkDay >= periodStartDay && !expenseDays.contains(checkDay)) {
             streak++
-            checkDay -= oneDayMs
+            checkDay = TimePeriodUtils.getStartOfDay(TimePeriodUtils.addDays(checkDay, -1))
         }
         
         return streak

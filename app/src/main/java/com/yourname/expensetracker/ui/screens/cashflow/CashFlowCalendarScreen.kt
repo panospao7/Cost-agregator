@@ -20,6 +20,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.cashflow.CashFlowRiskLevel
@@ -485,27 +486,33 @@ private fun DailyCashFlowDetails(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        if (cashFlow.income.isNotEmpty()) {
+        // P-06-5: rows use effectiveAmount, the same basis the day totals aggregate. Rows the
+        // totals count as zero (not-mine / spending-excluded) are not listed.
+        val incomeRows = cashFlow.income.filter { it.effectiveAmount != 0.0 }
+        if (incomeRows.isNotEmpty()) {
             Text(text = "Income items", fontWeight = FontWeight.SemiBold)
-            cashFlow.income.take(3).forEach { income ->
+            incomeRows.take(3).forEach { income ->
                 Text(
-                    text = "• ${income.merchant}: +${CurrencyFormatter.formatMoney(abs(income.amount), income.currency)}",
+                    text = "• ${income.merchant}: +${CurrencyFormatter.formatMoney(abs(income.effectiveAmount), income.currency)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+            CashFlowDayMoreItems(incomeRows.size - 3)
             Spacer(modifier = Modifier.height(8.dp))
         }
 
-        if (cashFlow.expenses.isNotEmpty()) {
+        val expenseRows = cashFlow.expenses.filter { it.effectiveAmount != 0.0 }
+        if (expenseRows.isNotEmpty()) {
             Text(text = "Expense items", fontWeight = FontWeight.SemiBold)
-            cashFlow.expenses.take(3).forEach { expense ->
+            expenseRows.take(3).forEach { expense ->
                 Text(
-                    text = "• ${expense.merchant}: -${CurrencyFormatter.formatMoney(expense.amount, expense.currency)}",
+                    text = "• ${expense.merchant}: -${CurrencyFormatter.formatMoney(expense.effectiveAmount, expense.currency)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+            CashFlowDayMoreItems(expenseRows.size - 3)
             Spacer(modifier = Modifier.height(8.dp))
         }
 
@@ -539,6 +546,7 @@ private fun DailyCashFlowDetails(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+            CashFlowDayMoreItems(cashFlow.predictedRecurring.size - 3)
             Spacer(modifier = Modifier.height(8.dp))
         }
 
@@ -561,6 +569,17 @@ private fun DailyCashFlowDetails(
 
         Spacer(modifier = Modifier.height(16.dp))
     }
+}
+
+/** P-06-5: "+N more" line under a day-detail list truncated to three rows; nothing when [hidden] <= 0. */
+@Composable
+private fun CashFlowDayMoreItems(hidden: Int) {
+    if (hidden <= 0) return
+    Text(
+        text = pluralStringResource(R.plurals.cashflow_day_more_items, hidden, hidden),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
 }
 
 /**

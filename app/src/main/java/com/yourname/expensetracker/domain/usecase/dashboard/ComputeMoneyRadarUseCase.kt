@@ -128,7 +128,6 @@ class ComputeMoneyRadarUseCase @Inject constructor(
     companion object {
         // 7-day window for due bills
         private const val BILL_WINDOW_DAYS = 7
-        private const val ONE_DAY_MS = 24 * 60 * 60 * 1000L
         
         // Scoring weights (must sum to 1.0)
         private const val WEIGHT_DUE_BILLS = 0.4
@@ -267,7 +266,7 @@ class ComputeMoneyRadarUseCase @Inject constructor(
      */
     private suspend fun getDueBills(now: Long, homeCurrency: String): List<UpcomingBill> {
         val startOfToday = TimePeriodUtils.getStartOfDay(now)
-        val windowEnd = now + (BILL_WINDOW_DAYS * ONE_DAY_MS)
+        val windowEnd = TimePeriodUtils.addDays(now, BILL_WINDOW_DAYS)
         
         return try {
             val patterns = recurringPatternsProvider.getConfirmedPatterns()
@@ -302,7 +301,7 @@ class ComputeMoneyRadarUseCase @Inject constructor(
      * Get unresolved (non-dismissed) anomaly alerts from the last 30 days.
      */
     private suspend fun getUnresolvedAnomalies(now: Long): List<AnomalyAlertSummary> {
-        val thirtyDaysAgo = now - (30 * ONE_DAY_MS)
+        val thirtyDaysAgo = TimePeriodUtils.addDays(now, -30)
         
         return try {
             val alerts = anomalyAlertRepository.getActiveAlerts()

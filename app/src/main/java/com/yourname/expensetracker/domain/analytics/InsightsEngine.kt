@@ -129,13 +129,7 @@ class InsightsEngine @Inject constructor(
             startMs = period.startInclusiveMillis,
             endMs = period.endExclusiveMillis
         )
-        val durationMs = period.endExclusiveMillis - period.startInclusiveMillis
-        val previousMonth = MonthPeriod(
-            year = TimePeriodUtils.getYear(period.startInclusiveMillis - durationMs),
-            month = TimePeriodUtils.getMonth(period.startInclusiveMillis - durationMs),
-            startMs = period.startInclusiveMillis - durationMs,
-            endMs = period.startInclusiveMillis
-        )
+        val previousMonth = previousComparisonPeriod(period.startInclusiveMillis, period.endExclusiveMillis)
         // Map NormalizedExpense to ExpenseSnapshot for legacy engine consumption
         val snapshots = input.includedExpenses.map { it.toExpenseSnapshot() }
         return generateInsightsForPeriods(
@@ -178,13 +172,7 @@ class InsightsEngine @Inject constructor(
             startMs = period.startInclusiveMillis,
             endMs = period.endExclusiveMillis
         )
-        val durationMs = period.endExclusiveMillis - period.startInclusiveMillis
-        val previousMonth = MonthPeriod(
-            year = TimePeriodUtils.getYear(period.startInclusiveMillis - durationMs),
-            month = TimePeriodUtils.getMonth(period.startInclusiveMillis - durationMs),
-            startMs = period.startInclusiveMillis - durationMs,
-            endMs = period.startInclusiveMillis
-        )
+        val previousMonth = previousComparisonPeriod(period.startInclusiveMillis, period.endExclusiveMillis)
         // Merge current + historical expenses so sub-engines have full context
         val currentSnapshots = currentInput.includedExpenses.map { it.toExpenseSnapshot() }
         val historicalSnapshots = historicalInput?.includedExpenses?.map { it.toExpenseSnapshot() } ?: emptyList()
@@ -240,13 +228,7 @@ class InsightsEngine @Inject constructor(
             startMs = periodRange.start,
             endMs = periodRange.end
         )
-        val durationMs = periodRange.duration
-        val previousMonth = MonthPeriod(
-            year = TimePeriodUtils.getYear(periodRange.start - durationMs),
-            month = TimePeriodUtils.getMonth(periodRange.start - durationMs),
-            startMs = periodRange.start - durationMs,
-            endMs = periodRange.start
-        )
+        val previousMonth = previousComparisonPeriod(periodRange.start, periodRange.end)
         return generateInsightsForPeriods(
             currentMonth = currentMonth,
             previousMonth = previousMonth,
@@ -656,6 +638,31 @@ class InsightsEngine @Inject constructor(
 
     private fun getPreviousMonthPeriod(current: MonthPeriod): MonthPeriod {
         return getMonthPeriod(TimePeriodUtils.addMonths(current.startMs, -1))
+    }
+
+    /**
+     * Comparison window immediately before [startMs, endMs). A whole-calendar-month window
+     * (starts at a month start and ends exactly N calendar months later) is compared with the
+     * N calendar months before it (March vs February, not Jan 29 to Mar 1). Any other window
+     * keeps the equal-duration comparison.
+     */
+    private fun previousComparisonPeriod(startMs: Long, endMs: Long): MonthPeriod {
+        val months = (TimePeriodUtils.getYear(endMs) - TimePeriodUtils.getYear(startMs)) * 12 +
+            (TimePeriodUtils.getMonth(endMs) - TimePeriodUtils.getMonth(startMs))
+        val calendarAligned = months > 0 &&
+            TimePeriodUtils.getStartOfMonth(startMs) == startMs &&
+            TimePeriodUtils.addMonths(startMs, months) == endMs
+        val previousStart = if (calendarAligned) {
+            TimePeriodUtils.addMonths(startMs, -months)
+        } else {
+            startMs - (endMs - startMs)
+        }
+        return MonthPeriod(
+            year = TimePeriodUtils.getYear(previousStart),
+            month = TimePeriodUtils.getMonth(previousStart),
+            startMs = previousStart,
+            endMs = startMs
+        )
     }
 
     // === Spending Pace ===

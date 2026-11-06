@@ -545,6 +545,12 @@
     <string name="installment_plan_fallback_label">Cuota</string>
     <!-- DRAFT: owner native sign-off pending -->
     <string name="cashflow_installments_header">Cuotas a pagar</string>
+    <!-- DRAFT: owner native sign-off pending -->
+    <plurals name="cashflow_day_more_items">
+        <item quantity="one">+%1$d más</item>
+        <item quantity="many">+%1$d más</item>
+        <item quantity="other">+%1$d más</item>
+    </plurals>
     <string name="installments_remaining_label">Pagos programados restantes</string>
     <string name="installments_remaining_note">Suma de los pagos que faltan. No es el saldo pendiente de tu prestamista.</string>
     <plurals name="installments_plan_count">

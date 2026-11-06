@@ -3,6 +3,8 @@ package com.yourname.expensetracker.domain.logic
 import com.yourname.expensetracker.data.database.entity.GroupExpense
 import com.yourname.expensetracker.data.database.entity.GroupMember
 import com.yourname.expensetracker.data.database.entity.SplitType
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.CurrencyFractionDigits
 import java.math.BigDecimal
 import java.math.RoundingMode
 import timber.log.Timber
@@ -40,7 +42,11 @@ object SplitCalculator {
         if (splitParticipants.isEmpty()) return emptyMap()
 
         return when (expense.splitType) {
-            SplitType.EQUAL -> calculateEqualSplit(expense.totalAmount, splitParticipants)
+            SplitType.EQUAL -> calculateEqualSplit(
+                expense.totalAmount,
+                splitParticipants,
+                fractionDigits(expense)
+            )
             SplitType.CUSTOM_PERCENT -> calculatePercentageSplit(expense, splitParticipants)
             SplitType.CUSTOM_AMOUNT -> calculateAmountSplit(expense, splitParticipants)
             SplitType.UNEQUAL -> calculateUnequalSplit(expense, splitParticipants)
@@ -105,18 +111,19 @@ object SplitCalculator {
      */
     private fun calculateEqualSplit(
         totalAmount: Double,
-        members: List<GroupMember>
+        members: List<GroupMember>,
+        digits: Int
     ): Map<Long, Double> {
         if (members.isEmpty()) return emptyMap()
 
-        val totalCents = toCents(totalAmount)
+        val totalCents = toCents(totalAmount, digits)
         val memberCount = members.size.coerceAtLeast(1).toLong()
         val baseCents = totalCents / memberCount
         val remainder = totalCents % memberCount
 
         return members.mapIndexed { index, member ->
             val memberCents = baseCents + if (index.toLong() < remainder) 1L else 0L
-            member.id to fromCents(memberCents)
+            member.id to fromCents(memberCents, digits)
         }.toMap()
     }
     
@@ -133,7 +140,8 @@ object SplitCalculator {
                 calculateAmountsFromPercentages(
                     totalAmount = expense.totalAmount,
                     percentages = parseResult.splits,
-                    members = members
+                    members = members,
+                    digits = fractionDigits(expense)
                 )
             }
 
@@ -225,13 +233,14 @@ object SplitCalculator {
             expense.splitType,
             reason
         )
-        return calculateEqualSplit(expense.totalAmount, members)
+        return calculateEqualSplit(expense.totalAmount, members, fractionDigits(expense))
     }
 
     private fun calculateAmountsFromPercentages(
         totalAmount: Double,
         percentages: Map<Long, Double>,
-        members: List<GroupMember>
+        members: List<GroupMember>,
+        digits: Int
     ): Map<Long, Double> {
         data class PercentageShare(
             val memberId: Long,
@@ -242,7 +251,7 @@ object SplitCalculator {
 
         if (members.isEmpty()) return emptyMap()
 
-        val totalCents = toCents(totalAmount)
+        val totalCents = toCents(totalAmount, digits)
         val shares = members.mapIndexed { index, member ->
             val percent = percentages[member.id] ?: 0.0
             val rawCents = totalCents * (percent / 100.0)
@@ -286,7 +295,7 @@ object SplitCalculator {
         }
 
         return members.associate { member ->
-            member.id to fromCents(centsByMember[member.id] ?: 0L)
+            member.id to fromCents(centsByMember[member.id] ?: 0L, digits)
         }
     }
 
@@ -298,18 +307,30 @@ object SplitCalculator {
         return calculateSplitAmounts(expense, members)[memberId] ?: 0.0
     }
 
-    private fun toCents(amount: Double): Long {
+    /**
+     * Minor-unit digits of the expense currency (0 for JPY/KRW, 2 for EUR, 3 for BHD). An
+     * unknown or unparseable code keeps the legacy 2 digits; "cents" below means minor units.
+     */
+    private fun fractionDigits(expense: GroupExpense): Int {
+        val code = CurrencyCode.parse(expense.currency) ?: return DEFAULT_FRACTION_DIGITS
+        return CurrencyFractionDigits.of(code) ?: DEFAULT_FRACTION_DIGITS
+    }
+
+    /** Rounds [amount] HALF_UP to [digits] decimals and returns minor units. */
+    private fun toCents(amount: Double, digits: Int): Long {
         return BigDecimal.valueOf(amount)
-            .setScale(2, RoundingMode.HALF_UP)
-            .movePointRight(2)
+            .setScale(digits, RoundingMode.HALF_UP)
+            .movePointRight(digits)
             .longValueExact()
     }
 
-    private fun fromCents(cents: Long): Double {
+    private fun fromCents(cents: Long, digits: Int): Double {
         return BigDecimal.valueOf(cents)
-            .movePointLeft(2)
+            .movePointLeft(digits)
             .toDouble()
     }
+
+    private const val DEFAULT_FRACTION_DIGITS = 2
     
     /**
      * Calculate net balance for each member across all expenses.

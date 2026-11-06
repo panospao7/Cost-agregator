@@ -305,6 +305,11 @@
     <string name="installment_plan_fallback_label">Δόση</string>
     <!-- DRAFT: owner native sign-off pending -->
     <string name="cashflow_installments_header">Δόσεις προς πληρωμή</string>
+    <!-- DRAFT: owner native sign-off pending -->
+    <plurals name="cashflow_day_more_items">
+        <item quantity="one">+%1$d ακόμη</item>
+        <item quantity="other">+%1$d ακόμη</item>
+    </plurals>
     <string name="installments_remaining_label">Υπολειπόμενες προγραμματισμένες πληρωμές</string>
     <string name="installments_remaining_note">Άθροισμα των πληρωμών που απομένουν. Δεν είναι το οφειλόμενο υπόλοιπο του δανειστή σας.</string>
     <plurals name="installments_plan_count">
