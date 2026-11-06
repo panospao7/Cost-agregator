@@ -176,6 +176,30 @@ class ExportDataRepository @Inject constructor(
     }
 
     /**
+     * ## J-12-1: delete one unshared generated export file
+     *
+     * Deletes [path] only if its canonical form is a REGULAR file directly inside the canonical
+     * `files/exports/` directory (symlinks and `..` segments resolve first, so nothing outside
+     * that directory can be deleted) and its name starts with one of the export sweep prefixes.
+     * Returns true only when a file was actually removed; every refusal or failure returns false.
+     * No paths or exception text are logged.
+     */
+    fun deleteExportFile(path: String): Boolean {
+        if (path.isBlank()) return false
+        return try {
+            val exportDir = File(context.filesDir, "exports").canonicalFile
+            val file = File(path).canonicalFile
+            if (file.parentFile != exportDir) return false
+            if (EXPORT_SWEEP_PREFIXES.none { file.name.startsWith(it) }) return false
+            file.isFile && file.delete()
+        } catch (_: java.io.IOException) {
+            false
+        } catch (_: SecurityException) {
+            false
+        }
+    }
+
+    /**
      * Fetches a single page of expenses using keyset cursor pagination.
      * Thin wrapper around [DeterministicExpenseExportPager.fetchPage].
      *

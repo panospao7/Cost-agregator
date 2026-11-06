@@ -129,6 +129,41 @@ object CounterpartyLabel {
         maskDigitRuns(text, LONG_DIGIT_RUN_MIN) { isCardJoiner(it) }
 
     /**
+     * RA-SI-3: replaces every run of [ACCOUNT_NUMBER_MIN] or more CONTIGUOUS ASCII digits that is
+     * directly next to a letter (before or after) with a bare "****", e.g. "ACC123456789" becomes
+     * "ACC****". No last digits are kept. Runs not touching a letter (dates "12/03/2024", decimal
+     * amounts "12,345.67", plain reference numbers) and runs under 9 digits are left unchanged;
+     * IBANs are expected to have been masked by [maskIbans] first. Linear, no regex.
+     */
+    fun scrubLetterAdjacentDigitRuns(text: String): String {
+        if (text.length < ACCOUNT_NUMBER_MIN) return text
+        val length = text.length
+        var out: StringBuilder? = null
+        var cursor = 0
+        var index = 0
+        while (index < length) {
+            if (!isAsciiDigit(text[index])) {
+                index++
+                continue
+            }
+            val start = index
+            while (index < length && isAsciiDigit(text[index])) index++
+            val end = index
+            if (end - start < ACCOUNT_NUMBER_MIN) continue
+            val letterBefore = start > 0 && text[start - 1].isLetter()
+            val letterAfter = end < length && text[end].isLetter()
+            if (letterBefore || letterAfter) {
+                val builder = out ?: StringBuilder(length).also { out = it }
+                builder.append(text, cursor, start).append("****")
+                cursor = end
+            }
+        }
+        val result = out ?: return text
+        result.append(text, cursor, length)
+        return result.toString()
+    }
+
+    /**
      * Like [scrubLongDigitRuns] with a minimum of 9 digits and '/', '.' and '-' groups also joining
      * a run: domestic account numbers and mobile numbers. Only for transfer counterparty labels;
      * purchase merchants keep their store numbers.
