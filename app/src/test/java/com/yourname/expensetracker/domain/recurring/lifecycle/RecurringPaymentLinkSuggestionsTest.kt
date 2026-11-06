@@ -711,6 +711,149 @@ class RecurringPaymentLinkSuggestionsTest {
         assertEquals(-7, s.dayDelta)
     }
 
+    @Test
+    fun `INV-9 failing boundary - a bill due eight days from now is not a target`() = runTest(timeout = 60.seconds) {
+        f.seedRule(1L)
+        f.seedOccurrence(1L, TODAY.plusDays(8)) // the read ends before today + 8
+        f.seedExpense(TODAY) // d = -8, also outside the monthly window
+
+        assertEquals(emptyList<PaymentLinkSuggestion>(), f.suggestionItems())
+    }
+
+    @Test
+    fun `INV-9 a tie at the plus seven edge goes to the earlier due bill and a later SKIPPED bill there does not block`() =
+        runTest(timeout = 60.seconds) {
+            f.seedRule(1L)
+            f.seedRule(2L)
+            val open = f.seedOccurrence(1L, TODAY.minusDays(7)) // |d| 7, earlier due
+            f.seedOccurrence(2L, TODAY.plusDays(7), status = "SKIPPED") // |d| 7, later due, last readable day
+            f.seedExpense(TODAY)
+
+            assertEquals(listOf(open), f.suggestionItems().map { it.occurrenceId })
+        }
+
+    private suspend fun seedLookbackEdgeScenario(blockerDaysAgo: Int, blockerStatus: String): Pair<Long, Long> {
+        f.seedRule(1L)
+        f.seedRule(2L)
+        // Target: the oldest due day still inside the target range (today - 31).
+        val target = f.seedOccurrence(1L, TODAY.minusDays(31))
+        // The payment sits on the oldest day the expense read covers (today - 38): d = -7 to the target.
+        val e = f.seedExpense(TODAY.minusDays(38))
+        // A handled bill with the same |d| = 7 to the payment but an earlier due day wins the nearest-owner tie.
+        val blockerExpense = if (blockerStatus == "PAID") f.seedExpense(TODAY.minusDays(blockerDaysAgo.toLong())) else null
+        f.seedOccurrence(
+            2L,
+            TODAY.minusDays(blockerDaysAgo.toLong()),
+            status = blockerStatus,
+            linkedExpenseId = blockerExpense
+        )
+        return target to e
+    }
+
+    @Test
+    fun `INV-9 control - a blocker 46 days back is outside the read so the open bill is suggested`() =
+        runTest(timeout = 60.seconds) {
+            val (target, e) = seedLookbackEdgeScenario(blockerDaysAgo = 46, blockerStatus = "SKIPPED")
+
+            val s = f.suggestionItems().single()
+
+            assertEquals(target, s.occurrenceId)
+            assertEquals(e, s.expenseId)
+            assertEquals(-7, s.dayDelta)
+        }
+
+    @Test
+    fun `INV-9 a SKIPPED blocker exactly 45 days back is read and blocks the open bill`() =
+        runTest(timeout = 60.seconds) {
+            seedLookbackEdgeScenario(blockerDaysAgo = 45, blockerStatus = "SKIPPED")
+
+            assertEquals(emptyList<PaymentLinkSuggestion>(), f.suggestionItems())
+        }
+
+    @Test
+    fun `INV-9 a MISSED blocker exactly 45 days back is read and blocks the open bill`() =
+        runTest(timeout = 60.seconds) {
+            seedLookbackEdgeScenario(blockerDaysAgo = 45, blockerStatus = "MISSED")
+
+            assertEquals(emptyList<PaymentLinkSuggestion>(), f.suggestionItems())
+        }
+
+    @Test
+    fun `INV-9 a PAID blocker exactly 45 days back is read and blocks the open bill`() =
+        runTest(timeout = 60.seconds) {
+            seedLookbackEdgeScenario(blockerDaysAgo = 45, blockerStatus = "PAID")
+
+            assertEquals(emptyList<PaymentLinkSuggestion>(), f.suggestionItems())
+        }
+
+    @Test
+    fun `INV-9 a PAID blocker 46 days back is outside the read and does not block`() =
+        runTest(timeout = 60.seconds) {
+            val (target, _) = seedLookbackEdgeScenario(blockerDaysAgo = 46, blockerStatus = "PAID")
+
+            assertEquals(listOf(target), f.suggestionItems().map { it.occurrenceId })
+        }
+
+    // -- INV-5 / AE-10: the installment gate of the suggestion tier ----------------------------
+
+    private enum class InstallmentRelation { ENTRY_PAYMENT, PLAN_PURCHASE_ROW, PURCHASE_FLAG, REVERSED_FLAG }
+
+    /** Seeds the nearer (|d| 2) installment-related payment and returns its id. */
+    private suspend fun seedInstallmentRelatedNearPayment(relation: InstallmentRelation): Long = when (relation) {
+        InstallmentRelation.ENTRY_PAYMENT ->
+            f.seedExpense(twoDaysEarly).also { f.linkToInstallmentEntry(it) }
+        InstallmentRelation.PLAN_PURCHASE_ROW ->
+            f.seedExpense(twoDaysEarly).also { f.markAsPlanPurchaseRecord(it) }
+        InstallmentRelation.PURCHASE_FLAG ->
+            f.seedFlaggedExpense(twoDaysEarly, "INSTALLMENT_PURCHASE")
+        InstallmentRelation.REVERSED_FLAG ->
+            f.seedFlaggedExpense(twoDaysEarly, "INSTALLMENT_REVERSED")
+    }
+
+    private suspend fun assertInstallmentRelatedPaymentIsNotSuggested(relation: InstallmentRelation) {
+        val occ = seedRent()
+        val installmentRelated = seedInstallmentRelatedNearPayment(relation)
+        val ordinary = f.seedExpense(due.minusDays(6)) // Nov 21, |d| 6: farther, but the only eligible one
+
+        val items = f.suggestionItems()
+
+        assertEquals("$relation", listOf(occ to ordinary), items.map { it.occurrenceId to it.expenseId })
+        assertTrue(items.none { it.expenseId == installmentRelated })
+    }
+
+    @Test
+    fun `AE-10 INV-5 an expense that pays an installment entry is never suggested`() =
+        runTest(timeout = 60.seconds) {
+            assertInstallmentRelatedPaymentIsNotSuggested(InstallmentRelation.ENTRY_PAYMENT)
+        }
+
+    @Test
+    fun `AE-10 INV-5 a plan purchase record row is never suggested`() = runTest(timeout = 60.seconds) {
+        assertInstallmentRelatedPaymentIsNotSuggested(InstallmentRelation.PLAN_PURCHASE_ROW)
+    }
+
+    @Test
+    fun `AE-10 INV-5 an expense flagged INSTALLMENT_PURCHASE is never suggested`() = runTest(timeout = 60.seconds) {
+        assertInstallmentRelatedPaymentIsNotSuggested(InstallmentRelation.PURCHASE_FLAG)
+    }
+
+    @Test
+    fun `AE-10 INV-5 an expense flagged INSTALLMENT_REVERSED is never suggested`() = runTest(timeout = 60.seconds) {
+        assertInstallmentRelatedPaymentIsNotSuggested(InstallmentRelation.REVERSED_FLAG)
+    }
+
+    @Test
+    fun `AE-10 INV-5 a lone installment-linked payment gives Available empty and the same payment unlinked is suggested`() =
+        runTest(timeout = 60.seconds) {
+            val occ = seedRent()
+            val e = f.seedExpense(twoDaysEarly)
+            assertEquals(listOf(occ to e), f.suggestionItems().map { it.occurrenceId to it.expenseId }) // control
+
+            f.linkToInstallmentEntry(e)
+
+            assertEquals(PaymentLinkSuggestions.Available(emptyList()), f.suggestions())
+        }
+
     // -- empty states and INV-10 --------------------------------------------------------------
 
     @Test

@@ -320,6 +320,61 @@ class RecurringPaymentLinkConfirmDeclineTest {
             assertNull(f.linkedOccurrenceOf(e))
         }
 
+    // -- AE-10 / INV-5: the installment gate of confirm -------------------------------------------
+
+    private suspend fun assertConfirmRefusedForInstallmentRelated(installmentRelated: Long, occ: Long) {
+        val before = snapshot()
+
+        assertEquals(
+            PaymentLinkConfirmResult.NoLongerValid,
+            f.lifecycle.confirmPaymentLink(RULE_ID, installmentRelated, occ)
+        )
+
+        assertNothingWritten(before)
+        assertEquals("PLANNED", f.status(occ))
+        assertNull(f.occurrence(occ).linkedExpenseId)
+        assertNull(f.linkedOccurrenceOf(installmentRelated))
+    }
+
+    @Test
+    fun `AE-10 INV-5 confirm for an expense that pays an installment entry is NoLongerValid and writes nothing`() =
+        runTest(timeout = 60.seconds) {
+            val occ = seedRent()
+            val e = f.seedExpense(twoDaysEarly)
+            f.linkToInstallmentEntry(e)
+
+            assertConfirmRefusedForInstallmentRelated(e, occ)
+        }
+
+    @Test
+    fun `AE-10 INV-5 confirm for a plan purchase record row is NoLongerValid and writes nothing`() =
+        runTest(timeout = 60.seconds) {
+            val occ = seedRent()
+            val e = f.seedExpense(twoDaysEarly)
+            f.markAsPlanPurchaseRecord(e)
+
+            assertConfirmRefusedForInstallmentRelated(e, occ)
+        }
+
+    @Test
+    fun `AE-10 INV-5 confirm for an expense flagged INSTALLMENT_PURCHASE is NoLongerValid and writes nothing`() =
+        runTest(timeout = 60.seconds) {
+            val occ = seedRent()
+            val e = f.seedFlaggedExpense(twoDaysEarly, "INSTALLMENT_PURCHASE")
+
+            assertConfirmRefusedForInstallmentRelated(e, occ)
+        }
+
+    @Test
+    fun `AE-10 INV-5 control - the same pair confirms once the expense has no installment relation`() =
+        runTest(timeout = 60.seconds) {
+            val occ = seedRent()
+            val e = f.seedExpense(twoDaysEarly)
+
+            assertEquals(PaymentLinkConfirmResult.Linked, f.lifecycle.confirmPaymentLink(RULE_ID, e, occ))
+            assertEquals(occ, f.linkedOccurrenceOf(e))
+        }
+
     // -- AE-19: idempotency ---------------------------------------------------------------------
 
     @Test

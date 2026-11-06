@@ -13,6 +13,8 @@ import com.yourname.expensetracker.data.database.dao.PlannedExpenseDao
 import com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao
 import com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
 import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.InstallmentEntry
+import com.yourname.expensetracker.data.database.entity.InstallmentPlan
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.data.database.entity.RecurringLifecycleEvent
 import com.yourname.expensetracker.data.database.entity.RecurringOccurrence
@@ -232,6 +234,68 @@ internal class PaymentLinkTestFixture(
             )
         )
     }
+
+    // -- installment relations (INV-5 gate) -----------------------------------
+
+    private fun installmentPlan(uuid: String, purchaseExpenseId: Long?) = InstallmentPlan(
+        planUuid = uuid,
+        kind = if (purchaseExpenseId == null) "STANDALONE" else "PURCHASE_ATTACHED",
+        purchaseExpenseId = purchaseExpenseId,
+        displayName = "Synthetic plan",
+        currency = "EUR",
+        splitMethod = "EQUAL_SPLIT",
+        declaredTotal = 300.0,
+        installmentCount = 3,
+        frequency = "MONTHLY",
+        firstDueDate = 20_000L,
+        anchorDayOfMonth = 15,
+        residualPlacement = "LAST",
+        fulfilmentMode = "CONFIRM",
+        declaredOnDate = 19_999L,
+        status = "ACTIVE",
+        createdAt = clockNow,
+        updatedAt = clockNow
+    )
+
+    /** Makes [expenseId] the payment of a PAID entry of a fresh plan (an installment-linked expense). */
+    suspend fun linkToInstallmentEntry(expenseId: Long, uuid: String = "plan-linked-$expenseId") {
+        val planId = database.installmentPlanDao().insertPlan(installmentPlan(uuid, purchaseExpenseId = null))
+        database.installmentPlanDao().insertEntries(
+            listOf(
+                InstallmentEntry(
+                    planId = planId,
+                    seq = 1,
+                    kind = "REGULAR",
+                    dueDate = 20_000L,
+                    scheduledAmount = 133.0,
+                    status = "PAID",
+                    linkedExpenseId = expenseId,
+                    linkOrigin = "USER_LINKED",
+                    statusChangedAt = clockNow
+                )
+            )
+        )
+    }
+
+    /** Makes [expenseId] the purchase record of a fresh plan (a plan row, no spending flag). */
+    suspend fun markAsPlanPurchaseRecord(expenseId: Long, uuid: String = "plan-purchase-$expenseId") {
+        database.installmentPlanDao().insertPlan(installmentPlan(uuid, purchaseExpenseId = expenseId))
+    }
+
+    /** Persists an expense that carries only the spending-exclusion flag [reason] (no plan row, no entry). */
+    suspend fun seedFlaggedExpense(day: LocalDate, reason: String, amount: Double = 400.0): Long =
+        expenseDao.insert(
+            Expense(
+                amount = amount,
+                currency = "EUR",
+                merchant = MERCHANT,
+                transactionType = TransactionType.PURCHASE,
+                date = at(day, 6),
+                createdAt = at(day, 6),
+                source = "test",
+                spendingExclusionReason = reason
+            )
+        )
 
     // -- reads --------------------------------------------------------------
 
