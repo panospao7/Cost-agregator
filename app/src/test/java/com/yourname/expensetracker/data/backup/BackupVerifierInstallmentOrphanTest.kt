@@ -198,7 +198,8 @@ class BackupVerifierInstallmentOrphanTest {
         }
 
     private fun createAe12Database(name: String): File {
-        val db = helper.createDatabase(name, 152)
+        // Latest schema (153): the full verifier also runs the refund link semantic checks.
+        val db = helper.createDatabase(name, 153)
         seedAe12(db)
         db.close()
         return databaseFile(name)

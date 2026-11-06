@@ -43,13 +43,15 @@ class BackupVerifierManifestTest {
     fun pre_ledger_counts_gain_an_exact_empty_ledger_expectation_after_migration() {
         val legacyCounts = mapOf("expenses" to 2)
         // Schema 152: a pre-152 source also gains the two empty installment tables.
+        // Schema 153: a pre-153 source also gains the empty refund link table (INV-20).
         assertEquals(
             mapOf(
                 "expenses" to 2,
                 "savings_contribution_ledger" to 0,
                 "savings_sweep_month_acceptance" to 1,
                 "installment_plans" to 0,
-                "installment_entries" to 0
+                "installment_entries" to 0,
+                "expense_refund_links" to 0
             ),
             BackupVerifier.expectedCountsAfterMigration(legacyCounts, 149)
         )
@@ -57,22 +59,133 @@ class BackupVerifierManifestTest {
 
     @Test
     fun current_counts_are_not_changed_by_post_migration_normalization() {
-        val currentCounts = mapOf("savings_contribution_ledger" to 3)
-        // 152 is the current version; the version-151 source gains the installment tables
-        // (see the dedicated 151 case below).
+        val currentCounts = mapOf("savings_contribution_ledger" to 3, "expense_refund_links" to 2)
+        // 153 is the current version; the version-152 and version-151 sources gain empty tables
+        // (see the dedicated cases below).
         assertEquals(
             currentCounts,
-            BackupVerifier.expectedCountsAfterMigration(currentCounts, 152)
+            BackupVerifier.expectedCountsAfterMigration(currentCounts, 153)
         )
     }
 
     @Test
-    fun v151_counts_gain_only_the_two_empty_installment_tables_after_migration() {
+    fun v152_counts_gain_only_the_empty_refund_link_table_after_migration() {
+        val v152Counts = mapOf("savings_contribution_ledger" to 3, "installment_plans" to 1)
+        assertEquals(
+            v152Counts + ("expense_refund_links" to 0),
+            BackupVerifier.expectedCountsAfterMigration(v152Counts, 152)
+        )
+    }
+
+    @Test
+    fun v151_counts_gain_only_the_two_empty_installment_tables_and_the_empty_refund_link_table_after_migration() {
         val v151Counts = mapOf("savings_contribution_ledger" to 3, "savings_sweep_month_acceptance" to 2)
         assertEquals(
-            v151Counts + ("installment_plans" to 0) + ("installment_entries" to 0),
+            v151Counts + ("installment_plans" to 0) + ("installment_entries" to 0) + ("expense_refund_links" to 0),
             BackupVerifier.expectedCountsAfterMigration(v151Counts, 151)
         )
+    }
+
+    // ── INV-20: expense_refund_links manifest tier and gating (schema 153) ──
+
+    @Test
+    fun INV20_expense_refund_links_is_tier_1_exact_and_tracked() {
+        assertEquals(
+            BackupVerifier.VerificationTier.TIER_1_EXACT,
+            BackupVerifier.tableTier("expense_refund_links")
+        )
+        assertTrue(BackupVerifier.allTableNames().contains("expense_refund_links"))
+    }
+
+    @Test
+    fun INV20_refund_links_count_is_required_from_153_and_for_unknown_version_but_not_below() {
+        assertTrue(BackupVerifier.requiredManifestTables(databaseVersion = 153).contains("expense_refund_links"))
+        assertTrue(BackupVerifier.requiredManifestTables(databaseVersion = null).contains("expense_refund_links"))
+        assertTrue(BackupVerifier.requiredManifestTables().contains("expense_refund_links"))
+        listOf(145, 149, 150, 151, 152).forEach { version ->
+            assertFalse(
+                "v$version must not require expense_refund_links",
+                BackupVerifier.requiredManifestTables(databaseVersion = version).contains("expense_refund_links")
+            )
+        }
+        // 153 adds exactly the link table over 152 (no other table is newly required).
+        assertEquals(
+            setOf("expense_refund_links"),
+            BackupVerifier.requiredManifestTables(databaseVersion = 153) -
+                BackupVerifier.requiredManifestTables(databaseVersion = 152)
+        )
+    }
+
+    @Test
+    fun INV20_manifest_at_153_without_the_refund_link_count_is_rejected_and_a_152_manifest_is_accepted() {
+        val complete153 = BackupVerifier.requiredManifestTables(databaseVersion = 153).associateWith { 0 }
+        // Control: complete 153 manifest passes.
+        BackupVerifier.validateManifestCompleteness(complete153, databaseVersion = 153)
+
+        val thrown = assertThrows(BackupVerifier.IncompleteManifestException::class.java) {
+            BackupVerifier.validateManifestCompleteness(complete153 - "expense_refund_links", databaseVersion = 153)
+        }
+        assertEquals(listOf("expense_refund_links"), thrown.missingTables)
+        assertThrows(BackupVerifier.IncompleteManifestException::class.java) {
+            BackupVerifier.validateManifestCompleteness(complete153 - "expense_refund_links", databaseVersion = null)
+        }
+        // A pre-153 manifest legitimately has no link count.
+        BackupVerifier.validateManifestCompleteness(
+            BackupVerifier.requiredManifestTables(databaseVersion = 152).associateWith { 0 },
+            databaseVersion = 152
+        )
+    }
+
+    @Test
+    fun INV20_sources_below_153_expect_an_empty_link_table_and_153_or_unknown_do_not_add_it() {
+        listOf(140, 145, 149, 150, 151, 152).forEach { source ->
+            assertEquals(
+                "source $source",
+                0,
+                BackupVerifier.expectedCountsAfterMigration(mapOf("expenses" to 3), source)["expense_refund_links"]
+            )
+        }
+        listOf(153, null).forEach { source ->
+            assertFalse(
+                "source $source",
+                BackupVerifier.expectedCountsAfterMigration(mapOf("expenses" to 3), source)
+                    .containsKey("expense_refund_links")
+            )
+        }
+        // A recorded count is kept, never overwritten with 0.
+        assertEquals(
+            4,
+            BackupVerifier.expectedCountsAfterMigration(mapOf("expense_refund_links" to 4), 152)["expense_refund_links"]
+        )
+    }
+
+    @Test
+    fun INV20_link_table_row_count_is_verified_exactly_both_ways() {
+        val db = createAllTablesDatabase()
+        try {
+            db.execSQL(
+                "INSERT INTO expenses (id, refundNettedAmount) VALUES (1, 40.0), (2, 40.0)"
+            )
+            db.execSQL(
+                "INSERT INTO expense_refund_links (id, refundExpenseId, purchaseExpenseId, appliedAmount) " +
+                    "VALUES (1, 2, 1, 40.0)"
+            )
+            val exact = BackupVerifier.requiredManifestTables(databaseVersion = 153)
+                .associateWith { 0 } + ("expenses" to 2) + ("expense_refund_links" to 1)
+            // Control: exact counts pass.
+            val ok = BackupVerifier.verify(db, exact)
+            assertTrue(ok.errors.toString(), ok.passed)
+
+            listOf(0, 2).forEach { wrong ->
+                val summary = BackupVerifier.verify(db, exact + ("expense_refund_links" to wrong))
+                assertFalse("expected=$wrong must fail", summary.passed)
+                val result = summary.tableResults.single { it.tableName == "expense_refund_links" }
+                assertFalse(result.passed)
+                assertEquals(1, result.actualCount)
+            }
+        } finally {
+            db.close()
+        }
     }
 
     @Test
@@ -81,7 +194,7 @@ class BackupVerifierManifestTest {
         assertFalse(BackupVerifier.requiredManifestTables(databaseVersion = 150).contains("savings_sweep_month_acceptance"))
         assertEquals(
             oldCounts + ("savings_sweep_month_acceptance" to 1) +
-                ("installment_plans" to 0) + ("installment_entries" to 0),
+                ("installment_plans" to 0) + ("installment_entries" to 0) + ("expense_refund_links" to 0),
             BackupVerifier.expectedCountsAfterMigration(oldCounts, 150)
         )
         val incomplete = BackupVerifier.requiredManifestTables(databaseVersion = 151)
@@ -230,7 +343,8 @@ class BackupVerifierManifestTest {
         db.execSQL(
             "CREATE TABLE expenses (id INTEGER PRIMARY KEY, transactionType TEXT NOT NULL, currency TEXT NOT NULL, " +
                 "amount REAL, isNotMine INTEGER NOT NULL DEFAULT 0, isSharedExpense INTEGER NOT NULL DEFAULT 0, " +
-                "myShareAmount REAL, mySharePercentage REAL, spendingExclusionReason TEXT DEFAULT NULL)"
+                "myShareAmount REAL, mySharePercentage REAL, spendingExclusionReason TEXT DEFAULT NULL, " +
+                "refundNettedAmount REAL NOT NULL DEFAULT 0.0)"
         )
         db.execSQL("DROP TABLE manual_recurring_expenses")
         db.execSQL(
@@ -891,7 +1005,9 @@ class BackupVerifierManifestTest {
                 "budget_forecasts" -> ", budgetId INTEGER"
                 "installment_entries" -> ", planId INTEGER, linkedExpenseId INTEGER, status TEXT"
                 "installment_plans" -> ", purchaseExpenseId INTEGER"
-                "expenses" -> ", spendingExclusionReason TEXT"
+                "expenses" -> ", spendingExclusionReason TEXT, refundNettedAmount REAL NOT NULL DEFAULT 0.0"
+                // Refund netting (INV-20): columns read by the two refund semantic checks.
+                "expense_refund_links" -> ", refundExpenseId INTEGER, purchaseExpenseId INTEGER, appliedAmount REAL"
                 else -> ""
             }
             db.execSQL("CREATE TABLE \"$table\" (id INTEGER PRIMARY KEY$reference)")

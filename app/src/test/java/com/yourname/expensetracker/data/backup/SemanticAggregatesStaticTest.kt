@@ -239,7 +239,8 @@ class SemanticAggregatesStaticTest {
     fun INV9_migration_151_to_152_only_adds_one_nullable_column_to_expenses() {
         val full = codeOnly(source("$databasePackage/DatabaseMigrations.kt"))
         val start = full.indexOf("val MIGRATION_151_152")
-        val end = full.indexOf("val ALL")
+        // The region ends where the next migration (152 -> 153, refund netting) begins.
+        val end = full.indexOf("val MIGRATION_152_153")
         assertTrue("MIGRATION_151_152 region not found", start in 0 until end)
         val region = full.substring(start, end)
 
@@ -251,6 +252,26 @@ class SemanticAggregatesStaticTest {
         assertTrue(
             normalised(region).replace(Regex("\"\\s*\\+\\s*\""), "")
                 .contains("ALTER TABLE `expenses` ADD COLUMN `spendingExclusionReason` TEXT DEFAULT NULL")
+        )
+    }
+
+    @Test
+    fun INV9_INV24_migration_152_to_153_only_adds_one_default_zero_column_to_expenses() {
+        val full = codeOnly(source("$databasePackage/DatabaseMigrations.kt"))
+        val start = full.indexOf("val MIGRATION_152_153")
+        val end = full.indexOf("val ALL")
+        assertTrue("MIGRATION_152_153 region not found", start in 0 until end)
+        val region = full.substring(start, end)
+
+        val writes = fingerprintedTableWrites(region)
+
+        // The single fingerprinted-table write is the additive default-0.0 column; the new link table is
+        // not a fingerprinted table and the FK references to expenses are not writes.
+        assertEquals(writes.toString(), 1, writes.size)
+        assertTrue(writes.single(), writes.single().uppercase().startsWith("ALTER TABLE"))
+        assertTrue(
+            normalised(region).replace(Regex("\"\\s*\\+\\s*\""), "")
+                .contains("ALTER TABLE `expenses` ADD COLUMN `refundNettedAmount` REAL NOT NULL DEFAULT 0.0")
         )
     }
 
