@@ -2,6 +2,8 @@ package com.yourname.expensetracker.domain.groups
 
 import com.yourname.expensetracker.data.database.dao.GroupSettlementDao
 import com.yourname.expensetracker.data.database.entity.GroupSettlementEntity
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.CurrencyFractionDigits
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -80,7 +82,8 @@ class SettlementCalculator(
         val currency = groupCurrency ?: currencies.firstOrNull()
             ?: currencySettingsRepository.homeCurrency().first()
 
-        val normalized = normalizeBalancesToCents(balances)
+        val digits = fractionDigits(currency)
+        val normalized = normalizeBalancesToCents(balances, digits)
         val debtors = normalized
             .filter { it.netCents < 0 }
             .sortedBy { it.memberId }
@@ -102,7 +105,7 @@ class SettlementCalculator(
                 fromMemberName = it.fromMemberName,
                 toMemberId = it.toMemberId,
                 toMemberName = it.toMemberName,
-                amount = centsToAmount(it.amountCents),
+                amount = centsToAmount(it.amountCents, digits),
                 usedGreedyFallback = transferPlan.usedGreedyFallback,
                 currency = currency
             )
@@ -130,16 +133,17 @@ class SettlementCalculator(
             return "All settled up! No payments needed."
         }
 
+        val digits = fractionDigits(groupCurrency)
         val builder = StringBuilder()
         builder.append("Settlement Plan:\n\n")
 
         var totalVolumeCents = 0L
         for ((index, settlement) in settlements.withIndex()) {
             builder.append("${index + 1}. ${settlement.fromMemberName} pays ${settlement.toMemberName}: ${CurrencyFormatter.formatMoney(settlement.amount, groupCurrency)}\n")
-            totalVolumeCents += amountToCents(settlement.amount)
+            totalVolumeCents += amountToCents(settlement.amount, digits)
         }
 
-        val totalVolume = centsToAmount(totalVolumeCents)
+        val totalVolume = centsToAmount(totalVolumeCents, digits)
         builder.append("\nTotal to settle: ${CurrencyFormatter.formatMoney(totalVolume, groupCurrency)}")
         builder.append("\n${settlements.size} transaction${if (settlements.size > 1) "s" else ""} needed")
         if (settlements.any { it.usedGreedyFallback }) {
@@ -153,8 +157,9 @@ class SettlementCalculator(
      * Get total amount that needs to be settled.
      */
     fun getTotalSettlementAmount(settlements: List<Settlement>): Double {
-        val totalCents = settlements.sumOf { amountToCents(it.amount) }
-        return centsToAmount(totalCents)
+        val digits = fractionDigits(settlements.firstOrNull()?.currency)
+        val totalCents = settlements.sumOf { amountToCents(it.amount, digits) }
+        return centsToAmount(totalCents, digits)
     }
 
     /**
@@ -399,13 +404,16 @@ class SettlementCalculator(
         return compareBy<SettlementCents>({ it.fromMemberId }, { it.toMemberId }, { it.amountCents })
     }
 
-    private fun normalizeBalancesToCents(balances: Map<Long, MemberBalance>): List<BalanceInCents> {
+    private fun normalizeBalancesToCents(
+        balances: Map<Long, MemberBalance>,
+        digits: Int
+    ): List<BalanceInCents> {
         val centsBalances = balances.values
             .map {
                 BalanceInCents(
                     memberId = it.memberId,
                     memberName = it.memberName,
-                    netCents = amountToCents(it.netBalance)
+                    netCents = amountToCents(it.netBalance, digits)
                 )
             }
             .filter { it.netCents != 0L }
@@ -438,21 +446,32 @@ class SettlementCalculator(
         return centsBalances.filter { it.netCents != 0L }
     }
 
-    private fun amountToCents(amount: Double): Long {
+    /**
+     * Minor-unit digits of [currency] (0 for JPY/KRW, 2 for EUR, 3 for BHD). An unknown or
+     * unparseable code keeps the legacy 2 digits; the "cents" naming below means minor units.
+     */
+    private fun fractionDigits(currency: String?): Int {
+        val code = CurrencyCode.parse(currency) ?: return DEFAULT_FRACTION_DIGITS
+        return CurrencyFractionDigits.of(code) ?: DEFAULT_FRACTION_DIGITS
+    }
+
+    /** Rounds [amount] HALF_UP to [digits] decimals and returns minor units. */
+    private fun amountToCents(amount: Double, digits: Int): Long {
         return BigDecimal.valueOf(amount)
-            .setScale(2, RoundingMode.HALF_UP)
-            .movePointRight(2)
+            .setScale(digits, RoundingMode.HALF_UP)
+            .movePointRight(digits)
             .toLong()
     }
 
-    private fun centsToAmount(cents: Long): Double {
+    private fun centsToAmount(cents: Long, digits: Int): Double {
         return BigDecimal.valueOf(cents)
-            .movePointLeft(2)
+            .movePointLeft(digits)
             .toDouble()
     }
 
     private companion object {
         /** How often (in iterations) to check elapsed wall-clock time. */
         private const val TIME_CHECK_INTERVAL = 256
+        private const val DEFAULT_FRACTION_DIGITS = 2
     }
 }

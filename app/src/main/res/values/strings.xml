@@ -2894,6 +2894,10 @@
     <!-- PE-C: shared fallback for a plan without a display name (Home weather, CashFlow row) and the CashFlow day-list header -->
     <string name="installment_plan_fallback_label">Installment</string>
     <string name="cashflow_installments_header">Installments due</string>
+    <plurals name="cashflow_day_more_items">
+        <item quantity="one">+%1$d more</item>
+        <item quantity="other">+%1$d more</item>
+    </plurals>
     <string name="installments_remaining_label">Remaining scheduled payments</string>
     <string name="installments_remaining_note">Sum of payments still to be made. Not your lender\'s outstanding balance.</string>
     <plurals name="installments_plan_count">

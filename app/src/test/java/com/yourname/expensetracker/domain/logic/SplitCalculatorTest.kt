@@ -327,6 +327,106 @@ class SplitCalculatorTest {
         assertFalse(settlements.any { it.third <= 0.0 })
     }
 
+    // ── fix-1.0.4 (owner-approved revalidation fix, item 143): currency-aware minor units ──
+
+    /** Whole currency units: throws if a value has any fractional part. */
+    private fun toWholeUnits(amount: Double): Long =
+        BigDecimal.valueOf(amount).setScale(0).longValueExact()
+
+    @Test
+    fun `JPY equal split of 1000 among 3 members is whole units 334 333 333 and preserves total`() {
+        val splits = SplitCalculator.calculateSplitAmounts(
+            groupExpense(totalAmount = 1000.0, paidById = 1L, splitType = SplitType.EQUAL, currency = "JPY"),
+            members(1L, 2L, 3L)
+        )
+
+        assertEquals(listOf(334L, 333L, 333L), splits.values.map { toWholeUnits(it) })
+        assertEquals(1000L, splits.values.sumOf { toWholeUnits(it) })
+    }
+
+    @Test
+    fun `JPY equal split of 100 among 7 members is whole units and preserves total`() {
+        val splits = SplitCalculator.calculateSplitAmounts(
+            groupExpense(totalAmount = 100.0, paidById = 1L, splitType = SplitType.EQUAL, currency = "JPY"),
+            members(1L, 2L, 3L, 4L, 5L, 6L, 7L)
+        )
+
+        // 100 = 7 * 14 + 2: the first two members take the extra yen.
+        assertEquals(listOf(15L, 15L, 14L, 14L, 14L, 14L, 14L), splits.values.map { toWholeUnits(it) })
+        assertEquals(100L, splits.values.sumOf { toWholeUnits(it) })
+    }
+
+    @Test
+    fun `JPY percentage split of 1000 at 33_33 33_33 33_34 is whole units and preserves total`() {
+        val splits = SplitCalculator.calculateSplitAmounts(
+            groupExpense(
+                totalAmount = 1000.0,
+                paidById = 1L,
+                splitType = SplitType.CUSTOM_PERCENT,
+                customSplitsJson = "1:33.33,2:33.33,3:33.34",
+                currency = "JPY"
+            ),
+            members(1L, 2L, 3L)
+        )
+
+        // Raw 333.3 / 333.3 / 333.4: floors 333 each, the one leftover yen goes to the largest fraction.
+        assertEquals(listOf(333L, 333L, 334L), splits.values.map { toWholeUnits(it) })
+        assertEquals(1000L, splits.values.sumOf { toWholeUnits(it) })
+    }
+
+    @Test
+    fun `JPY percentage split of 1001 at 50-50 gives the odd yen to the first member`() {
+        val splits = SplitCalculator.calculateSplitAmounts(
+            groupExpense(
+                totalAmount = 1001.0,
+                paidById = 1L,
+                splitType = SplitType.CUSTOM_PERCENT,
+                customSplitsJson = "1:50,2:50",
+                currency = "JPY"
+            ),
+            members(1L, 2L)
+        )
+
+        assertEquals(listOf(501L, 500L), splits.values.map { toWholeUnits(it) })
+    }
+
+    @Test
+    fun `EUR equal and percentage splits keep two decimals and preserve total`() {
+        val equal = SplitCalculator.calculateSplitAmounts(
+            groupExpense(totalAmount = 10.0, paidById = 1L, splitType = SplitType.EQUAL, currency = "EUR"),
+            members(1L, 2L, 3L)
+        )
+        assertEquals(listOf(334L, 333L, 333L), equal.values.map { toExactCents(it) })
+        assertEquals(1000L, equal.values.sumOf { toExactCents(it) })
+
+        val percent = SplitCalculator.calculateSplitAmounts(
+            groupExpense(
+                totalAmount = 10.0,
+                paidById = 1L,
+                splitType = SplitType.CUSTOM_PERCENT,
+                customSplitsJson = "1:33.33,2:33.33,3:33.34",
+                currency = "EUR"
+            ),
+            members(1L, 2L, 3L)
+        )
+        // Raw 333.3 / 333.3 / 333.4 cents: the leftover cent goes to the largest fraction.
+        assertEquals(listOf(333L, 333L, 334L), percent.values.map { toExactCents(it) })
+        assertEquals(1000L, percent.values.sumOf { toExactCents(it) })
+    }
+
+    @Test
+    fun `unknown or unparseable currency keeps two decimals`() {
+        for (code in listOf("ZZZ", "XXX", "", "not-a-code")) {
+            val splits = SplitCalculator.calculateSplitAmounts(
+                groupExpense(totalAmount = 10.0, paidById = 1L, splitType = SplitType.EQUAL, currency = code),
+                members(1L, 2L, 3L)
+            )
+
+            assertEquals("currency '$code'", listOf(334L, 333L, 333L), splits.values.map { toExactCents(it) })
+            assertEquals("currency '$code'", 1000L, splits.values.sumOf { toExactCents(it) })
+        }
+    }
+
     /** Unit conversion only: exact integer cents; throws if a value has sub-cent precision. */
     private fun toExactCents(amount: Double): Long =
         BigDecimal.valueOf(amount).movePointRight(2).longValueExact()
@@ -358,7 +458,8 @@ class SplitCalculatorTest {
         paidById: Long,
         splitType: SplitType,
         customSplitsJson: String? = null,
-        date: Long = 0L
+        date: Long = 0L,
+        currency: String = "EUR"
     ): GroupExpense = GroupExpense(
         id = id,
         groupId = 1L,
@@ -368,6 +469,7 @@ class SplitCalculatorTest {
         description = "Expense$id",
         totalAmount = totalAmount,
         splitType = splitType,
-        customSplitsJson = customSplitsJson
+        customSplitsJson = customSplitsJson,
+        currency = currency
     )
 }

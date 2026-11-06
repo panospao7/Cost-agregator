@@ -9,6 +9,7 @@ import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.domain.model.UiText
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.first
 import java.time.Instant
@@ -54,7 +55,7 @@ class LifestyleInflationDetector @Inject constructor(
         monthsToAnalyze: Int = 12
     ): LifestyleInflationReport {
         val endDate = timeProvider.now()
-        val startDate = endDate - (monthsToAnalyze * 30L * 24 * 60 * 60 * 1000)
+        val startDate = TimePeriodUtils.addMonths(endDate, -monthsToAnalyze)
 
         // Get all expenses in the period
         // Only DEPOSIT and PURCHASE rows are used below. Filter before normalizing so an
@@ -216,7 +217,10 @@ class LifestyleInflationDetector @Inject constructor(
             val month = sortedMonths[i]
             val prevMonth = sortedMonths[i - 1]
             val prevPrevMonth = sortedMonths[i - 2]
-            
+
+            // A missing calendar month is a break in the series, not an adjacent pair.
+            if (prevMonth.plusMonths(1) != month || prevPrevMonth.plusMonths(1) != prevMonth) continue
+
             val income = incomeByMonth[month] ?: continue
             val prevIncome = incomeByMonth[prevMonth] ?: continue
             val prevPrevIncome = incomeByMonth[prevPrevMonth] ?: continue
@@ -225,6 +229,13 @@ class LifestyleInflationDetector @Inject constructor(
             val prevSpending = spendingByMonth[prevMonth] ?: continue
             val prevPrevSpending = spendingByMonth[prevPrevMonth] ?: continue
             
+            // Sustained growth: the previous month must also show spending growing faster than
+            // income, so a single-month spike cannot raise a lifestyle creep alert.
+            if (prevPrevIncome <= 0.0 || prevPrevSpending <= 0.0 || prevIncome <= 0.0 || prevSpending <= 0.0) continue
+            val prevIncomeGrowth = (prevIncome - prevPrevIncome) / prevPrevIncome
+            val prevSpendingGrowth = (prevSpending - prevPrevSpending) / prevPrevSpending
+            if (prevSpending <= prevPrevSpending || prevSpendingGrowth <= prevIncomeGrowth) continue
+
             // Detect if spending is growing faster than income
             if (income > prevIncome && spending > prevSpending) {
                 val incomeGrowth = (income - prevIncome) / prevIncome

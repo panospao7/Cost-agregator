@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
+import org.junit.Assert.assertEquals
 import org.junit.Assert.fail
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -373,6 +374,136 @@ class LifestyleAnalysisTest : AnalyticsEngineTestBase() {
         val negativeIncomeChange = detector.analyzeLifestyleInflation(monthsToAnalyze = 3)
         assertApproxEquals(1.0, negativeIncomeChange.incomeElasticity, 0.0001)
         assertTrue(negativeIncomeChange.incomeElasticity.isFinite())
+    }
+
+    // ── fix-1.0.4 (owner-approved revalidation fix, item 143): sustained-growth creep + calendar look-back ──
+
+    @Test
+    fun `look-back start is the calendar month subtraction of monthsToAnalyze from now`() = runTest {
+        val zone = ZoneId.systemDefault()
+        // 31 Mar minus 6 months clamps to 30 Sep; minus 1 month clamps to 28 Feb 2026; minus 12 is 31 Mar 2025.
+        val end = java.time.ZonedDateTime.of(2026, 3, 31, 12, 0, 0, 0, zone)
+        every { timeProvider.now() } returns end.toInstant().toEpochMilli()
+        every { expenseDao.getExpensesBetweenFlowUncapped(any(), any()) } returns flowOf(emptyList())
+
+        for ((months, expectedStart) in listOf(
+            6 to java.time.ZonedDateTime.of(2025, 9, 30, 12, 0, 0, 0, zone),
+            1 to java.time.ZonedDateTime.of(2026, 2, 28, 12, 0, 0, 0, zone),
+            12 to java.time.ZonedDateTime.of(2025, 3, 31, 12, 0, 0, 0, zone)
+        )) {
+            detector.analyzeLifestyleInflation(monthsToAnalyze = months)
+
+            io.mockk.verify {
+                expenseDao.getExpensesBetweenFlowUncapped(
+                    expectedStart.toInstant().toEpochMilli(),
+                    end.toInstant().toEpochMilli()
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `creep single-month spike does not raise an alert`() = runTest {
+        // Jan to Feb spending falls (no prior growth); only March spikes (+60% spending vs +10% income).
+        every { expenseDao.getExpensesBetweenFlowUncapped(any(), any()) } returns flowOf(
+            listOf(
+                income("2026-01-05", 1000.0), spend("2026-01-10", 510.0, "Grocer"),
+                income("2026-02-05", 1001.0), spend("2026-02-10", 500.0, "Grocer"),
+                income("2026-03-05", 1100.0), spend("2026-03-10", 800.0, "Grocer")
+            )
+        )
+
+        val report = detector.analyzeLifestyleInflation(monthsToAnalyze = 6)
+
+        assertFalse(report.lifestyleCreepDetected)
+        assertTrue(report.lifestyleCreepAlerts.isEmpty())
+    }
+
+    @Test
+    fun `creep previous month where spending grew slower than income does not raise an alert`() = runTest {
+        // Feb: income +20%, spending +8%. March alone grows fast (+8.3% income, +48% spending).
+        every { expenseDao.getExpensesBetweenFlowUncapped(any(), any()) } returns flowOf(
+            listOf(
+                income("2026-01-05", 1000.0), spend("2026-01-10", 500.0, "Grocer"),
+                income("2026-02-05", 1200.0), spend("2026-02-10", 540.0, "Grocer"),
+                income("2026-03-05", 1300.0), spend("2026-03-10", 800.0, "Grocer")
+            )
+        )
+
+        val report = detector.analyzeLifestyleInflation(monthsToAnalyze = 6)
+
+        assertTrue(report.lifestyleCreepAlerts.isEmpty())
+    }
+
+    @Test
+    fun `creep with a missing calendar month in the series raises no alert`() = runTest {
+        // Jan, Feb, Apr: April is not adjacent to February, so there is no consecutive trio.
+        every { expenseDao.getExpensesBetweenFlowUncapped(any(), any()) } returns flowOf(
+            listOf(
+                income("2026-01-05", 1000.0), spend("2026-01-10", 500.0, "Grocer"),
+                income("2026-02-05", 1100.0), spend("2026-02-10", 650.0, "Grocer"),
+                income("2026-04-05", 1200.0), spend("2026-04-10", 900.0, "Grocer")
+            )
+        )
+        val gapAfterFirst = detector.analyzeLifestyleInflation(monthsToAnalyze = 6)
+
+        // Jan, Mar, Apr: January is not adjacent to March.
+        every { expenseDao.getExpensesBetweenFlowUncapped(any(), any()) } returns flowOf(
+            listOf(
+                income("2026-01-05", 1000.0), spend("2026-01-10", 500.0, "Grocer"),
+                income("2026-03-05", 1100.0), spend("2026-03-10", 650.0, "Grocer"),
+                income("2026-04-05", 1200.0), spend("2026-04-10", 900.0, "Grocer")
+            )
+        )
+        val gapBeforeLast = detector.analyzeLifestyleInflation(monthsToAnalyze = 6)
+
+        assertTrue(gapAfterFirst.lifestyleCreepAlerts.isEmpty())
+        assertTrue(gapBeforeLast.lifestyleCreepAlerts.isEmpty())
+    }
+
+    @Test
+    fun `creep two consecutive growth months with spending outpacing income raises a HIGH alert`() = runTest {
+        every { expenseDao.getExpensesBetweenFlowUncapped(any(), any()) } returns flowOf(
+            listOf(
+                income("2026-01-05", 1000.0), spend("2026-01-10", 500.0, "Grocer"),
+                income("2026-02-05", 1100.0), spend("2026-02-10", 650.0, "Grocer"),
+                income("2026-03-05", 1200.0), spend("2026-03-10", 900.0, "Grocer")
+            )
+        )
+
+        val alert = detector.analyzeLifestyleInflation(monthsToAnalyze = 6).lifestyleCreepAlerts.single()
+
+        // Hand-computed: income 100/1100 = 9.0909%, spending 250/650 = 38.4615% (> 2x income: HIGH).
+        assertEquals("2026-03", alert.month)
+        assertApproxEquals(9.0909, alert.incomeGrowthPercent, 0.001)
+        assertApproxEquals(38.4615, alert.spendingGrowthPercent, 0.001)
+        assertEquals(LifestyleInflationDetector.CreepSeverity.HIGH, alert.severity)
+    }
+
+    @Test
+    fun `creep threshold boundary spending growth at 1_5x income growth is not an alert and above it is MEDIUM`() = runTest {
+        // Feb: income +10%, spending +20% (sustained). March income growth is 100/1100 = 9.0909%,
+        // so the 1.5x threshold is 13.636% spending growth: 680/600 = +13.33% (no), 690/600 = +15% (yes, MEDIUM <= 2x).
+        every { expenseDao.getExpensesBetweenFlowUncapped(any(), any()) } returns flowOf(
+            listOf(
+                income("2026-01-05", 1000.0), spend("2026-01-10", 500.0, "Grocer"),
+                income("2026-02-05", 1100.0), spend("2026-02-10", 600.0, "Grocer"),
+                income("2026-03-05", 1200.0), spend("2026-03-10", 680.0, "Grocer")
+            )
+        )
+        val below = detector.analyzeLifestyleInflation(monthsToAnalyze = 6)
+
+        every { expenseDao.getExpensesBetweenFlowUncapped(any(), any()) } returns flowOf(
+            listOf(
+                income("2026-01-05", 1000.0), spend("2026-01-10", 500.0, "Grocer"),
+                income("2026-02-05", 1100.0), spend("2026-02-10", 600.0, "Grocer"),
+                income("2026-03-05", 1200.0), spend("2026-03-10", 690.0, "Grocer")
+            )
+        )
+        val above = detector.analyzeLifestyleInflation(monthsToAnalyze = 6)
+
+        assertTrue(below.lifestyleCreepAlerts.isEmpty())
+        assertEquals(LifestyleInflationDetector.CreepSeverity.MEDIUM, above.lifestyleCreepAlerts.single().severity)
     }
 
     private fun income(date: String, amount: Double): Expense = Expense(

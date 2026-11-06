@@ -347,6 +347,10 @@ class ComputeMoneyRadarUseCaseTest {
         verify(exactly = 0) { getMonteCarloBudgetImpact(any(), any()) }
     }
 
+    /** Pins the JVM default zone to Europe/Athens per test (global lock held, restored after). */
+    @get:org.junit.Rule
+    val athensZone = com.yourname.expensetracker.domain.util.PinnedTimeZoneRule("Europe/Athens")
+
     @Before
     fun setup() {
         context = ApplicationProvider.getApplicationContext()
@@ -835,6 +839,95 @@ class ComputeMoneyRadarUseCaseTest {
             anomalyReason = "Unexpected amount",
             alertedAt = alertedAt
         )
+    }
+
+    // ---------------------------------------------------------------- fix-1.0.4 calendar windows across DST
+    // Owner-approved revalidation fix (item 143): the bills window is calendar +7 days and the anomaly
+    // lookback is calendar -30 days, so a DST transition inside the window shifts the instant by 1 hour
+    // versus a fixed 7*24h / 30*24h. Europe/Athens 2024: spring forward 31 Mar (23h day), fall back 27 Oct (25h day).
+
+    private fun athens(year: Int, month: Int, day: Int, hour: Int, minute: Int): Long =
+        java.time.ZonedDateTime.of(year, month, day, hour, minute, 0, 0, java.time.ZoneId.of("Europe/Athens"))
+            .toInstant().toEpochMilli()
+
+    private fun stubIncomeFor(nowMs: Long) {
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
+            expense(1000.0, TransactionType.DEPOSIT, nowMs - dayMs)
+        )
+    }
+
+    @Test
+    fun `bills window is calendar plus seven days across spring forward`() = runTest {
+        val today = athens(2024, 3, 27, 12, 0)
+        every { timeProvider.now() } returns today
+        stubIncomeFor(today)
+        coEvery { anomalyAlertRepository.getActiveAlerts() } returns emptyList()
+        // Calendar +7d is 3 Apr 12:00 (167 real hours later because 31 Mar has 23 hours).
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            recurring("AtWindowEnd", 10.0, athens(2024, 4, 3, 12, 0)),
+            recurring("HalfHourPastWindowEnd", 10.0, athens(2024, 4, 3, 12, 30))
+        )
+
+        val result = useCase.compute(RadarBudgetInput.None)
+
+        assertEquals(listOf("AtWindowEnd"), result.dueBills.map { it.merchant })
+    }
+
+    @Test
+    fun `bills window is calendar plus seven days across fall back`() = runTest {
+        val today = athens(2024, 10, 24, 12, 0)
+        every { timeProvider.now() } returns today
+        stubIncomeFor(today)
+        coEvery { anomalyAlertRepository.getActiveAlerts() } returns emptyList()
+        // Calendar +7d is 31 Oct 12:00 (169 real hours later because 27 Oct has 25 hours).
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            recurring("InsideCalendarWindowOnly", 10.0, athens(2024, 10, 31, 11, 30)),
+            recurring("AtWindowEnd", 10.0, athens(2024, 10, 31, 12, 0)),
+            recurring("HalfHourPastWindowEnd", 10.0, athens(2024, 10, 31, 12, 30))
+        )
+
+        val result = useCase.compute(RadarBudgetInput.None)
+
+        assertEquals(
+            listOf("AtWindowEnd", "InsideCalendarWindowOnly"),
+            result.dueBills.map { it.merchant }.sorted()
+        )
+    }
+
+    @Test
+    fun `anomaly lookback is calendar minus thirty days across fall back`() = runTest {
+        val today = athens(2024, 11, 5, 12, 0)
+        every { timeProvider.now() } returns today
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns emptyList()
+        // Calendar -30d is 6 Oct 12:00 (721 real hours earlier because 27 Oct has 25 hours).
+        coEvery { anomalyAlertRepository.getActiveAlerts() } returns listOf(
+            anomaly("HalfHourInsideCalendarWindow", 5.0, athens(2024, 10, 6, 12, 30)),
+            anomaly("AtLookbackStart", 5.0, athens(2024, 10, 6, 12, 0)),
+            anomaly("HalfHourBeforeLookbackStart", 5.0, athens(2024, 10, 6, 11, 30))
+        )
+
+        val result = useCase.compute(RadarBudgetInput.None)
+
+        assertEquals(
+            listOf("AtLookbackStart", "HalfHourInsideCalendarWindow"),
+            result.anomalyAlerts.map { it.merchant }.sorted()
+        )
+    }
+
+    @Test
+    fun `anomaly lookback is calendar minus thirty days across spring forward`() = runTest {
+        val today = athens(2024, 4, 10, 12, 0)
+        every { timeProvider.now() } returns today
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns emptyList()
+        // Calendar -30d is 11 Mar 12:00 (719 real hours earlier because 31 Mar has 23 hours).
+        coEvery { anomalyAlertRepository.getActiveAlerts() } returns listOf(
+            anomaly("AtLookbackStart", 5.0, athens(2024, 3, 11, 12, 0)),
+            anomaly("HalfHourBeforeLookbackStart", 5.0, athens(2024, 3, 11, 11, 30))
+        )
+
+        val result = useCase.compute(RadarBudgetInput.None)
+
+        assertEquals(listOf("AtLookbackStart"), result.anomalyAlerts.map { it.merchant })
     }
 
     // ---------------------------------------------------------------- fix-1.0.4 null probability
