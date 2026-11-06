@@ -1,8 +1,6 @@
 package com.yourname.expensetracker.domain.usecase.dashboard
 
-import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.UiText
-import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.core.money.ConversionOutcome
@@ -13,9 +11,8 @@ import com.yourname.expensetracker.domain.core.money.StaleRatePolicy
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.forecasting.MergedRecurringPatternsProvider
-import com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator
+import com.yourname.expensetracker.domain.forecasting.MonteCarloResult
 import com.yourname.expensetracker.domain.model.budget.MonteCarloBudgetImpact.RiskTier
-import com.yourname.expensetracker.domain.model.dashboard.toBudgetStatusSnapshot
 import com.yourname.expensetracker.domain.text.DomainTextKeys
 import com.yourname.expensetracker.domain.usecase.budget.GetMonteCarloBudgetImpactUseCase
 import com.yourname.expensetracker.domain.usecase.dashboard.AnomalyAlertRepository
@@ -81,6 +78,24 @@ data class BudgetRiskInfo(
 )
 
 /**
+ * P-05-5: how the Money Radar learns about the budget part. The Radar never simulates; it reads
+ * the same Monte Carlo result object the Home card shows.
+ */
+sealed interface RadarBudgetInput {
+    /** No comparable budget exists (none set, non-month-scale period, or no positive limit). */
+    data object None : RadarBudgetInput
+
+    /** A month-scale budget exists but the forecast could not be compared with it (fail-closed). */
+    data object Unknown : RadarBudgetInput
+
+    /** The budget could not be read at all (fail-closed: never "All Clear"). */
+    data object Unreadable : RadarBudgetInput
+
+    /** The shared Monte Carlo result for the Home card. */
+    data class Simulated(val result: MonteCarloResult) : RadarBudgetInput
+}
+
+/**
  * Primary action for Money Radar based on most urgent item.
  */
 sealed class MoneyRadarAction {
@@ -104,9 +119,7 @@ class ComputeMoneyRadarUseCase @Inject constructor(
     private val recurringPatternsProvider: MergedRecurringPatternsProvider,
     private val anomalyAlertRepository: AnomalyAlertRepository,
     private val getMonteCarloBudgetImpact: GetMonteCarloBudgetImpactUseCase,
-    private val monteCarloSimulator: MonteCarloSpendingSimulator,
     private val expenseRepository: ExpenseRepository,
-    private val budgetRepository: BudgetRepository,
     private val analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer,
     private val currencySettingsRepository: CurrencySettingsRepository,
     private val currencyConverter: CurrencyConverter,
@@ -149,23 +162,42 @@ class ComputeMoneyRadarUseCase @Inject constructor(
     /**
      * Compute the Money Radar widget data.
      */
-    suspend fun compute(): MoneyRadarData = try {
-        computeAvailable()
+    suspend fun compute(budget: RadarBudgetInput): MoneyRadarData = try {
+        if (budget is RadarBudgetInput.Unreadable) {
+            // Fail-closed: an unreadable budget never reads "All Clear".
+            Timber.w("RADAR_UNAVAILABLE reason=BUDGET_READ_FAILED")
+            unavailableRadarData()
+        } else {
+            computeAvailable(budget)
+        }
     } catch (e: Exception) {
         if (e is kotlinx.coroutines.CancellationException) throw e
         Timber.w("RADAR_UNAVAILABLE class=%s", e.javaClass.simpleName)
-        MoneyRadarData(
-            urgencyScore = null,
-            urgencyLevel = UrgencyLevel.UNAVAILABLE,
-            dueBills = emptyList(),
-            anomalyAlerts = emptyList(),
-            budgetRisk = null,
-            topReasons = emptyList(),
-            primaryCta = null
-        )
+        unavailableRadarData()
     }
 
-    private suspend fun computeAvailable(): MoneyRadarData = coroutineScope {
+    private fun unavailableRadarData() = MoneyRadarData(
+        urgencyScore = null,
+        urgencyLevel = UrgencyLevel.UNAVAILABLE,
+        dueBills = emptyList(),
+        anomalyAlerts = emptyList(),
+        budgetRisk = null,
+        topReasons = emptyList(),
+        primaryCta = null
+    )
+
+    /**
+     * A simulated result that carries no positive finite limit cannot be compared with a budget;
+     * the budget is then unknown (fail-closed), not absent.
+     */
+    private fun effectiveBudget(budget: RadarBudgetInput): RadarBudgetInput {
+        if (budget !is RadarBudgetInput.Simulated) return budget
+        val limit = budget.result.budgetAmount
+        return if (limit == null || !limit.isFinite() || limit <= 0.0) RadarBudgetInput.Unknown else budget
+    }
+
+    private suspend fun computeAvailable(requestedBudget: RadarBudgetInput): MoneyRadarData = coroutineScope {
+        val budget = effectiveBudget(requestedBudget)
         val now = timeProvider.now()
         val homeCurrency = CurrencyCode.parse(currencySettingsRepository.homeCurrency().first())
             ?.takeIf { it in CurrencyCode.ALL_SUPPORTED }?.code
@@ -174,11 +206,10 @@ class ComputeMoneyRadarUseCase @Inject constructor(
         // Gather all data in parallel where possible
         val dueBillsDeferred = async { getDueBills(now, homeCurrency) }
         val anomalyAlertsDeferred = async { getUnresolvedAnomalies(now) }
-        val budgetRiskDeferred = async { getBudgetRisk(now, homeCurrency) }
 
         val dueBills = dueBillsDeferred.await()
         val anomalyAlerts = anomalyAlertsDeferred.await()
-        val budgetRisk = budgetRiskDeferred.await()
+        val budgetRisk = getBudgetRisk(budget)
         
         // Calculate urgency score using weighted factors
         val dueBillsScore = calculateDueBillsScore(dueBills, now, homeCurrency)
@@ -203,7 +234,14 @@ class ComputeMoneyRadarUseCase @Inject constructor(
             urgencyScore <= YELLOW_THRESHOLD -> UrgencyLevel.YELLOW
             else -> UrgencyLevel.RED
         }
-        
+
+        // Fail-closed: with an unknown budget part, GREEN is not a verdict ("All Clear" is not
+        // claimed). YELLOW/RED from the other signals are kept (bills/anomalies are independent).
+        if (budget is RadarBudgetInput.Unknown && urgencyLevel == UrgencyLevel.GREEN) {
+            Timber.w("RADAR_UNAVAILABLE reason=BUDGET_UNKNOWN")
+            return@coroutineScope unavailableRadarData()
+        }
+
         // Determine top reasons and primary CTA
         val topReasons = buildTopReasons(dueBills, anomalyAlerts, budgetRisk, urgencyScore)
         val primaryCta = determinePrimaryAction(dueBills, anomalyAlerts, budgetRisk)
@@ -287,102 +325,24 @@ class ComputeMoneyRadarUseCase @Inject constructor(
     }
     
     /**
-     * Get budget risk information using Monte Carlo simulation.
+     * P-05-5: budget risk is derived from the SAME Monte Carlo result object the Home card uses;
+     * there is no second simulation. None/Unknown/Unreadable carry no risk here (the caller
+     * applies the fail-closed rules for Unknown and Unreadable).
      */
-    private suspend fun getBudgetRisk(now: Long, homeCurrency: String): BudgetRiskInfo? {
-        return try {
-            val startOfToday = TimePeriodUtils.getStartOfDay(now)
-
-            // Get monthly budget
-            val budgetStatuses = budgetRepository.getBudgetStatuses().first()
-            val overallBudget = budgetStatuses.find { it.budget.categoryId == null } ?: return null
-            // P-05-5: take the limit from the same derivation as the dashboard widget
-            // (BudgetStatusSnapshot.periodRemaining: effective limit incl. rollover, home
-            // currency). The simulation compares a calendar-month total, so only a
-            // month-scale overall budget is compared; any other period gives no comparison.
-            val budgetSnapshot = overallBudget.toBudgetStatusSnapshot()
-            if (!budgetSnapshot.isMonthScalePeriod) return null
-            val budgetAmount = when (val remaining = budgetSnapshot.periodRemaining(now, homeCurrency)) {
-                is com.yourname.expensetracker.domain.budget.BudgetPeriodRemaining.Available -> remaining.limit
-                is com.yourname.expensetracker.domain.budget.BudgetPeriodRemaining.Unavailable -> {
-                    // Any unavailable reason (no positive limit, legacy/unconvertible budget
-                    // currency, unknown spend) leaves only the budget part without a
-                    // comparison. Bills and anomalies are independent signals and stay.
-                    // MoneyRadarData has no partial/unknown flag, so the budget part is
-                    // simply absent (budgetRisk = null) and contributes no score.
-                    return null
-                }
-            }
-
-            // Get current month spending
-            val (monthStart, _) = TimePeriodUtils.getMonthRange(now)
-            val expenses = expenseRepository.getExpensesSince(monthStart)
-                .filter {
-                    it.transactionType.toDomain() == DomainTransactionType.PURCHASE &&
-                        !it.isNotMine &&
-                        it.date <= now
-                }
-            val normalizedExpenses = analyticsCurrencyNormalizer.normalizeExpenses(
-                expenses = expenses,
-                homeCurrencyCode = homeCurrency
+    private fun getBudgetRisk(budget: RadarBudgetInput): BudgetRiskInfo? {
+        val result = (budget as? RadarBudgetInput.Simulated)?.result ?: return null
+        val budgetAmount = result.budgetAmount ?: return null
+        // No usable fit and total at or under the limit: the budget part is absent.
+        if (result.probabilityUnderBudget == null) return null
+        return when (val impact = getMonteCarloBudgetImpact(budgetAmount, result)) {
+            is com.yourname.expensetracker.domain.model.Result.Success -> BudgetRiskInfo(
+                expectedOverrun = impact.data.expectedOverrun,
+                probabilityOfOverrun = impact.data.probabilityOfOverrun,
+                riskTier = impact.data.riskTier
             )
-            if (normalizedExpenses.excludedCount > 0 || normalizedExpenses.hasWarnings) {
-                error("RADAR_SPENDING_UNAVAILABLE")
-            }
-            val spentToDate = MoneyAggregateBuilder.fromHomeCurrencyAmounts(
-                amounts = normalizedExpenses.normalizedExpenses.map { it.normalizedEffectiveAmount },
-                homeCurrency = homeCurrency
-            ).displayAmount
-            
-            // Include known upcoming recurring obligations in next 7 days
-            val windowEnd = now + (BILL_WINDOW_DAYS * ONE_DAY_MS)
-            val upcomingRecurringPatterns = recurringPatternsProvider.getConfirmedPatterns()
-                .filter { it.nextExpectedDate in startOfToday..windowEnd }
-            val recurringAmounts = upcomingRecurringPatterns.map { pattern ->
-                convertForRadar(
-                    amount = pattern.averageAmount,
-                    sourceCurrency = pattern.currency,
-                    targetCurrency = homeCurrency,
-                    atMillis = pattern.nextExpectedDate,
-                    rateBasis = RateBasis.FORECAST_DATE
-                ) ?: error("RADAR_RECURRING_UNAVAILABLE")
-            }
-            val upcomingRecurring = MoneyAggregateBuilder.fromHomeCurrencyAmounts(
-                amounts = recurringAmounts,
-                homeCurrency = homeCurrency
-            ).displayAmount
-
-            // Run Monte Carlo simulation
-            val mcResult = monteCarloSimulator.simulate(
-                spentToDate = spentToDate,
-                knownUpcoming = upcomingRecurring,
-                budgetAmount = budgetAmount,
-                displayCurrency = homeCurrency
-            )
-            
-            val simulated = checkNotNull(mcResult) { "RADAR_BUDGET_UNAVAILABLE" }
-            // No usable fit and total at or under the limit: the budget part is absent.
-            if (simulated.probabilityUnderBudget == null) return null
-
-            simulated.let { result ->
-                // Use GetMonteCarloBudgetImpactUseCase to get proper risk assessment
-                when (val impact = getMonteCarloBudgetImpact(budgetAmount, result)) {
-                    is com.yourname.expensetracker.domain.model.Result.Success -> {
-                        BudgetRiskInfo(
-                            expectedOverrun = impact.data.expectedOverrun,
-                            probabilityOfOverrun = impact.data.probabilityOfOverrun,
-                            riskTier = impact.data.riskTier
-                        )
-                    }
-                    is com.yourname.expensetracker.domain.model.Result.Error -> {
-                        error("RADAR_BUDGET_UNAVAILABLE")
-                    }
-                    com.yourname.expensetracker.domain.model.Result.Duplicate -> error("RADAR_BUDGET_UNAVAILABLE")
-                    com.yourname.expensetracker.domain.model.Result.Loading -> error("RADAR_BUDGET_UNAVAILABLE")
-                }
-            }
-        } catch (e: Exception) {
-            throw e
+            is com.yourname.expensetracker.domain.model.Result.Error -> error("RADAR_BUDGET_UNAVAILABLE")
+            com.yourname.expensetracker.domain.model.Result.Duplicate -> error("RADAR_BUDGET_UNAVAILABLE")
+            com.yourname.expensetracker.domain.model.Result.Loading -> error("RADAR_BUDGET_UNAVAILABLE")
         }
     }
 
@@ -600,14 +560,4 @@ class ComputeMoneyRadarUseCase @Inject constructor(
             else -> null
         }
     }
-
-    // Boundary mapper: data-layer TransactionType -> domain DomainTransactionType
-    private fun com.yourname.expensetracker.data.database.entity.TransactionType.toDomain(): DomainTransactionType =
-        when (this) {
-            com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
-            com.yourname.expensetracker.data.database.entity.TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
-            com.yourname.expensetracker.data.database.entity.TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
-            com.yourname.expensetracker.data.database.entity.TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
-            com.yourname.expensetracker.data.database.entity.TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
-        }
 }

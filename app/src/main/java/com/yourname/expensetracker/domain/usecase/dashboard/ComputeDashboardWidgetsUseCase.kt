@@ -365,7 +365,8 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val healthScoreV2Result = computeHealthScoreV2(ctx)
         val lifestyleWidget = computeLifestyleWidget()
         val savingsSweepWidget = computeSavingsSweepWidget()
-        val moneyRadarData = computeMoneyRadarUseCase.compute()
+        // P-05-5: the Radar reads the same Monte Carlo result object the Home card shows.
+        val moneyRadarData = computeMoneyRadarUseCase.compute(radarBudgetInput(ctx, monteCarloWidget))
         val stressForecastResult = computeStressForecast()
 
         val widgets = assembleWidgets(
@@ -1059,6 +1060,35 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             unavailable(e.reasonCode)
         } catch (_: Exception) {
             unavailable(MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE)
+        }
+    }
+
+    /**
+     * P-05-5: maps the budget state and the Home card's Monte Carlo result to the Radar input.
+     * - Unreadable: the budget read failed (never "All Clear").
+     * - None: no overall budget, a non-month-scale budget, or a budget with no positive limit.
+     * - Simulated: the card result is available and compared with a limit.
+     * - Unknown: any other case (other limit-unavailable reason, or an unavailable card while a
+     *   month-scale budget exists).
+     */
+    private fun radarBudgetInput(
+        ctx: ComputeContext,
+        monteCarloWidget: DashboardWidget.MonteCarloForecast?
+    ): RadarBudgetInput {
+        if (ctx.data.data.budgetReadFailed) return RadarBudgetInput.Unreadable
+        val overallBudget = ctx.overallBudget ?: return RadarBudgetInput.None
+        if (!overallBudget.isMonthScalePeriod) return RadarBudgetInput.None
+        val card = monteCarloWidget?.takeIf { it.result.displayCurrency != null }
+            ?: return RadarBudgetInput.Unknown
+        if (!card.budgetNotComparable) return RadarBudgetInput.Simulated(card.result)
+        val home = card.result.displayCurrency ?: return RadarBudgetInput.Unknown
+        val remaining = overallBudget.periodRemaining(ctx.now, home)
+        return if (remaining is BudgetPeriodRemaining.Unavailable &&
+            remaining.reason == BudgetPeriodRemainingUnavailableReason.NO_POSITIVE_LIMIT
+        ) {
+            RadarBudgetInput.None
+        } else {
+            RadarBudgetInput.Unknown
         }
     }
 

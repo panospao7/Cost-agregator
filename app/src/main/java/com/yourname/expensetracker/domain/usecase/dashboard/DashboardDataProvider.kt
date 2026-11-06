@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.flatMapLatest
 import javax.inject.Inject
@@ -46,10 +47,17 @@ class DashboardDataProvider @Inject constructor(
     fun getBaseDataFlow() = combine(
         expenseRepository.observeDashboardExpenses().catch { emit(emptyList()) },
         categoryRepository.observeDashboardCategories().catch { emit(emptyList()) },
-        budgetRepository.observeBudgetStatuses().catch { emit(emptyList()) }
-    ) { expenses, categories, budgetStatuses ->
-        BaseData(expenses, categories, budgetStatuses)
+        // P-05-5: a budget read failure is carried as a flag (fail-closed for Money Radar);
+        // it must not look like "no budget".
+        observeBudgetStatusesWithReadFlag()
+    ) { expenses, categories, budgetRead ->
+        BaseData(expenses, categories, budgetRead.first, budgetReadFailed = budgetRead.second)
     }
+
+    private fun observeBudgetStatusesWithReadFlag(): Flow<Pair<List<BudgetStatusSnapshot>, Boolean>> =
+        budgetRepository.observeBudgetStatuses()
+            .map { statuses -> statuses to false }
+            .catch { emit(emptyList<BudgetStatusSnapshot>() to true) }
 
     fun getPlanningDataFlow() = combine(
         reviewQueueRepository.observePendingReviewCount().catch { emit(0) },
@@ -73,7 +81,8 @@ class DashboardDataProvider @Inject constructor(
             weather = planning.weather,
             recurringPatterns = planning.recurringPatterns,
             plannedExpenses = planning.plannedExpenses,
-            goals = goals
+            goals = goals,
+            budgetReadFailed = base.budgetReadFailed
         )
     }
 
@@ -147,7 +156,9 @@ class DashboardDataProvider @Inject constructor(
 data class BaseData(
     val expenses: List<DashboardExpense>,
     val categories: List<DashboardCategory>,
-    val budgetStatuses: List<BudgetStatusSnapshot>
+    val budgetStatuses: List<BudgetStatusSnapshot>,
+    /** P-05-5: true when the budget read failed; budgetStatuses is then empty but NOT "no budget". */
+    val budgetReadFailed: Boolean = false
 )
 
 data class PlanningData(
@@ -165,7 +176,9 @@ data class DashboardData(
     val weather: FinancialWeather,
     val recurringPatterns: List<RecurringPattern>,
     val plannedExpenses: List<PlannedExpense>,
-    val goals: List<SavingsGoal>
+    val goals: List<SavingsGoal>,
+    /** P-05-5: true when the budget read failed (see [BaseData.budgetReadFailed]). */
+    val budgetReadFailed: Boolean = false
 )
 
 data class ProcessedDashboardData(
