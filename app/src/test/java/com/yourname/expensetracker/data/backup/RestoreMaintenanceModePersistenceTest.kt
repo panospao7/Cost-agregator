@@ -1209,6 +1209,77 @@ class RestoreMaintenanceModePersistenceTest {
         }
     }
 
+    @Test
+    fun entering_maintenance_cancels_the_on_demand_briefing_and_resume_never_enqueues_it() {
+        val onEnable = com.yourname.expensetracker.domain.config.AppConfig.Ai.WORK_NAME_DAILY_BRIEFING_ON_ENABLE
+        // Literal pin so a rename of the on-demand work name is caught here.
+        assertEquals("ai_daily_briefing_on_enable", onEnable)
+        assertTrue(
+            "on-demand policy set must contain the on-enable briefing",
+            "ai_daily_briefing_on_enable" in
+                com.yourname.expensetracker.domain.workers.PrivacyRuntimeWorkerPolicy.onDemandWorkerNames
+        )
+        assertFalse("on-enable briefing must stay out of WorkerSpec.DEFAULTS", onEnable in WorkerSpec.DEFAULTS.keys)
+
+        val leaseRegistry = mockk<WorkerLeaseRegistry>(relaxed = true)
+        val mode = RestoreMaintenanceMode(
+            context,
+            dagger.Lazy { leaseRegistry },
+            com.yourname.expensetracker.domain.util.FakeTimeProvider(fixedTime)
+        )
+        val workManager = mockk<WorkManager>(relaxed = true)
+        val activeWork = mockk<WorkInfo>()
+        val confirmation = mockk<ListenableFuture<List<WorkInfo>>>()
+        every { activeWork.state } returns WorkInfo.State.ENQUEUED
+        every { confirmation.get(any<Long>(), any<TimeUnit>()) } returns listOf(activeWork)
+        every { workManager.getWorkInfosForUniqueWork(any()) } returns confirmation
+
+        mockkObject(WorkerRegistry)
+        mockkStatic(WorkManager::class)
+        try {
+            every { WorkerRegistry.scheduleAll(any(), any(), null) } returns successfulScheduleSummary()
+            every { WorkManager.getInstance(any<Context>()) } returns workManager
+
+            mode.enter(RestoreMaintenanceMode.Mode.RESTORE_PREPARING)
+
+            // Pause: every default worker AND the cancel-only on-demand briefing are cancelled.
+            verify(atLeast = 1) { workManager.cancelUniqueWork(onEnable) }
+            WorkerSpec.DEFAULTS.keys.forEach { name ->
+                verify(atLeast = 1) { workManager.cancelUniqueWork(name) }
+            }
+
+            mode.exit(forceRestartRequired = false)
+
+            // Resume: only DEFAULTS-driven; the on-demand name is never enqueued or confirmed.
+            assertEquals(RestoreMaintenanceMode.Mode.NORMAL, mode.currentMode())
+            verify(exactly = 0) {
+                workManager.enqueueUniqueWork(
+                    eq(onEnable),
+                    any<androidx.work.ExistingWorkPolicy>(),
+                    any<androidx.work.OneTimeWorkRequest>()
+                )
+            }
+            verify(exactly = 0) {
+                workManager.enqueueUniqueWork(
+                    eq(onEnable),
+                    any<androidx.work.ExistingWorkPolicy>(),
+                    any<List<androidx.work.OneTimeWorkRequest>>()
+                )
+            }
+            verify(exactly = 0) {
+                workManager.enqueueUniquePeriodicWork(
+                    eq(onEnable),
+                    any<androidx.work.ExistingPeriodicWorkPolicy>(),
+                    any<androidx.work.PeriodicWorkRequest>()
+                )
+            }
+            verify(exactly = 0) { workManager.getWorkInfosForUniqueWork(onEnable) }
+        } finally {
+            unmockkStatic(WorkManager::class)
+            unmockkObject(WorkerRegistry)
+        }
+    }
+
     // ── NEW-P7-004: Thread-safe appendEvent ────────────────────────
 
     @Test
