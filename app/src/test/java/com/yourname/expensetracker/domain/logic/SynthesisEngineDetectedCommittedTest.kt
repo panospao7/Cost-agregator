@@ -23,6 +23,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Assert.assertThrows
 import org.junit.Test
 import java.util.Calendar
 
@@ -309,6 +310,62 @@ class SynthesisEngineDetectedCommittedTest {
         // Baseline: (1200 - 15.00) / 31 * 16 remaining days; a double subtraction would use 30.49.
         assertEquals((1200.0 - 15.0) / 31.0 * 16.0, withDuplicate.components.predictedDiscretionary, 0.0001)
         assertEquals(ruleOnly.components.predictedDiscretionary, withDuplicate.components.predictedDiscretionary, 0.0001)
+    }
+
+    @Test
+    fun `shadow without confirmed occurrences rule 15_00 and detected 15_49 same merchant and frequency commit 15_00 once`() = runTest {
+        val rule = detected(merchant = "Netflix", amount = 15.0, confidence = 1.0f, id = 5L)
+        val dup = detected(merchant = "Netflix", amount = 15.49, confidence = 0.95f)
+
+        val result = forecast(patterns = listOf(rule, dup), occurrences = emptyList())
+
+        // |15.49 - 15.00| = 0.49 <= 20% of 15.00 (3.00) -> shadowed; only the rule's 15.00 is committed.
+        assertEquals(15.0, result.components.totalCommitted, 0.0001)
+        assertEquals(0.0, result.components.totalLikely, 0.0001)
+    }
+
+    @Test
+    fun `shadow same merchant and frequency but amount far from the rule is not hidden`() = runTest {
+        val rule = detected(merchant = "Apple", amount = 0.99, confidence = 1.0f, id = 5L)
+        val other = detected(merchant = "Apple", amount = 10.99, confidence = 0.95f)
+
+        val result = forecast(patterns = listOf(rule, other), occurrences = emptyList())
+
+        // |10.99 - 0.99| = 10.00 > 20% of 0.99 (0.198) -> both counted: 0.99 + 10.99 = 11.98.
+        assertEquals(11.98, result.components.totalCommitted, 0.0001)
+    }
+
+    @Test
+    fun `shadowed detected pattern at 0_80 confidence does not appear in likely`() = runTest {
+        val rule = detected(merchant = "Netflix", amount = 15.0, confidence = 1.0f, id = 5L)
+        val dup = detected(merchant = "Netflix", amount = 15.49, confidence = 0.80f)
+
+        val result = forecast(patterns = listOf(rule, dup), occurrences = listOf(netflixOccurrence()))
+
+        assertEquals(15.0, result.components.totalCommitted, 0.0001)
+        assertEquals(0.0, result.components.totalLikely, 0.0001)
+    }
+
+    @Test
+    fun `blank merchant names cannot reach the shadow filter because RecurringPattern rejects them`() {
+        // RecurringPattern requires a non-blank merchantName, so a blank shadow key is unreachable;
+        // the filter's blank-key guard is defensive only.
+        assertThrows(IllegalArgumentException::class.java) {
+            detected(merchant = "  ", amount = 15.0, confidence = 0.95f)
+        }
+    }
+
+    @Test
+    fun `shadow requires the same currency so a USD detected pattern next to an EUR rule is not hidden`() = runTest {
+        stubUsdParity()
+        val rule = detected(merchant = "Netflix", amount = 15.0, currency = "EUR", confidence = 1.0f, id = 5L)
+        val usd = detected(merchant = "Netflix", amount = 15.49, currency = "USD", confidence = 0.95f)
+
+        val result = forecast(patterns = listOf(rule, usd), occurrences = emptyList())
+
+        // Parity-stubbed conversion: 15.00 EUR + 15.49 USD(=15.49) = 30.49.
+        assertEquals(30.49, result.components.totalCommitted, 0.0001)
+        assertEquals(0, result.excludedCount)
     }
 
     @Test
