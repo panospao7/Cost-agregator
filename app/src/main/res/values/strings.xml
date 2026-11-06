@@ -936,6 +936,7 @@
     <string name="privacy_retention_immediately">Immediately (deleted at next cleanup)</string>
     <string name="privacy_settings_unreadable_banner">Your saved privacy settings could not be read, so the strictest privacy settings are in use for now.</string>
     <string name="critical_recovery_open_app_settings">Open app settings</string>
+    <string name="critical_recovery_export_raw_copy">Export a raw copy</string>
     <string name="critical_recovery_clear_data_warning">Clear data in Android Settings erases ALL data this app stores on this phone.</string>
     <string name="privacy_raw_storage_notification_label">Notification raw text storage</string>
     <string name="privacy_raw_storage_ocr_label">OCR raw text storage</string>
@@ -2854,6 +2855,8 @@
     <string name="unsupported_db_reason_too_old">The saved database was created by a version of the app that is too old to be upgraded safely. Nothing has been changed or deleted.</string>
     <string name="unsupported_db_reason_too_new">The saved database was created by a newer version of the app. Install the latest version of the app to use it. Nothing has been changed or deleted.</string>
     <string name="unsupported_db_reason_unreadable">The saved database could not be read. Nothing has been changed or deleted.</string>
+    <string name="unsupported_db_reason_recovery">The app\'s data is in a recovery state and could not be opened normally.</string>
+    <string name="unsupported_db_recovery_export_note">This is a raw copy and may be incomplete.</string>
     <string name="unsupported_db_export_button">Export database file</string>
     <string name="unsupported_db_close_button">Close app</string>
     <string name="unsupported_db_export_success">The database file was exported.</string>

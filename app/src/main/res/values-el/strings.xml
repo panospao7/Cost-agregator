@@ -8,6 +8,8 @@
     <string name="privacy_settings_unreadable_banner">Οι αποθηκευμένες ρυθμίσεις απορρήτου δεν ήταν δυνατό να διαβαστούν, γι\' αυτό προς το παρόν ισχύουν οι αυστηρότερες ρυθμίσεις απορρήτου.</string>
     <!-- critical_recovery_open_app_settings: DRAFT: owner native sign-off pending -->
     <string name="critical_recovery_open_app_settings">Άνοιγμα ρυθμίσεων εφαρμογής</string>
+    <!-- critical_recovery_export_raw_copy: DRAFT: owner native sign-off pending -->
+    <string name="critical_recovery_export_raw_copy">Εξαγωγή ανεπεξέργαστου αντιγράφου</string>
     <!-- critical_recovery_clear_data_warning: DRAFT: owner native sign-off pending -->
     <string name="critical_recovery_clear_data_warning">Η «Εκκαθάριση δεδομένων» στις Ρυθμίσεις του Android διαγράφει ΟΛΑ τα δεδομένα που αποθηκεύει η εφαρμογή σε αυτό το τηλέφωνο.</string>
     <string name="receipt_partial_ocr_warning">Ορισμένες σελίδες δεν ήταν δυνατό να διαβαστούν ή δεν υποβλήθηκαν σε επεξεργασία. Η απόδειξη είναι ελλιπής· ελέγξτε το πρωτότυπο πριν την αποθηκεύσετε.</string>
@@ -30,6 +32,10 @@
     <string name="unsupported_db_reason_too_old">Η αποθηκευμένη βάση δεδομένων δημιουργήθηκε από πολύ παλιά έκδοση της εφαρμογής και δεν μπορεί να αναβαθμιστεί με ασφάλεια. Δεν έχει αλλάξει ούτε διαγραφεί τίποτα.</string>
     <string name="unsupported_db_reason_too_new">Η αποθηκευμένη βάση δεδομένων δημιουργήθηκε από νεότερη έκδοση της εφαρμογής. Εγκαταστήστε την τελευταία έκδοση της εφαρμογής για να τη χρησιμοποιήσετε. Δεν έχει αλλάξει ούτε διαγραφεί τίποτα.</string>
     <string name="unsupported_db_reason_unreadable">Δεν ήταν δυνατή η ανάγνωση της αποθηκευμένης βάσης δεδομένων. Δεν έχει αλλάξει ούτε διαγραφεί τίποτα.</string>
+    <!-- J-20-1: DRAFT: owner native sign-off pending -->
+    <string name="unsupported_db_reason_recovery">Τα δεδομένα της εφαρμογής βρίσκονται σε κατάσταση ανάκτησης και δεν ήταν δυνατό να ανοίξουν κανονικά.</string>
+    <!-- J-20-1: DRAFT: owner native sign-off pending -->
+    <string name="unsupported_db_recovery_export_note">Αυτό είναι ανεπεξέργαστο αντίγραφο και μπορεί να είναι ελλιπές.</string>
     <string name="unsupported_db_export_button">Εξαγωγή αρχείου βάσης δεδομένων</string>
     <string name="unsupported_db_close_button">Κλείσιμο εφαρμογής</string>
     <string name="unsupported_db_export_success">Το αρχείο της βάσης δεδομένων εξήχθη.</string>

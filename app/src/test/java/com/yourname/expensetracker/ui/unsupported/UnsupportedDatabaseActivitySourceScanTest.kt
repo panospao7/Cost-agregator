@@ -538,6 +538,198 @@ class UnsupportedDatabaseActivitySourceScanTest {
         assertEquals(emptyList<String>(), seamAssignments(files))
     }
 
+    // ---- J-20-1: raw export from the critical-recovery screen -----------------------------------------------------
+    //
+    // - onCreate still finishes and returns before the authenticator is built (now when neither the gate blocks nor
+    //   the recovery export is available);
+    // - the picker call sites are unchanged (2), the recovery mode adds no new export path;
+    // - the intent extra is never read (it is only put by the caller), so it cannot authorise anything;
+    // - the new code logs only constant codes, nothing variable.
+
+    private val extraName = "EXTRA_RECOVERY_EXPORT"
+    private val recoveryReadFile = "com/yourname/expensetracker/data/backup/RestoreMaintenanceMode.kt"
+    private val mainActivityFile = "com/yourname/expensetracker/ui/MainActivity.kt"
+
+    /** Lines (file:line) that mention [extraName] other than its declaration or a `putExtra(` call. */
+    private fun extraNonWriteUses(files: List<Pair<String, String>>): List<String> {
+        val hits = mutableListOf<String>()
+        for ((path, raw) in files) {
+            val code = SourceTextSanitizer.stripCommentsAndStringBodies(raw)
+            code.lines().forEachIndexed { index, line ->
+                if (!line.contains(extraName)) return@forEachIndexed
+                val declaration = Regex("""\bconst\s+val\s+$extraName\b""").containsMatchIn(line)
+                val write = Regex("""\.putExtra\s*\(\s*(\w+\s*\.\s*)*$extraName\s*,""").containsMatchIn(line)
+                if (!declaration && !write) hits += "$path:${index + 1}"
+            }
+        }
+        return hits
+    }
+
+    @Test
+    fun j20_1_onCreate_stillFinishesAndReturnsBeforeBuildingTheAuthenticator() {
+        val onCreate = bodyOf(source, "onCreate")
+        val gateRead = onCreate.indexOf("DatabaseOpenGate.blockedReasonOrNull(applicationContext)")
+        val finish = onCreate.indexOf("finish()")
+        val earlyReturn = onCreate.indexOf("return", finish)
+        val build = onCreate.indexOf("BiometricPromptDeviceAuthenticator(this)")
+        val factory = onCreate.indexOf("authenticatorFactoryForTest")
+        val setContent = onCreate.indexOf("setContent")
+
+        assertTrue("gate read missing", gateRead in 0 until finish)
+        assertTrue("finish() then return must precede the authenticator", finish in 0 until earlyReturn)
+        assertTrue("the factory seam is read after the early return", earlyReturn < factory)
+        assertTrue("the authenticator is built after the early return", earlyReturn < build)
+        assertTrue("the authenticator is built before the content is set", build < setContent)
+        assertTrue(
+            "the screen stays open only when the gate blocks or the recovery export is available",
+            Regex("""if\s*\(\s*reasonCode\s*==\s*null\s*&&\s*!recoveryExport\s*\)\s*\{\s*finish\(\)""").containsMatchIn(onCreate)
+        )
+        assertTrue(
+            "recovery export is evaluated only when the gate does not block, from the persisted-mode check",
+            Regex("""val\s+recoveryExport\s*=\s*reasonCode\s*==\s*null\s*&&\s*isRecoveryExportAvailable\(\s*applicationContext\s*\)""")
+                .containsMatchIn(onCreate)
+        )
+    }
+
+    @Test
+    fun j20_1_pickerCallCountIsUnchanged() {
+        assertEquals(
+            "exactly two launchPicker() calls: not-required gate and after Succeeded",
+            2,
+            countOf(source, Regex("""\blaunchPicker\s*\(\s*\)"""))
+        )
+        assertEquals(1, countOf(source, Regex("""\blauncher\s*\.\s*launch\s*\(""")))
+        assertEquals(1, countOf(source, Regex("""\bCreateDocument\s*\(""")))
+        assertEquals(1, countOf(source, Regex("""(?<!fun )\bstartExport\s*\(""")))
+    }
+
+    @Test
+    fun j20_1_writeBackupToGate_isOpenGateOrRecoveryAvailable_andPrecedesAnyFileOrStreamAccess() {
+        val write = bodyOf(source, "writeBackupTo")
+        val gate = write.indexOf("check(")
+        val files = write.indexOf("liveDatabaseFiles(")
+        val stream = write.indexOf("openOutputStream(")
+
+        assertTrue("check( missing", gate >= 0)
+        assertTrue("the check precedes the file listing and the output stream", gate < files && gate < stream)
+        assertTrue(
+            "the check is: gate blocks OR recovery export available",
+            Regex(
+                """check\(\s*DatabaseOpenGate\.blockedReasonOrNull\(applicationContext\)\s*!=\s*null\s*\|\|\s*""" +
+                    """isRecoveryExportAvailable\(applicationContext\)\s*\)"""
+            ).containsMatchIn(write)
+        )
+    }
+
+    @Test
+    fun j20_1_isRecoveryExportAvailable_isPersistedCriticalAndNonEmptyMainFile_failClosed_rethrowingCancellation() {
+        val start = source.indexOf("fun isRecoveryExportAvailable(")
+        val end = source.indexOf("private const val EXPORT_MIME_TYPE", start)
+        assertTrue(start in 0 until end)
+        val body = source.substring(start, end)
+
+        assertTrue(body.contains("RestoreMaintenanceMode.isCriticalRecoveryPersisted(context)"))
+        assertTrue(
+            "the main database file must be a non-empty file",
+            Regex("""firstOrNull\(\)\?\.let\s*\{\s*it\.isFile\s*&&\s*it\.length\(\)\s*>\s*0L\s*\}\s*==\s*true""").containsMatchIn(body)
+        )
+        assertTrue("cancellation is rethrown", Regex("""catch\s*\(\s*e:\s*CancellationException\s*\)\s*\{\s*throw\s+e""").containsMatchIn(body))
+        assertTrue("any other failure is false", Regex("""catch\s*\(\s*_:\s*Exception\s*\)\s*\{\s*false\s*\}""").containsMatchIn(body))
+    }
+
+    @Test
+    fun j20_1_theActivityNeverReadsTheRecoveryExtra() {
+        assertEquals(
+            "the activity file mentions the extra once: its declaration",
+            1,
+            countOf(source, Regex("""\b$extraName\b"""))
+        )
+        assertEquals(
+            emptyList<String>(),
+            listOf("getBooleanExtra", "getStringExtra", "getIntExtra", "hasExtra", "getExtras", "\\bintent\\b", "\\bextras\\b")
+                .filter { Regex(it).containsMatchIn(source) }
+        )
+    }
+
+    @Test
+    fun j20_1_noProductionFileReadsTheRecoveryExtra_itIsOnlyDeclaredAndPut() {
+        val files = productionFiles()
+        assertTrue("scan found suspiciously few files: ${files.size}", files.size > 200)
+        assertTrue(files.any { it.first == "main/java/$mainActivityFile" })
+
+        assertEquals(emptyList<String>(), extraNonWriteUses(files))
+
+        val literalKey = "extra.RECOVERY_EXPORT"
+        val literalUses = files.filter { (_, raw) -> raw.contains(literalKey) }.map { it.first }
+        assertEquals("the key literal appears only in its declaration", listOf("main/java/$activityFile"), literalUses)
+    }
+
+    @Test
+    fun j20_1_selfCheck_theExtraReadRuleCanFail() {
+        val planted = listOf(
+            "main/java/p/A.kt" to "fun f(i: Intent) = i.getBooleanExtra(UnsupportedDatabaseActivity.EXTRA_RECOVERY_EXPORT, false)",
+            "main/java/p/B.kt" to "fun g(i: Intent) = i.extras?.containsKey(EXTRA_RECOVERY_EXPORT)",
+            "main/java/p/C.kt" to "fun h(i: Intent) = i.hasExtra(UnsupportedDatabaseActivity.EXTRA_RECOVERY_EXPORT)"
+        )
+        assertEquals(3, extraNonWriteUses(planted).size)
+
+        val allowed = listOf(
+            "main/java/p/D.kt" to "internal const val EXTRA_RECOVERY_EXPORT = \"k\"",
+            "main/java/p/E.kt" to "Intent(c, X::class.java).putExtra(UnsupportedDatabaseActivity.EXTRA_RECOVERY_EXPORT, true)",
+            "main/java/p/F.kt" to "// EXTRA_RECOVERY_EXPORT is mentioned only in a comment\nval s = \"EXTRA_RECOVERY_EXPORT\""
+        )
+        assertEquals(emptyList<String>(), extraNonWriteUses(allowed))
+    }
+
+    @Test
+    fun j20_1_privacy_theActivityLogsOnlyConstantCodes() {
+        val raw = File(sourceRoot, activityFile).readText()
+        val allowedCall = Regex(
+            """\bLog\.[iw]\(LOG_TAG,\s*CODE_[A-Z_]+(\s*\+\s*" "\s*\+\s*e\.javaClass\.simpleName)?\)"""
+        )
+        val logLines = raw.lines()
+            .map { it.trim() }
+            .filter { !it.startsWith("//") && !it.startsWith("*") && !it.startsWith("/*") }
+            .filter { Regex("""\b(Log|Timber)\.""").containsMatchIn(it) || it.contains("println") }
+
+        assertTrue("the activity is expected to log", logLines.isNotEmpty())
+        assertEquals(
+            "every log call is a constant code (optionally plus a simple exception class name)",
+            emptyList<String>(),
+            logLines.filter { allowedCall.replace(it, "").let { rest -> Regex("""\b(Log|Timber)\.|println""").containsMatchIn(rest) } }
+        )
+        assertEquals(
+            "no Timber, stack traces, messages or Uri/path text in the activity",
+            emptyList<String>(),
+            listOf("Timber", "printStackTrace", "e.message", ".localizedMessage", "absolutePath", "uri.toString", "uri.path")
+                .filter { source.contains(it) }
+        )
+    }
+
+    @Test
+    fun j20_1_privacy_theNewReadsLogNothing() {
+        val start = source.indexOf("fun isRecoveryExportAvailable(")
+        val end = source.indexOf("private const val EXPORT_MIME_TYPE", start)
+        val available = source.substring(start, end)
+
+        val restoreSource = SourceTextSanitizer.stripCommentsAndStringBodies(File(sourceRoot, recoveryReadFile).readText())
+        val from = restoreSource.indexOf("fun isCriticalRecoveryPersisted(")
+        val to = restoreSource.indexOf("fun raiseSwapLatch(", from)
+        assertTrue(from in 0 until to)
+        val persisted = restoreSource.substring(from, to)
+
+        val mainSource = SourceTextSanitizer.stripCommentsAndStringBodies(File(sourceRoot, mainActivityFile).readText())
+        val mFrom = mainSource.indexOf("is AppOperationalState.CriticalRecoveryRequired ->")
+        val mTo = mainSource.indexOf("is AppOperationalState.RestoreInProgress ->", mFrom)
+        assertTrue(mFrom in 0 until mTo)
+        val mainBlock = mainSource.substring(mFrom, mTo)
+
+        val forbidden = Regex("""\bLog\.|\bTimber\b|\bprintln\b|printStackTrace|\.message\b|\.localizedMessage|\.toString\(|absolutePath|\.path\b""")
+        for ((label, text) in mapOf("isRecoveryExportAvailable" to available, "isCriticalRecoveryPersisted" to persisted, "critical-recovery lock screen" to mainBlock)) {
+            assertEquals("$label must not log or expose messages/paths", emptyList<String>(), forbidden.findAll(text).map { it.value }.toList())
+        }
+    }
+
     // ---- planted self-checks for the pin hardening ------------------------------------------------------------
 
     private fun plantedEntryPoint(body: String): String = SourceTextSanitizer.stripCommentsAndStringBodies(
