@@ -307,6 +307,7 @@ class RecurringPlannedActualNoDoubleCountGoldenTest : GoldenTestBase() {
             lifecycleEventDao = eventDao,
             restoreMaintenanceMode = restoreMaintenanceMode,
             writeBarrier = writeBarrier,
+            readBarrier = io.mockk.mockk<com.yourname.expensetracker.data.backup.DatabaseReadBarrier>(relaxed = true),
             plannedExpenseDao = plannedDao,
             transactionRunner = object : com.yourname.expensetracker.domain.transaction.DomainTransactionRunner {
                 override suspend fun <T> runInTransaction(

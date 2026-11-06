@@ -210,7 +210,7 @@ The figures in this table use EUR, and today is Nov 26, 2026, unless stated othe
 | Expense deleted | Existing unlink returns the occurrence to PLANNED, so it is counted (AE-12). |
 | Manual "Not this bill" | Decline (INV-14). For an already linked occurrence there is no new unlink path in v1 (D-6). |
 | Installments | INV-5 eligibility refuses installment payments and plan purchases on both tiers (AE-10). |
-| Inactive or paused rule | Never a target. Its PAID and SKIPPED rows can still block. |
+| Inactive or paused rule | Never a suggestion or confirm target (the occurrence stays PLANNED and counted). The auto tier may still link a payment to its occurrence (INV-6/INV-7 amended): the occurrence becomes PAID and the rule does not advance. Its PAID and SKIPPED rows can still block. |
 | Unmaterialized occurrence (projection only) | Never a target (L-5). |
 | Null or blank merchant | Never matches (AE-25). |
 | Future-dated expense | Never suggested. The auto tier is unchanged. |

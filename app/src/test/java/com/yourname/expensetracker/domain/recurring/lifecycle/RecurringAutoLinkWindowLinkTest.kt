@@ -135,6 +135,7 @@ class RecurringAutoLinkWindowLinkTest {
             lifecycleEventDao = eventDao,
             restoreMaintenanceMode = maintenance,
             writeBarrier = barrier,
+            readBarrier = io.mockk.mockk<com.yourname.expensetracker.data.backup.DatabaseReadBarrier>(relaxed = true),
             plannedExpenseDao = plannedDao,
             transactionRunner = mockk(relaxed = true),
             eventWriter = eventWriter,

@@ -123,6 +123,7 @@ class RecurringPaymentMatchE2ETest : GoldenTestBase() {
             lifecycleEventDao = database.recurringLifecycleEventDao(),
             restoreMaintenanceMode = restoreMaintenanceMode,
             writeBarrier = writeBarrier,
+            readBarrier = io.mockk.mockk<com.yourname.expensetracker.data.backup.DatabaseReadBarrier>(relaxed = true),
             plannedExpenseDao = database.plannedExpenseDao(),
             transactionRunner = RoomDomainTransactionRunner(database, timeProvider),
             // Relaxed mock: link lifecycle events are NOT asserted by this test.

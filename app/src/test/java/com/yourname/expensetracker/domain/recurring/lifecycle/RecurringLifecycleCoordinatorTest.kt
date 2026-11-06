@@ -105,6 +105,7 @@ class RecurringLifecycleCoordinatorTest {
             lifecycleEventDao = lifecycleEventDao,
             restoreMaintenanceMode = restoreMaintenanceMode,
             writeBarrier = writeBarrier,
+            readBarrier = io.mockk.mockk<com.yourname.expensetracker.data.backup.DatabaseReadBarrier>(relaxed = true),
             plannedExpenseDao = plannedExpenseDao,
             transactionRunner = FakeDomainTransactionRunner(now),
             eventWriter = mockk(relaxed = true),

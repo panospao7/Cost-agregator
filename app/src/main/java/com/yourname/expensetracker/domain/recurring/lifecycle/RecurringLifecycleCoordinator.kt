@@ -1,7 +1,9 @@
 package com.yourname.expensetracker.domain.recurring.lifecycle
 
 import androidx.room.withTransaction
+import com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException
 import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
+import com.yourname.expensetracker.data.backup.DatabaseReadBarrier
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.AppDatabase
@@ -11,6 +13,7 @@ import com.yourname.expensetracker.data.database.dao.PlannedExpenseDao
 import com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao
 import com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
 import com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao
+import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.RecurringLifecycleEvent
 import com.yourname.expensetracker.data.database.entity.RecurringOccurrence
 import com.yourname.expensetracker.data.database.entity.RecurringReminderDelivery
@@ -28,6 +31,9 @@ import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.NonCancellable
+import kotlin.math.abs
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import timber.log.Timber
 
@@ -86,6 +92,8 @@ class RecurringLifecycleCoordinator @Inject constructor(
     private val eventWriter: RecurringLifecycleEventWriter,
     private val restoreMaintenanceMode: RestoreMaintenanceMode,
     private val writeBarrier: DatabaseWriteBarrier,
+    // FC-PAID-UNLINKED INV-11: findPaymentLinkSuggestions is fail-closed while a restore runs.
+    private val readBarrier: DatabaseReadBarrier,
     private val plannedExpenseDao: PlannedExpenseDao,
     private val transactionRunner: DomainTransactionRunner,
     // The installment half of the link gate (INV-5). It holds the plan reader as a Lazy, so
@@ -143,6 +151,19 @@ class RecurringLifecycleCoordinator @Inject constructor(
 
         /** R21 S1: provenance source code for the automatic (matching) expense link. */
         const val SOURCE_DIRECT_EXPENSE_LINK = "direct_expense_link"
+
+        /** FC-PAID-UNLINKED: provenance source of a link the user confirmed from a suggestion. */
+        const val SOURCE_USER_CONFIRMED_MATCH = "user_confirmed_match"
+
+        /** FC-PAID-UNLINKED: provenance source of a "Not this bill" decline event. */
+        const val SOURCE_USER_DECLINED_MATCH = "user_declined_match"
+
+        /** FC-PAID-UNLINKED INV-9: read scope, in days around today. */
+        private const val SUGGESTION_TARGET_LOOKBACK_DAYS = 31
+        private const val SUGGESTION_TARGET_LOOKAHEAD_DAYS = 7
+        private const val SUGGESTION_EXPENSE_LOOKBACK_DAYS = 38
+        private const val SUGGESTION_BLOCKER_LOOKBACK_DAYS = 45
+        private const val SUGGESTION_BLOCKER_LOOKAHEAD_DAYS = 8
 
         /** R21 S1: controlled cancel reasons used by [collapseStaleDueDeliveries]. */
         const val REASON_STALE_WINDOW_SUPERSEDED = "STALE_WINDOW_SUPERSEDED"
@@ -474,7 +495,10 @@ class RecurringLifecycleCoordinator @Inject constructor(
      * Best effort: the link already committed, so a non-cancellation failure here is logged with a
      * bounded code and never turns the link into a failure.
      */
-    private suspend fun advanceRuleAfterAutoLink(occurrenceId: Long) {
+    private suspend fun advanceRuleAfterAutoLink(
+        occurrenceId: Long,
+        failureCode: String = "AUTO_LINK_ADVANCE_FAILED"
+    ) {
         try {
             val occurrence = occurrenceDao.getById(occurrenceId) ?: return
             if (occurrence.sourceType != SOURCE_TYPE_RECURRING_RULE) return
@@ -499,7 +523,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
             ruleCoordinator.get().advanceNextDate(rule.id, candidate)
         } catch (e: Exception) {
             CancellationSafe.rethrowIfCancellation(e)
-            Timber.w("Recurring: next-date advance after auto-link failed (code=AUTO_LINK_ADVANCE_FAILED)")
+            Timber.w("Recurring: next-date advance after link failed (code=%s)", failureCode)
         }
     }
 
@@ -524,6 +548,299 @@ class RecurringLifecycleCoordinator @Inject constructor(
             ClaimLinkOutcome.EXPENSE_NOT_ELIGIBLE -> SpecificLinkResult.ExpenseNotEligible
             ClaimLinkOutcome.NO_TARGET,
             ClaimLinkOutcome.NOT_OPEN -> SpecificLinkResult.NotOpen
+        }
+    }
+
+    /**
+     * FC-PAID-UNLINKED INV-8 / INV-9 / INV-10 / INV-11: read-only suggestions of payments that may
+     * already cover an open rule bill. Never writes, never materializes, never tops up the horizon,
+     * and is never read by a forecast, budget, savings or Radar consumer (INV-1).
+     *
+     * The pair rule, the windows and the nearest-owner ranking all come from
+     * [RecurringPaymentLinkMatcher]; this method only reads and composes. For each link-eligible
+     * expense E (type gate, installment gate, not linked to any occurrence in range, dated up to
+     * the end of today) it takes N(E), the nearest non-declined matching occurrence of any status
+     * but CANCELLED and IGNORED, and suggests E for N(E) only when N(E) is an open, active-rule,
+     * materialized RECURRING_RULE row due in [today - 31 days, today + 7 days]. Per occurrence only
+     * the best expense by `(|d|, |amount diff|, E.date, E.id)` is shown. The result is ordered by
+     * due date, then occurrence id.
+     *
+     * Reads per call: one occurrence range read, one expense range read, one rule batch read, the
+     * installment batch read, and one lifecycle event read per occurrence that has a pair.
+     *
+     * Fail closed: a blocked read barrier gives [PaymentLinkSuggestions.Unavailable] with
+     * [PaymentLinkUnavailableReason.READ_BLOCKED], any other read error gives READ_FAILED, never an
+     * empty [PaymentLinkSuggestions.Available]. [kotlinx.coroutines.CancellationException] is rethrown.
+     */
+    suspend fun findPaymentLinkSuggestions(now: Long): PaymentLinkSuggestions {
+        return try {
+            readBarrier.checkReadAllowed("RecurringLifecycleCoordinator.findPaymentLinkSuggestions")
+            val items = computePaymentLinkSuggestions(now)
+            Timber.d("Recurring: payment link suggestions read (suggestionCount=%d)", items.size)
+            PaymentLinkSuggestions.Available(items)
+        } catch (e: Exception) {
+            CancellationSafe.rethrowIfCancellation(e)
+            val reason = if (e is DatabaseAccessBlockedException) {
+                PaymentLinkUnavailableReason.READ_BLOCKED
+            } else {
+                PaymentLinkUnavailableReason.READ_FAILED
+            }
+            Timber.w("Recurring: payment link suggestions unavailable (code=PAYMENT_LINK_SUGGESTIONS_UNAVAILABLE, reason=%s)", reason.name)
+            PaymentLinkSuggestions.Unavailable(reason)
+        }
+    }
+
+    private suspend fun computePaymentLinkSuggestions(now: Long): List<PaymentLinkSuggestion> {
+        val today = TimePeriodUtils.getStartOfDay(now)
+        val endOfToday = TimePeriodUtils.getEndOfDay(now)
+
+        // Targets and blockers share one read; targets are the narrower due-date range (INV-9).
+        val occurrences = occurrenceDao.getByDateRange(
+            TimePeriodUtils.addDays(today, -SUGGESTION_BLOCKER_LOOKBACK_DAYS),
+            TimePeriodUtils.addDays(today, SUGGESTION_BLOCKER_LOOKAHEAD_DAYS)
+        )
+        if (occurrences.isEmpty()) return emptyList()
+        val targetStart = TimePeriodUtils.addDays(today, -SUGGESTION_TARGET_LOOKBACK_DAYS)
+        val targetEndExclusive = TimePeriodUtils.addDays(today, SUGGESTION_TARGET_LOOKAHEAD_DAYS + 1)
+
+        val expenses = expenseDao.getExpensesBetween(
+            TimePeriodUtils.addDays(today, -SUGGESTION_EXPENSE_LOOKBACK_DAYS),
+            endOfToday
+        )
+        if (expenses.isEmpty()) return emptyList()
+
+        val linkedExpenseIds = HashSet<Long>()
+        for (occurrence in occurrences) occurrence.linkedExpenseId?.let { linkedExpenseIds.add(it) }
+        val typeEligible = expenses.filter {
+            it.id !in linkedExpenseIds && RecurringLinkTypeEligibility.mayCreateLink(it.transactionType, it.isNotMine)
+        }
+        val installmentExcluded = installmentEligibility.excludedExpenseIds(typeEligible)
+        val candidates = typeEligible.filter { it.id !in installmentExcluded }
+        if (candidates.isEmpty()) return emptyList()
+
+        val rulesById = manualRecurringExpenseDao.getAll().associateBy { it.id }
+        val windowsByRule = HashMap<Long, LinkWindows>()
+        fun windowsFor(occurrence: RecurringOccurrence): LinkWindows =
+            if (occurrence.sourceType != SOURCE_TYPE_RECURRING_RULE) {
+                LinkWindows.SAME_DAY
+            } else {
+                windowsByRule.getOrPut(occurrence.sourceId) {
+                    linkWindowsFor(rulesById[occurrence.sourceId]?.frequency, occurrence)
+                }
+            }
+        fun isSuggestibleTarget(occurrence: RecurringOccurrence): Boolean =
+            RecurringNextDatePolicy.isOpen(occurrence) &&
+                occurrence.sourceType == SOURCE_TYPE_RECURRING_RULE &&
+                rulesById[occurrence.sourceId]?.isActive == true
+
+        // D-3: CANCELLED and IGNORED rows never own a payment (same rule as the auto tier).
+        val ranking = occurrences.filter {
+            it.status != RecurringOccurrenceStatus.CANCELLED.dbValue &&
+                it.status != RecurringOccurrenceStatus.IGNORED.dbValue
+        }
+        val occurrenceMerchantKeys = HashMap<Long, String>()
+        for (occurrence in ranking) {
+            occurrenceMerchantKeys[occurrence.id] = MerchantKeyGenerator.generate(occurrence.merchant.orEmpty())
+        }
+        val eventsByOccurrence = HashMap<Long, List<RecurringLifecycleEvent>>()
+        suspend fun isDeclined(occurrence: RecurringOccurrence, expenseId: Long): Boolean {
+            val events = eventsByOccurrence.getOrPut(occurrence.id) {
+                lifecycleEventDao.getEventsForOccurrence(occurrence.id)
+            }
+            return RecurringPaymentLinkMatcher.isDeclined(events, expenseId)
+        }
+
+        val bestByOccurrence = HashMap<Long, Pair<RecurringOccurrence, OwnedExpense>>()
+        for (expense in candidates) {
+            val expenseMerchantKey = MerchantKeyGenerator.generate(expense.merchant)
+            val matches = ranking.filter {
+                RecurringPaymentLinkMatcher.pairMatches(
+                    expense, it, expenseMerchantKey, occurrenceMerchantKeys.getValue(it.id), windowsFor(it).suggestion
+                )
+            }
+            if (matches.isEmpty()) continue
+
+            // A declined pair has left M(E): the first non-declined entry in rank order is N(E).
+            val nonDeclined = RecurringPaymentLinkMatcher.rankByNearest(expense, matches)
+                .filter { !isDeclined(it, expense.id) }
+            val owner = nonDeclined.firstOrNull() ?: continue
+            if (!isSuggestibleTarget(owner)) continue
+            if (owner.dueDate < targetStart || owner.dueDate >= targetEndExclusive) continue
+
+            val alternatives = nonDeclined.drop(1).filter { isSuggestibleTarget(it) }.map { it.id }
+            val current = bestByOccurrence[owner.id]
+            if (current == null || isBetterOwnedExpense(expense, current.second.expense, owner)) {
+                bestByOccurrence[owner.id] = owner to OwnedExpense(expense, alternatives)
+            }
+        }
+
+        return bestByOccurrence.values
+            .sortedWith(compareBy<Pair<RecurringOccurrence, OwnedExpense>>({ it.first.dueDate }, { it.first.id }))
+            .map { (occurrence, owned) ->
+                PaymentLinkSuggestion(
+                    occurrenceId = occurrence.id,
+                    ruleId = occurrence.sourceId,
+                    occurrenceKey = occurrence.occurrenceKey,
+                    dueDate = occurrence.dueDate,
+                    expectedAmount = occurrence.expectedAmount,
+                    expectedCurrency = occurrence.expectedCurrency,
+                    expenseId = owned.expense.id,
+                    expenseDate = owned.expense.date,
+                    paidAmount = owned.expense.amount,
+                    paidCurrency = owned.expense.currency,
+                    dayDelta = RecurringPaymentLinkMatcher.dayDelta(owned.expense, occurrence),
+                    alternatives = owned.alternatives
+                )
+            }
+    }
+
+    /**
+     * INV-8: among the expenses whose nearest owner is [occurrence], the one shown is the minimum by
+     * `(|d|, |amount diff|, E.date, E.id)`. True when [candidate] ranks before [current].
+     */
+    private fun isBetterOwnedExpense(
+        candidate: Expense,
+        current: Expense,
+        occurrence: RecurringOccurrence
+    ): Boolean {
+        val order = compareBy<Expense>(
+            { abs(RecurringPaymentLinkMatcher.dayDelta(it, occurrence)) },
+            { abs(it.amount - occurrence.expectedAmount) },
+            { it.date },
+            { it.id }
+        )
+        return order.compare(candidate, current) < 0
+    }
+
+    /** The expense chosen for one suggested occurrence, with the other open pair-eligible bills. */
+    private class OwnedExpense(val expense: Expense, val alternatives: List<Long>)
+
+    /**
+     * FC-PAID-UNLINKED INV-12 / INV-13 / INV-16: the user confirmed that [expenseId] pays
+     * [occurrenceId]. The link goes through [claimLinkSuppressInWrite] with the provenance source
+     * [SOURCE_USER_CONFIRMED_MATCH]; inside its transaction the pair is checked again (the occurrence
+     * exists, is open, belongs to an active rule, the pair matches inside S(P) and is not declined,
+     * and the expense is link-eligible). A failed check gives [PaymentLinkConfirmResult.NoLongerValid]
+     * and nothing is written. A confirm may target any open, pair-eligible occurrence, not only
+     * N(E) (the "Different bill" choice).
+     *
+     * Idempotent: a retry after the commit finds the expense already linked to the occurrence and
+     * returns [PaymentLinkConfirmResult.AlreadyLinkedToThis] without a second event (AE-19).
+     *
+     * After a CLAIMED link the rule advances by the DR-03 rule in [NonCancellable], best effort
+     * (INV-13); an advance failure never turns the committed link into a failure.
+     */
+    suspend fun confirmPaymentLink(expenseId: Long, occurrenceId: Long): PaymentLinkConfirmResult {
+        val result = try {
+            claimLinkSuppressInWrite(expenseId, SOURCE_USER_CONFIRMED_MATCH) {
+                selectConfirmTarget(expenseId, occurrenceId)
+            }
+        } catch (e: Exception) {
+            CancellationSafe.rethrowIfCancellation(e)
+            val code = if (e is DatabaseAccessBlockedException) {
+                PaymentLinkFailureCodes.WRITE_BLOCKED
+            } else {
+                PaymentLinkFailureCodes.INTERNAL
+            }
+            Timber.w("Recurring: payment link confirm failed (code=%s)", code)
+            return PaymentLinkConfirmResult.Failed(code)
+        }
+
+        return when (result.outcome) {
+            ClaimLinkOutcome.CLAIMED -> {
+                Timber.d(
+                    "Recurring: expense %d linked to occurrence %d (code=PAYMENT_LINK_CONFIRMED)",
+                    expenseId, result.occurrenceId
+                )
+                withContext(NonCancellable) {
+                    advanceRuleAfterAutoLink(result.occurrenceId, "PAYMENT_LINK_ADVANCE_FAILED")
+                }
+                PaymentLinkConfirmResult.Linked
+            }
+            ClaimLinkOutcome.ALREADY_LINKED_TO_THIS -> PaymentLinkConfirmResult.AlreadyLinkedToThis
+            ClaimLinkOutcome.ALREADY_LINKED_ELSEWHERE -> PaymentLinkConfirmResult.ExpenseLinkedElsewhere
+            ClaimLinkOutcome.NO_TARGET,
+            ClaimLinkOutcome.NOT_OPEN,
+            ClaimLinkOutcome.EXPENSE_NOT_ELIGIBLE -> {
+                Timber.d("Recurring: payment link confirm refused (code=PAYMENT_LINK_NO_LONGER_VALID)")
+                PaymentLinkConfirmResult.NoLongerValid
+            }
+        }
+    }
+
+    /**
+     * The in-transaction revalidation of [confirmPaymentLink] (INV-12). Returns the occurrence id to
+     * claim, or null when the pair no longer holds. An occurrence already linked to [expenseId] is
+     * returned as is so the claim reports the idempotent [ClaimLinkOutcome.ALREADY_LINKED_TO_THIS].
+     */
+    private suspend fun selectConfirmTarget(expenseId: Long, occurrenceId: Long): Long? {
+        val occurrence = occurrenceDao.getById(occurrenceId) ?: return null
+        if (occurrence.linkedExpenseId == expenseId) return occurrence.id
+        if (!RecurringNextDatePolicy.isOpen(occurrence)) return null
+        if (occurrence.sourceType != SOURCE_TYPE_RECURRING_RULE) return null
+        val rule = manualRecurringExpenseDao.getById(occurrence.sourceId) ?: return null
+        if (!rule.isActive) return null
+        val expense = expenseDao.getById(expenseId) ?: return null
+
+        val windows = linkWindowsFor(rule.frequency, occurrence)
+        val matches = RecurringPaymentLinkMatcher.pairMatches(
+            expense,
+            occurrence,
+            MerchantKeyGenerator.generate(expense.merchant),
+            MerchantKeyGenerator.generate(occurrence.merchant.orEmpty()),
+            windows.suggestion
+        )
+        if (!matches) return null
+        if (RecurringPaymentLinkMatcher.isDeclined(lifecycleEventDao.getEventsForOccurrence(occurrence.id), expenseId)) {
+            return null
+        }
+        return occurrence.id
+    }
+
+    /**
+     * FC-PAID-UNLINKED INV-14 / INV-16: "Not this bill". Writes one
+     * [RecurringPaymentLinkMatcher.LINK_SUGGESTION_DECLINED] event for the pair, in one write-barrier
+     * transaction; the occurrence status is not changed. A pair that already has a decline is a no-op
+     * ([PaymentLinkDeclineResult.AlreadyDeclined]); a missing occurrence or expense, or an occurrence
+     * that is no longer open, gives [PaymentLinkDeclineResult.NoLongerValid]. The metadata holds ids
+     * and a bounded source code only.
+     */
+    suspend fun declinePaymentLink(expenseId: Long, occurrenceId: Long): PaymentLinkDeclineResult {
+        val now = timeProvider.now()
+        return try {
+            writeBarrier.runWrite(
+                DatabaseAccessOperation("RecurringLifecycleCoordinator.declinePaymentLink")
+            ) {
+                database.withTransaction {
+                    val occurrence = occurrenceDao.getById(occurrenceId)
+                    if (occurrence == null || !RecurringNextDatePolicy.isOpen(occurrence) || expenseDao.getById(expenseId) == null) {
+                        return@withTransaction PaymentLinkDeclineResult.NoLongerValid
+                    }
+                    val events = lifecycleEventDao.getEventsForOccurrence(occurrenceId)
+                    if (RecurringPaymentLinkMatcher.isDeclined(events, expenseId)) {
+                        return@withTransaction PaymentLinkDeclineResult.AlreadyDeclined
+                    }
+                    eventWriter.writeCritical(
+                        occurrenceId = occurrenceId,
+                        eventType = RecurringPaymentLinkMatcher.LINK_SUGGESTION_DECLINED,
+                        metadata = JSONObject().apply {
+                            put("expenseId", expenseId)
+                            put("source", SOURCE_USER_DECLINED_MATCH)
+                        }.toString(),
+                        occurredAt = now
+                    )
+                    PaymentLinkDeclineResult.Declined
+                }
+            }
+        } catch (e: Exception) {
+            CancellationSafe.rethrowIfCancellation(e)
+            val code = if (e is DatabaseAccessBlockedException) {
+                PaymentLinkFailureCodes.WRITE_BLOCKED
+            } else {
+                PaymentLinkFailureCodes.INTERNAL
+            }
+            Timber.w("Recurring: payment link decline failed (code=%s)", code)
+            PaymentLinkDeclineResult.Failed(code)
         }
     }
 
@@ -962,19 +1279,28 @@ class RecurringLifecycleCoordinator @Inject constructor(
         if (occ.sourceType != SOURCE_TYPE_RECURRING_RULE) return LinkWindows.SAME_DAY
         windows[occ.sourceId]?.let { return it }
         val rule = manualRecurringExpenseDao.getById(occ.sourceId)
-        val frequency = rule?.frequency
+        val resolved = linkWindowsFor(rule?.frequency, occ)
+        windows[occ.sourceId] = resolved
+        return resolved
+    }
+
+    /**
+     * A(P) and S(P) from the rule's [ruleFrequency] (the occurrence's own frequency column is the
+     * fallback when the rule row is missing). Pure: shared by the per-rule read of
+     * [resolveLinkWindows] and the batch rule read of [findPaymentLinkSuggestions].
+     */
+    private fun linkWindowsFor(ruleFrequency: RecurrenceFrequency?, occ: RecurringOccurrence): LinkWindows {
+        val frequency = ruleFrequency
             ?: try {
                 RecurrenceFrequency.valueOf(occ.frequency)
             } catch (e: IllegalArgumentException) {
                 null
             }
         val periodDays = RecurringPaymentLinkMatcher.resolvePeriodDays(frequency)
-        val resolved = LinkWindows(
+        return LinkWindows(
             auto = autoLinkWindow(periodDays),
             suggestion = RecurringPaymentLinkMatcher.suggestionWindow(periodDays)
         )
-        windows[occ.sourceId] = resolved
-        return resolved
     }
 
     /** A(P) and S(P) for one occurrence (see [resolveLinkWindows]). */

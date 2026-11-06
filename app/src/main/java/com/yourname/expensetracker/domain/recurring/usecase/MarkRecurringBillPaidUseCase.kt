@@ -6,6 +6,11 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ManualRecurringExpenseRepository
 import com.yourname.expensetracker.domain.logic.RecurrenceCalculator
 import com.yourname.expensetracker.domain.recurring.RecurringNextDatePolicy
+import com.yourname.expensetracker.domain.recurring.lifecycle.PaymentLinkConfirmResult
+import com.yourname.expensetracker.domain.recurring.lifecycle.PaymentLinkDeclineResult
+import com.yourname.expensetracker.domain.recurring.lifecycle.PaymentLinkFailureCodes
+import com.yourname.expensetracker.domain.recurring.lifecycle.PaymentLinkSuggestions
+import com.yourname.expensetracker.domain.recurring.lifecycle.PaymentLinkUnavailableReason
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator
 import com.yourname.expensetracker.domain.recurring.lifecycle.SpecificLinkResult
@@ -139,6 +144,68 @@ class MarkRecurringBillPaidUseCase @Inject constructor(
                 throw e
             } catch (e: Exception) {
                 MarkPaidResult.Failed(MarkPaidFailureCodes.SKIP_FAILED)
+            }
+        }
+
+    /**
+     * FC-PAID-UNLINKED: read-only suggestions of payments that may already cover an open bill. No
+     * write and no per-rule lock (the read spans every rule); never an input to a forecast (INV-1).
+     * Fail closed: an unreadable result is [PaymentLinkSuggestions.Unavailable], never "none".
+     */
+    suspend fun findSuggestions(): PaymentLinkSuggestions =
+        try {
+            occurrenceCoordinator.findPaymentLinkSuggestions(timeProvider.now())
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            PaymentLinkSuggestions.Unavailable(PaymentLinkUnavailableReason.READ_FAILED)
+        }
+
+    /**
+     * FC-PAID-UNLINKED INV-12: the user confirmed that [expenseId] pays [occurrenceId] of [ruleId].
+     * Runs under the same per-rule [Mutex] as mark-paid, so the two cannot race (AE-28). The
+     * occurrence must belong to [ruleId]; the pair itself is re-validated inside the link
+     * transaction by [RecurringLifecycleCoordinator.confirmPaymentLink].
+     */
+    suspend fun linkExistingPayment(ruleId: Long, occurrenceId: Long, expenseId: Long): PaymentLinkConfirmResult =
+        lockFor(ruleId).withLock {
+            try {
+                val occurrence = occurrenceCoordinator.getOccurrenceById(occurrenceId)
+                if (occurrence == null ||
+                    occurrence.sourceType != RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE ||
+                    occurrence.sourceId != ruleId
+                ) {
+                    PaymentLinkConfirmResult.NoLongerValid
+                } else {
+                    occurrenceCoordinator.confirmPaymentLink(expenseId, occurrenceId)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                PaymentLinkConfirmResult.Failed(PaymentLinkFailureCodes.INTERNAL)
+            }
+        }
+
+    /**
+     * FC-PAID-UNLINKED INV-14: "Not this bill". Records one decline event for the pair under the
+     * per-rule [Mutex]. The occurrence status is not changed.
+     */
+    suspend fun declinePayment(ruleId: Long, occurrenceId: Long, expenseId: Long): PaymentLinkDeclineResult =
+        lockFor(ruleId).withLock {
+            try {
+                val occurrence = occurrenceCoordinator.getOccurrenceById(occurrenceId)
+                if (occurrence == null ||
+                    occurrence.sourceType != RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE ||
+                    occurrence.sourceId != ruleId
+                ) {
+                    PaymentLinkDeclineResult.NoLongerValid
+                } else {
+                    occurrenceCoordinator.declinePaymentLink(expenseId, occurrenceId)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                PaymentLinkDeclineResult.Failed(PaymentLinkFailureCodes.INTERNAL)
             }
         }
 

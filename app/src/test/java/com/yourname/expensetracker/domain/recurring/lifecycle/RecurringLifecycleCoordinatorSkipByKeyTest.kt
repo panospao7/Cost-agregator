@@ -84,6 +84,7 @@ class RecurringLifecycleCoordinatorSkipByKeyTest {
             lifecycleEventDao = lifecycleEventDao,
             restoreMaintenanceMode = mockk(relaxed = true),
             writeBarrier = writeBarrier,
+            readBarrier = io.mockk.mockk<com.yourname.expensetracker.data.backup.DatabaseReadBarrier>(relaxed = true),
             plannedExpenseDao = plannedExpenseDao,
             transactionRunner = mockk(relaxed = true),
             eventWriter = mockk(relaxed = true),
