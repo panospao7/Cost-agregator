@@ -131,7 +131,7 @@ class PrivacySettingsViewModel @Inject constructor(
     private val updateMutex = Mutex()
 
     private fun update(
-        afterSave: (suspend () -> Unit)? = null,
+        afterSave: suspend () -> Unit = {},
         transform: (PrivacySettings) -> PrivacySettings
     ) {
         viewModelScope.launch {
@@ -140,14 +140,12 @@ class PrivacySettingsViewModel @Inject constructor(
                     _uiState.value = _uiState.value.copy(isSaving = true, errorMessage = null)
                     repository.updateSettings(transform)
                     // J-03-1: runs only after a successful save; a hook failure is not a save failure.
-                    if (afterSave != null) {
-                        try {
-                            afterSave()
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (e: Exception) {
-                            Timber.w("Privacy setting post-save hook failed: reason=post_save_hook_failed")
-                        }
+                    try {
+                        afterSave()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Timber.w("Privacy setting post-save hook failed: reason=post_save_hook_failed")
                     }
                 } catch (e: CancellationException) {
                     throw e

@@ -107,10 +107,10 @@ class ReceiptParser @Inject constructor(
          * must also be under half of that tax, so a tax-exclusive receipt (items + tax = total,
          * gap equal to the tax) is never read as inclusive. Zero tax keeps the 5% rule.
          */
-        private fun reconcilesAsTaxInclusive(total: Double, tax: Double, itemsSum: Double): Boolean {
-            val fivePercent = total * 0.05
+        private fun reconcilesAsTaxInclusive(parsedTotal: Double, tax: Double, itemsSum: Double): Boolean {
+            val fivePercent = parsedTotal * 0.05
             val bound = if (tax > 0.0) minOf(fivePercent, tax / 2.0) else fivePercent
-            return kotlin.math.abs(itemsSum - total) < bound
+            return kotlin.math.abs(itemsSum - parsedTotal) < bound
         }
 
         fun sourceMoneyOrNull(amount: Double?, currency: String): MoneyAmount? {
