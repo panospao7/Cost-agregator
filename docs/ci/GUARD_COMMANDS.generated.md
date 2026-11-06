@@ -323,6 +323,7 @@ argv as repeated single-token `--command-arg=<value>` entries.
 - source-scope: production-kotlin-filtered
 - engine: python-direct
 - timeout-profile: standard (300s)
+- required-inputs: config/guards/spending_raw_query_builders.yml
 - output-contract: stdout-human;exit:0=pass,1=violation,2=infra
 - command-identity: <resolved-interpreter> scripts/verify_spending_predicate_usage.py --fail-on-violation
 - documentation-anchor: docs/architecture/LEGAL_PATHS.md

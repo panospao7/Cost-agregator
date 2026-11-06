@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Spending predicate usage guard (G-SPENDING-PREDICATE-01..03).
+Spending predicate usage guard (G-SPENDING-PREDICATE-01..04).
 
 Loan-installments slice S4d, invariants INV-1 and INV-8 (plan amendment A12.6,
 docs/features/loan-installments/domain-spec.md): once a purchase row can carry a
@@ -52,9 +52,27 @@ COUNT, MIN or MAX.
                            DEDUPE_RESOLVER that references
                            ``SpendingInclusionSql`` (the dedupe families must
                            keep seeing flagged and not-mine rows).
+  G-SPENDING-PREDICATE-04  I-04-5 (owner item 144): the ``@RawQuery`` builders
+                           are pinned.  Every ``SimpleSQLiteQuery(`` construction
+                           site and every ``@RawQuery`` DAO method found in
+                           production Kotlin (comments and string literals
+                           ignored) must have an exact entry in
+                           ``config/guards/spending_raw_query_builders.yml``
+                           (file, enclosing function, DAO method, ``selectClause``
+                           literal).  Fails on: a site or DAO method that is not
+                           pinned, a changed ``selectClause`` literal, a
+                           ``selectClause = "..."`` literal in a builder file that
+                           is not pinned, a stale pin (no matching site), a
+                           duplicate pin, a site count different from
+                           ``expectedCount``, and a ``buildExpenseDynamicQueryParts``
+                           body that no longer references the amount-semantics
+                           owners ``EFFECTIVE_AMOUNT_E_SQL`` and
+                           ``COMPARABLE_HOME_VALUE_E_SQL``.  A missing or
+                           malformed pin file exits 2.
 
 There is no allowlist and no baseline.  Adding a new aggregate over ``expenses``
 requires a conscious choice: use the predicate, or add a marker with a reason.
+Adding a new ``@RawQuery`` builder requires a reviewed update of the pin file.
 
 Report mode (``--report``): additionally prints one ``REPORT`` line per
 classified query (every marked query, plus every in-scope query classified as
@@ -64,10 +82,12 @@ does not change the exit code.
 
 Scope limits (documented, not silent): a query names ``expenses`` through
 ``FROM expenses``, ``JOIN expenses`` or a comma join (``FROM a, expenses``),
-including across line breaks; ``@RawQuery`` builders (SQL assembled in Kotlin
-code, not an ``@Query`` literal) and Kotlin-side readers are outside this guard
-(Kotlin readers use the Expense effectiveAmount member; raw builders are
-covered by the ComparableHomeValue parity tests).
+including across line breaks; Kotlin-side readers are outside Rules 01..03
+(Kotlin readers use the Expense effectiveAmount member).  ``@RawQuery`` builders
+(SQL assembled in Kotlin code, not an ``@Query`` literal) are in scope since I-04-5
+but only as a pinned inventory (Rule 04): their SQL is not classified here, it is
+covered by the ComparableHomeValue parity tests, and any new builder must be
+reviewed.
 ``${CONST}`` templates are kept as text and never resolved, so an aggregate or
 a ``FROM expenses`` that lives only inside an interpolated constant, and an
 ``@Query(CONST)`` whose argument is a constant instead of a literal, are
@@ -75,12 +95,13 @@ invisible to the guard (zero such cases in the current tree).
 
 Exit codes (universal mapping): 0 pass, 1 violation, 2 infrastructure
 (unresolved production source scope, unreadable or unparseable source file,
-empty DAO surface, no ``@Query`` parsed).  ``--fail-on-violation`` is accepted
+empty DAO surface, no ``@Query`` parsed, missing or malformed RawQuery pin file).  ``--fail-on-violation`` is accepted
 for canonical argv compatibility; a violation always fails.
 
 Output contract: ``<path>:<line> [<rule id>] <function> <code>`` per violation.
 Only the file path, line number, function identifier and a fixed code are
-printed; SQL text, marker text and file content are never echoed.
+printed; SQL text (including ``selectClause`` literals), marker text and file
+content are never echoed.
 
 Purity contract: library functions never call ``sys.exit``; only the CLI
 adapter exits.
@@ -93,7 +114,13 @@ import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
+
+try:
+    import yaml
+    _HAS_YAML = True
+except ImportError:  # pragma: no cover - exercised only without PyYAML
+    _HAS_YAML = False
 
 EXIT_PASS = 0
 EXIT_VIOLATION = 1
@@ -113,6 +140,17 @@ from guardrails.production_source_scope import (  # noqa: E402
 RULE_UNCOVERED = "G-SPENDING-PREDICATE-01"
 RULE_MARKER = "G-SPENDING-PREDICATE-02"
 RULE_DEDUPE = "G-SPENDING-PREDICATE-03"
+RULE_RAW_BUILDER = "G-SPENDING-PREDICATE-04"
+
+# Rule 04 (I-04-5): RawQuery builder pins.
+PIN_RELATIVE_PATH = "config/guards/spending_raw_query_builders.yml"
+BUILDER_FUNCTION = "buildExpenseDynamicQueryParts"
+# The shared builder does not apply the spending predicate by design (ledger
+# lists); it must keep delegating amount semantics to these single owners.
+BUILDER_REQUIRED_REFERENCES: Tuple[str, ...] = (
+    "EFFECTIVE_AMOUNT_E_SQL",
+    "COMPARABLE_HOME_VALUE_E_SQL",
+)
 
 ALLOWED_REASONS: Tuple[str, ...] = (
     "DEDUPE_BLOCKING",
@@ -142,8 +180,43 @@ CODE_DUPLICATE = "DUPLICATE_MARKER"
 CODE_MARKER_WITH_REFERENCE = "MARKER_WITH_PREDICATE_REFERENCE"
 CODE_DEDUPE_REFERENCE = "DEDUPE_QUERY_REFERENCES_PREDICATE"
 CODE_STALE_MARKER = "STALE_MARKER"
+CODE_RAWQ_UNPINNED_BUILDER = "UNPINNED_RAW_QUERY_BUILDER"
+CODE_RAWQ_UNPINNED_DAO = "UNPINNED_RAW_QUERY_DAO_METHOD"
+CODE_RAWQ_SELECT_CHANGED = "PINNED_BUILDER_SELECT_CLAUSE_CHANGED"
+CODE_RAWQ_UNPINNED_SELECT = "UNPINNED_SELECT_CLAUSE_LITERAL"
+CODE_RAWQ_STALE_PIN = "STALE_RAW_QUERY_PIN"
+CODE_RAWQ_DUPLICATE_PIN = "DUPLICATE_RAW_QUERY_PIN"
+CODE_RAWQ_COUNT = "RAW_QUERY_BUILDER_COUNT_MISMATCH"
+CODE_RAWQ_BUILDER_MISSING = "RAW_QUERY_BUILDER_FUNCTION_MISSING"
+CODE_RAWQ_BUILDER_REFERENCE = "RAW_QUERY_BUILDER_REFERENCE_MISSING"
 
 _DESCRIPTIONS = {
+    CODE_RAWQ_UNPINNED_BUILDER: (
+        "SimpleSQLiteQuery construction site is not pinned in "
+        + PIN_RELATIVE_PATH
+    ),
+    CODE_RAWQ_UNPINNED_DAO: (
+        "@RawQuery DAO method is not pinned in " + PIN_RELATIVE_PATH
+    ),
+    CODE_RAWQ_SELECT_CHANGED: (
+        "pinned RawQuery builder passes a selectClause literal that differs from the pin"
+    ),
+    CODE_RAWQ_UNPINNED_SELECT: (
+        "selectClause literal in a RawQuery builder file is not pinned"
+    ),
+    CODE_RAWQ_STALE_PIN: (
+        "RawQuery pin has no matching site in production source (stale pin)"
+    ),
+    CODE_RAWQ_DUPLICATE_PIN: "RawQuery pin file contains a duplicate entry",
+    CODE_RAWQ_COUNT: (
+        "RawQuery builder site count or pin count differs from expectedCount"
+    ),
+    CODE_RAWQ_BUILDER_MISSING: (
+        "pinned shared builder function " + BUILDER_FUNCTION + " was not found"
+    ),
+    CODE_RAWQ_BUILDER_REFERENCE: (
+        "shared builder body no longer references a required amount-semantics owner"
+    ),
     CODE_UNCOVERED: (
         "aggregate over expenses has neither a qualified SpendingInclusionSql "
         "reference nor a spending-exempt marker"
@@ -215,6 +288,8 @@ E_NO_QUERIES = "E_SPENDING_PREDICATE_NO_QUERY_PARSED"
 E_UNREADABLE = "E_SPENDING_PREDICATE_SOURCE_UNREADABLE"
 E_UNPARSEABLE = "E_SPENDING_PREDICATE_SOURCE_UNPARSEABLE"
 E_ROOT_MISSING = "E_SPENDING_PREDICATE_SOURCE_ROOT_MISSING"
+E_PIN_MISSING = "E_SPENDING_PREDICATE_PIN_FILE_MISSING"
+E_PIN_INVALID = "E_SPENDING_PREDICATE_PIN_FILE_INVALID"
 
 _ASCII = re.ASCII
 
@@ -703,6 +778,396 @@ def scan_source_root(
     )
 
 
+# ── Rule 04: pinned RawQuery builders (I-04-5) ─────────────────────────────────
+
+_SPECIAL_RE = re.compile(r"[/\"']")
+_BUILDER_CALL_RE = re.compile(r"(?<![A-Za-z0-9_])SimpleSQLiteQuery\s*\(", _ASCII)
+_RAW_QUERY_ANNOTATION_RE = re.compile(
+    r"(?<![A-Za-z0-9_])@(?:[A-Za-z_]\w*\.)*RawQuery(?![A-Za-z0-9_])", _ASCII
+)
+_CALLEE_RE = re.compile(r"([A-Za-z_]\w*)\s*\(\s*$", _ASCII)
+_SELECT_LITERAL_RE = re.compile(
+    r'(?<![A-Za-z0-9_])selectClause\s*=\s*"((?:[^"\\\n]|\\.)*)"', _ASCII
+)
+_PIN_FIELDS = frozenset(
+    {
+        "file",
+        "enclosingFunction",
+        "daoMethod",
+        "daoFile",
+        "selectClause",
+        "reason",
+        "owner",
+        "linkedIssue",
+    }
+)
+_PIN_TOP_FIELDS = frozenset({"version", "expectedCount", "builders"})
+_UNDETERMINED = "-"
+
+
+@dataclass(frozen=True)
+class RawQueryPin:
+    file: str
+    enclosing_function: str
+    dao_method: str
+    dao_file: str
+    select_clause: str
+
+
+@dataclass
+class RawQueryPinSet:
+    expected_count: int
+    pins: List[RawQueryPin]
+
+
+@dataclass(frozen=True)
+class RawQuerySite:
+    path: str
+    line: int
+    kind: str  # "BUILDER" (SimpleSQLiteQuery call) | "RAW_QUERY" (@RawQuery DAO method)
+    function: str
+    dao_method: str  # BUILDER only; "-" when not determinable
+    select_clause: str  # BUILDER only; "-" when not determinable
+
+
+@dataclass
+class RawQueryFileScan:
+    sites: List[RawQuerySite]
+    select_literals: List[Tuple[int, str]]  # (line, literal) of selectClause = "..."
+    # (line, missing required references) for each BUILDER_FUNCTION definition
+    builder_definitions: List[Tuple[int, Tuple[str, ...]]]
+
+
+@dataclass
+class RawQueryOutcome:
+    violations: List[Violation]
+    builder_sites: int
+    raw_query_sites: int
+    infra_error: Optional[str]
+
+
+def _blank(buffer: List[str], start: int, end: int) -> None:
+    for index in range(start, end):
+        if buffer[index] != "\n":
+            buffer[index] = " "
+
+
+def _mask_kotlin(text: str) -> Tuple[str, str]:
+    """Return ``(code_view, plain_view)``, both the same length as ``text``.
+
+    ``code_view`` has comments, string literals and character literals blanked,
+    so a regex over it only matches real code.  ``plain_view`` has only
+    comments blanked (string contents, including ``$``-templates, are kept).
+    Newlines are preserved in both so line numbers stay valid.  Raises
+    ``KotlinParseError`` on unterminated constructs.
+    """
+    code = list(text)
+    plain = list(text)
+    n = len(text)
+    i = 0
+    while i < n:
+        found = _SPECIAL_RE.search(text, i)
+        if found is None:
+            break
+        i = found.start()
+        c = text[i]
+        if c == "/":
+            if text.startswith("//", i):
+                end = text.find("\n", i)
+                end = n if end == -1 else end
+                _blank(code, i, end)
+                _blank(plain, i, end)
+                i = end
+            elif text.startswith("/*", i):
+                end = _skip_block_comment(text, i)
+                _blank(code, i, end)
+                _blank(plain, i, end)
+                i = end
+            else:
+                i += 1
+        elif c == '"':
+            _content, end = _read_string(text, i)
+            _blank(code, i, end)
+            i = end
+        else:
+            end = _skip_char_literal(text, i)
+            _blank(code, i, end)
+            i = end
+    return "".join(code), "".join(plain)
+
+
+def _match_delimiters(code: str, start: int, opener: str, closer: str) -> Optional[int]:
+    """``code[start] == opener``.  Index after the matching closer, else ``None``."""
+    depth = 0
+    for index in range(start, len(code)):
+        char = code[index]
+        if char == opener:
+            depth += 1
+        elif char == closer:
+            depth -= 1
+            if depth == 0:
+                return index + 1
+    return None
+
+
+def _function_body(code: str, fun_start: int) -> Tuple[int, int]:
+    """``(start, end)`` of the braced body of the function declared at ``fun_start``."""
+    paren = code.find("(", fun_start)
+    if paren == -1:
+        return fun_start, fun_start
+    after_params = _match_delimiters(code, paren, "(", ")")
+    if after_params is None:
+        return fun_start, fun_start
+    brace = code.find("{", after_params)
+    if brace == -1:
+        return fun_start, fun_start
+    end = _match_delimiters(code, brace, "{", "}")
+    if end is None:
+        return fun_start, fun_start
+    return brace, end
+
+
+def scan_raw_query_text(relative_path: str, text: str) -> RawQueryFileScan:
+    """Find RawQuery builder sites in one Kotlin file (fixture-level API).
+
+    Comments and string literals never produce a site.  Raises
+    ``KotlinParseError`` on unparseable Kotlin (the CLI maps it to exit 2).
+    """
+    code, plain = _mask_kotlin(text)
+    functions = [(m.start(), m.group(1)[:_MAX_NAME_LENGTH]) for m in _FUN_RE.finditer(code)]
+    starts = [start for start, _name in functions]
+
+    def line_of(index: int) -> int:
+        return text.count("\n", 0, index) + 1
+
+    sites: List[RawQuerySite] = []
+    for call in _BUILDER_CALL_RE.finditer(code):
+        position = call.start()
+        before = bisect.bisect_right(starts, position) - 1
+        if before >= 0:
+            fun_start, function = functions[before]
+        else:
+            fun_start, function = 0, "<top-level>"
+        window = code[max(0, position - 200) : position]
+        callee = _CALLEE_RE.search(window)
+        select = _UNDETERMINED
+        for literal in _SELECT_LITERAL_RE.finditer(plain, fun_start, position):
+            select = literal.group(1)
+        sites.append(
+            RawQuerySite(
+                relative_path,
+                line_of(position),
+                "BUILDER",
+                function,
+                callee.group(1) if callee is not None else _UNDETERMINED,
+                select,
+            )
+        )
+    for annotation in _RAW_QUERY_ANNOTATION_RE.finditer(code):
+        following = bisect.bisect_left(starts, annotation.end())
+        function = functions[following][1] if following < len(functions) else "<unknown>"
+        sites.append(
+            RawQuerySite(
+                relative_path,
+                line_of(annotation.start()),
+                "RAW_QUERY",
+                function,
+                _UNDETERMINED,
+                _UNDETERMINED,
+            )
+        )
+    sites.sort(key=lambda site: (site.line, site.kind, site.function))
+
+    literals = [
+        (line_of(m.start()), m.group(1)) for m in _SELECT_LITERAL_RE.finditer(plain)
+    ]
+
+    definitions: List[Tuple[int, Tuple[str, ...]]] = []
+    for fun_start, name in functions:
+        if name != BUILDER_FUNCTION:
+            continue
+        body_start, body_end = _function_body(code, fun_start)
+        body = plain[body_start:body_end]
+        missing = tuple(
+            reference
+            for reference in BUILDER_REQUIRED_REFERENCES
+            if re.search(r"(?<![A-Za-z0-9_])" + re.escape(reference) + r"(?![A-Za-z0-9_])", body)
+            is None
+        )
+        definitions.append((line_of(fun_start), missing))
+    return RawQueryFileScan(sites, literals, definitions)
+
+
+def _is_text(value: object) -> bool:
+    return isinstance(value, str) and value.strip() != ""
+
+
+def load_raw_query_pins(pin_path: Path) -> Tuple[Optional[RawQueryPinSet], Optional[str]]:
+    """Load and strictly validate the pin file.  Returns ``(pins, infra_error)``."""
+    if not Path(pin_path).is_file():
+        return None, E_PIN_MISSING
+    if not _HAS_YAML:  # pragma: no cover - exercised only without PyYAML
+        return None, E_PIN_INVALID
+    try:
+        data = yaml.safe_load(Path(pin_path).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, yaml.YAMLError):
+        return None, E_PIN_INVALID
+    if not isinstance(data, dict) or set(data) != _PIN_TOP_FIELDS:
+        return None, E_PIN_INVALID
+    version = data["version"]
+    expected = data["expectedCount"]
+    builders = data["builders"]
+    if isinstance(version, bool) or version != 1:
+        return None, E_PIN_INVALID
+    if isinstance(expected, bool) or not isinstance(expected, int) or expected < 0:
+        return None, E_PIN_INVALID
+    if not isinstance(builders, list):
+        return None, E_PIN_INVALID
+    pins: List[RawQueryPin] = []
+    for entry in builders:
+        if not isinstance(entry, dict) or set(entry) != _PIN_FIELDS:
+            return None, E_PIN_INVALID
+        if not all(_is_text(entry[field]) for field in _PIN_FIELDS):
+            return None, E_PIN_INVALID
+        pins.append(
+            RawQueryPin(
+                entry["file"],
+                entry["enclosingFunction"],
+                entry["daoMethod"],
+                entry["daoFile"],
+                entry["selectClause"],
+            )
+        )
+    return RawQueryPinSet(expected, pins), None
+
+
+def evaluate_raw_query_pins(
+    scans: Dict[str, RawQueryFileScan],
+    pin_set: RawQueryPinSet,
+    pin_relative_path: str = PIN_RELATIVE_PATH,
+) -> List[Violation]:
+    """Compare scanned RawQuery sites with the pins (Rule 04).  Pure function."""
+    violations: List[Violation] = []
+
+    def add(path: str, line: int, function: str, code: str) -> None:
+        violations.append(Violation(path, line, RULE_RAW_BUILDER, function, code))
+
+    pins = pin_set.pins
+    builder_sites = [s for scan in scans.values() for s in scan.sites if s.kind == "BUILDER"]
+    raw_sites = [s for scan in scans.values() for s in scan.sites if s.kind == "RAW_QUERY"]
+
+    pin_keys = {(p.file, p.enclosing_function, p.dao_method, p.select_clause) for p in pins}
+    pin_triples = {(p.file, p.enclosing_function, p.dao_method) for p in pins}
+    site_triples = {(s.path, s.function, s.dao_method) for s in builder_sites}
+    if len(pin_keys) != len(pins):
+        add(pin_relative_path, 0, "-", CODE_RAWQ_DUPLICATE_PIN)
+
+    for site in builder_sites:
+        key = (site.path, site.function, site.dao_method, site.select_clause)
+        if key in pin_keys:
+            continue
+        if (site.path, site.function, site.dao_method) in pin_triples:
+            add(site.path, site.line, site.function, CODE_RAWQ_SELECT_CHANGED)
+        else:
+            add(site.path, site.line, site.function, CODE_RAWQ_UNPINNED_BUILDER)
+
+    for pin in pins:
+        if (pin.file, pin.enclosing_function, pin.dao_method) not in site_triples:
+            add(pin.file, 0, pin.enclosing_function, CODE_RAWQ_STALE_PIN)
+
+    pinned_dao = {(p.dao_file, p.dao_method) for p in pins}
+    raw_keys = {(s.path, s.function) for s in raw_sites}
+    for site in raw_sites:
+        if (site.path, site.function) not in pinned_dao:
+            add(site.path, site.line, site.function, CODE_RAWQ_UNPINNED_DAO)
+    for dao_file, dao_method in sorted(pinned_dao):
+        if (dao_file, dao_method) not in raw_keys:
+            add(dao_file, 0, dao_method, CODE_RAWQ_STALE_PIN)
+
+    allowed_by_file: Dict[str, Set[str]] = {}
+    for pin in pins:
+        allowed_by_file.setdefault(pin.file, set()).add(pin.select_clause)
+    literal_files = {s.path for s in builder_sites} | set(allowed_by_file)
+    for path in sorted(literal_files):
+        scan = scans.get(path)
+        if scan is None:
+            continue
+        allowed = allowed_by_file.get(path, set())
+        for line, literal in scan.select_literals:
+            if literal not in allowed:
+                add(path, line, "-", CODE_RAWQ_UNPINNED_SELECT)
+
+    if len(builder_sites) != pin_set.expected_count or len(pins) != pin_set.expected_count:
+        add(pin_relative_path, 0, "-", CODE_RAWQ_COUNT)
+
+    if pins:
+        pinned_files = sorted({p.file for p in pins})
+        definitions = [
+            (path, line, missing)
+            for path in pinned_files
+            if path in scans
+            for line, missing in scans[path].builder_definitions
+        ]
+        if not definitions:
+            add(pinned_files[0], 0, BUILDER_FUNCTION, CODE_RAWQ_BUILDER_MISSING)
+        for path, line, missing in definitions:
+            if missing:
+                add(path, line, BUILDER_FUNCTION, CODE_RAWQ_BUILDER_REFERENCE)
+
+    violations.sort(key=lambda v: (v.path, v.line, v.rule_id, v.code, v.function))
+    return violations
+
+
+def _scan_raw_query_builders_in_roots(
+    repo_root: Path, root_set, pin_path: Path
+) -> RawQueryOutcome:
+    pin_set, pin_error = load_raw_query_pins(pin_path)
+    if pin_set is None:
+        return RawQueryOutcome([], 0, 0, pin_error)
+    pinned_files = {p.file for p in pin_set.pins} | {p.dao_file for p in pin_set.pins}
+    scans: Dict[str, RawQueryFileScan] = {}
+    try:
+        for source_file in iter_production_kotlin_files(str(repo_root), root_set):
+            relative = source_file.repository_relative_path.replace("\\", "/")
+            try:
+                text = Path(source_file.absolute_path).read_text(encoding="utf-8")
+            except (OSError, UnicodeError):
+                return RawQueryOutcome([], 0, 0, E_UNREADABLE)
+            if not (
+                relative in pinned_files
+                or "SimpleSQLiteQuery" in text
+                or "RawQuery" in text
+                or BUILDER_FUNCTION in text
+            ):
+                continue
+            try:
+                scans[relative] = scan_raw_query_text(relative, text)
+            except KotlinParseError:
+                return RawQueryOutcome([], 0, 0, E_UNPARSEABLE)
+    except ProductionSourceScopeError:
+        return RawQueryOutcome([], 0, 0, E_UNREADABLE)
+    violations = evaluate_raw_query_pins(scans, pin_set)
+    builder_count = sum(1 for scan in scans.values() for s in scan.sites if s.kind == "BUILDER")
+    raw_count = sum(1 for scan in scans.values() for s in scan.sites if s.kind == "RAW_QUERY")
+    return RawQueryOutcome(violations, builder_count, raw_count, None)
+
+
+def scan_raw_query_builders(
+    source_root: Path, pin_path: Optional[Path] = None
+) -> RawQueryOutcome:
+    """Rule 04 over ``<source_root>`` (fixture-level API, test-fixture scope seam).
+
+    ``pin_path`` defaults to ``<source_root>/config/guards/spending_raw_query_builders.yml``.
+    """
+    if not Path(source_root).is_dir():
+        return RawQueryOutcome([], 0, 0, E_ROOT_MISSING)
+    root_set, _diagnostics = resolve_source_root_set_for_test_fixtures(str(source_root))
+    if root_set is None:
+        return RawQueryOutcome([], 0, 0, E_ROOT_MISSING)
+    resolved_pin = Path(source_root) / PIN_RELATIVE_PATH if pin_path is None else pin_path
+    return _scan_raw_query_builders_in_roots(Path(source_root), root_set, resolved_pin)
+
+
 def format_report(outcome: ScanOutcome) -> List[str]:
     """Deterministic report lines for report mode (no SQL, no marker text)."""
     lines = [
@@ -732,7 +1197,7 @@ def format_report(outcome: ScanOutcome) -> List[str]:
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Spending predicate usage guard (G-SPENDING-PREDICATE-01..03)."
+        description="Spending predicate usage guard (G-SPENDING-PREDICATE-01..04)."
     )
     parser.add_argument(
         "--root",
@@ -770,21 +1235,40 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
         return EXIT_INFRA
 
+    raw_outcome = _scan_raw_query_builders_in_roots(
+        args.root, root_set, Path(args.root) / PIN_RELATIVE_PATH
+    )
+    if raw_outcome.infra_error is not None:
+        print(
+            f"SPENDING PREDICATE USAGE: infrastructure error ({raw_outcome.infra_error})",
+            file=sys.stderr,
+        )
+        return EXIT_INFRA
+
     if args.report:
         for line in format_report(outcome):
             print(line)
+        print(
+            f"SPENDING PREDICATE REPORT RAW_QUERY: builders={raw_outcome.builder_sites} "
+            f"daoMethods={raw_outcome.raw_query_sites}"
+        )
 
-    if outcome.violations:
-        for violation in outcome.violations:
+    all_violations = sorted(
+        list(outcome.violations) + list(raw_outcome.violations),
+        key=lambda v: (v.path, v.line, v.rule_id, v.code),
+    )
+    if all_violations:
+        for violation in all_violations:
             print(
                 f"SPENDING PREDICATE USAGE: {violation.path}:{violation.line} "
                 f"[{violation.rule_id}] {violation.function} {violation.code}: "
                 f"{_DESCRIPTIONS[violation.code]}"
             )
         print(
-            f"FAIL: {len(outcome.violations)} spending predicate usage violation(s) "
-            f"(G-SPENDING-PREDICATE-01..03). Aggregates over expenses must use "
-            f"SpendingInclusionSql or carry a '// spending-exempt: <REASON>' marker (INV-1, INV-8)."
+            f"FAIL: {len(all_violations)} spending predicate usage violation(s) "
+            f"(G-SPENDING-PREDICATE-01..04). Aggregates over expenses must use "
+            f"SpendingInclusionSql or carry a '// spending-exempt: <REASON>' marker (INV-1, INV-8); "
+            f"RawQuery builders must be pinned in {PIN_RELATIVE_PATH} (I-04-5)."
         )
         return EXIT_VIOLATION
 
@@ -792,8 +1276,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     predicate = sum(1 for item in outcome.classified if item.classification == "predicate")
     print(
         f"PASS: {outcome.files_scanned} DAO file(s), {outcome.queries_parsed} @Query parsed, "
-        f"{predicate} predicate-referencing aggregate(s), {exempt} exempt "
-        f"(G-SPENDING-PREDICATE-01..03)."
+        f"{predicate} predicate-referencing aggregate(s), {exempt} exempt, "
+        f"{raw_outcome.builder_sites} pinned RawQuery builder(s) "
+        f"(G-SPENDING-PREDICATE-01..04)."
     )
     return EXIT_PASS
 

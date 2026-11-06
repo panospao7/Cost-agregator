@@ -29,6 +29,12 @@ no personal data), plus one read-only run on the real tree:
      ASSET_VALUE 2);
   9. stale-marker hygiene (Rule 02): a non-DEDUPE marker above a query that
      does not aggregate over expenses fails; DEDUPE markers stay allowed.
+ 10. Rule 04 (I-04-5): the @RawQuery builders are pinned in
+     config/guards/spending_raw_query_builders.yml (clean tree passes; extra
+     SimpleSQLiteQuery site, new/changed selectClause literal, stale pin, count
+     mismatch, unpinned @RawQuery method, builder body without the amount
+     owners all fail; commented-out and string-embedded sites are ignored;
+     missing or malformed pin file is infrastructure exit 2).
 
 Run:
     python -m pytest scripts/test_verify_spending_predicate_usage.py -v
@@ -42,6 +48,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _SCRIPTS_DIR.parent
@@ -53,6 +60,7 @@ import verify_spending_predicate_usage as guard  # noqa: E402
 R1 = "G-SPENDING-PREDICATE-01"
 R2 = "G-SPENDING-PREDICATE-02"
 R3 = "G-SPENDING-PREDICATE-03"
+R4 = "G-SPENDING-PREDICATE-04"
 
 _PKG = "com/yourname/expensetracker"
 _JAVA = "app/src/main/java"
@@ -119,9 +127,19 @@ def _write_manifest(root: Path) -> None:
     )
 
 
+def _write_empty_pin(root: Path) -> None:
+    """Rule 04 needs a pin file; an empty one is valid for trees without builders."""
+    pin = root / guard.PIN_RELATIVE_PATH
+    if pin.exists():
+        return
+    pin.parent.mkdir(parents=True, exist_ok=True)
+    pin.write_text("version: 1\nexpectedCount: 0\nbuilders: []\n", encoding="utf-8")
+
+
 def _run_cli(root: Path, *extra: str, manifest: bool = True) -> subprocess.CompletedProcess:
     if manifest:
         _write_manifest(root)
+    _write_empty_pin(root)
     return subprocess.run(
         [sys.executable, str(_SCRIPT), "--root", str(root), *extra],
         capture_output=True,
@@ -741,8 +759,15 @@ def _load_module(name: str, relative: str):
 def test_registry_entry_agrees_with_script_constants():
     registry = _load_module("guard_registry_spending_predicate_test", "ci/guard_registry.py")
     entry = registry.GUARD_REGISTRY["spending_predicate_usage"]
-    assert tuple(entry["execution"]["ruleIds"]) == (R1, R2, R3)
-    assert (guard.RULE_UNCOVERED, guard.RULE_MARKER, guard.RULE_DEDUPE) == (R1, R2, R3)
+    assert tuple(entry["execution"]["ruleIds"]) == (R1, R2, R3, R4)
+    assert (
+        guard.RULE_UNCOVERED,
+        guard.RULE_MARKER,
+        guard.RULE_DEDUPE,
+        guard.RULE_RAW_BUILDER,
+    ) == (R1, R2, R3, R4)
+    assert tuple(entry["execution"]["requiredInputs"]) == (guard.PIN_RELATIVE_PATH,)
+    assert (_REPO_ROOT / guard.PIN_RELATIVE_PATH).is_file()
     assert entry["script"] == "scripts/verify_spending_predicate_usage.py"
     assert entry["tests"] == "scripts/test_verify_spending_predicate_usage.py"
     assert tuple(entry["execution"]["testManifest"]) == (entry["tests"],)
@@ -933,4 +958,332 @@ def test_non_aggregate_select_with_predicate_or_column_or_marker_passes():
     )
     result = guard.scan_text(_PATH, text, enforce_non_aggregate_selects=True)
     assert result.violations == []
+
+
+# ── Rule 04 (I-04-5): pinned RawQuery builders ───────────────────────────────
+
+_REPO_REL = f"{_JAVA}/{_PKG}/data/repository/FooRepository.kt"
+_ALL_REFS = ("EFFECTIVE_AMOUNT_E_SQL", "COMPARABLE_HOME_VALUE_E_SQL")
+
+
+def _repo_text(
+    list_select: str = "SELECT e.*",
+    refs=_ALL_REFS,
+    builder: str = "buildExpenseDynamicQueryParts",
+    extra: str = "",
+) -> str:
+    body = ""
+    if "EFFECTIVE_AMOUNT_E_SQL" in refs:
+        body += "        val amount = EFFECTIVE_AMOUNT_E_SQL\n"
+    if "COMPARABLE_HOME_VALUE_E_SQL" in refs:
+        body += '        val home = "$COMPARABLE_HOME_VALUE_E_SQL IS NULL"\n'
+    return (
+        "package com.yourname.expensetracker.data.repository\n"
+        "\n"
+        "import androidx.sqlite.db.SimpleSQLiteQuery\n"
+        "\n"
+        "class FooRepository(private val fooDao: FooDao) {\n"
+        "    suspend fun listAll(): List<Int> {\n"
+        "        val (sql, args) = " + builder + "(\n"
+        '            selectClause = "' + list_select + '",\n'
+        "        )\n"
+        "        return fooDao.listDynamic(SimpleSQLiteQuery(sql, args.toTypedArray()))\n"
+        "    }\n"
+        "\n"
+        "    suspend fun countAll(): Int {\n"
+        "        val (sql, args) = " + builder + "(\n"
+        '            selectClause = "SELECT COUNT(*)",\n'
+        "        )\n"
+        "        return fooDao.countDynamic(SimpleSQLiteQuery(sql, args.toTypedArray()))\n"
+        "    }\n"
+        "\n"
+        + extra
+        + "\n"
+        "    private fun " + builder + "(selectClause: String): Pair<String, MutableList<Any>> {\n"
+        + body
+        + '        return "$selectClause FROM expenses e" to mutableListOf()\n'
+        "    }\n"
+        "}\n"
+    )
+
+
+def _raw_dao_text(extra: str = "") -> str:
+    return _dao_text(
+        _q("SELECT SUM(${SpendingInclusionSql.SPENDING_PREDICATE}) FROM expenses", name="total"),
+        "    @RawQuery\n    suspend fun listDynamic(query: SupportSQLiteQuery): List<Int>",
+        "    @RawQuery\n    suspend fun countDynamic(query: SupportSQLiteQuery): Int",
+        extra,
+    )
+
+
+def _pin(function: str, dao_method: str, select: str, **override) -> dict:
+    entry = {
+        "file": _REPO_REL,
+        "enclosingFunction": function,
+        "daoMethod": dao_method,
+        "daoFile": _DAO_REL,
+        "selectClause": select,
+        "reason": "fixture reason",
+        "owner": "@panospao7",
+        "linkedIssue": "I-04-5",
+    }
+    entry.update(override)
+    return entry
+
+
+def _default_pins() -> list:
+    return [
+        _pin("listAll", "listDynamic", "SELECT e.*"),
+        _pin("countAll", "countDynamic", "SELECT COUNT(*)"),
+    ]
+
+
+def _write_raw_tree(
+    root: Path,
+    *,
+    repo: str = None,
+    dao: str = None,
+    pins: list = None,
+    expected: int = None,
+    pin_text: str = None,
+) -> None:
+    _write_manifest(root)
+    _write_dao(root, "FooDao.kt", _raw_dao_text() if dao is None else dao)
+    repo_path = root / _REPO_REL
+    repo_path.parent.mkdir(parents=True, exist_ok=True)
+    repo_path.write_text(_repo_text() if repo is None else repo, encoding="utf-8", newline="\n")
+    pin_list = _default_pins() if pins is None else pins
+    if pin_text is None:
+        pin_text = yaml.safe_dump(
+            {
+                "version": 1,
+                "expectedCount": len(pin_list) if expected is None else expected,
+                "builders": pin_list,
+            },
+            sort_keys=False,
+        )
+    pin_path = root / guard.PIN_RELATIVE_PATH
+    pin_path.parent.mkdir(parents=True, exist_ok=True)
+    pin_path.write_text(pin_text, encoding="utf-8", newline="\n")
+
+
+def _raw_codes(outcome) -> list:
+    assert outcome.infra_error is None
+    assert all(v.rule_id == R4 for v in outcome.violations)
+    return sorted(v.code for v in outcome.violations)
+
+
+def test_rawq_text_scan_derives_function_dao_method_and_select_literal():
+    scan = guard.scan_raw_query_text(_REPO_REL, _repo_text())
+    builders = [(s.function, s.dao_method, s.select_clause) for s in scan.sites if s.kind == "BUILDER"]
+    assert builders == [
+        ("listAll", "listDynamic", "SELECT e.*"),
+        ("countAll", "countDynamic", "SELECT COUNT(*)"),
+    ]
+    dao_scan = guard.scan_raw_query_text(_DAO_REL, _raw_dao_text())
+    assert [s.function for s in dao_scan.sites if s.kind == "RAW_QUERY"] == [
+        "listDynamic",
+        "countDynamic",
+    ]
+
+
+def test_rawq_clean_repo_shaped_tree_passes(tmp_path):
+    _write_raw_tree(tmp_path)
+    outcome = guard.scan_raw_query_builders(tmp_path)
+    assert outcome.infra_error is None
+    assert outcome.violations == []
+    assert (outcome.builder_sites, outcome.raw_query_sites) == (2, 2)
+    proc = _run_cli(tmp_path, "--fail-on-violation")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "PASS" in proc.stdout and "2 pinned RawQuery builder(s)" in proc.stdout
+
+
+def test_rawq_extra_simple_sqlite_query_site_fails(tmp_path):
+    leak = (
+        "    fun leak(dao: FooDao): Int {\n"
+        '        return dao.countDynamic(SimpleSQLiteQuery("SELECT SECRET_SQL_X FROM expenses"))\n'
+        "    }\n"
+    )
+    _write_raw_tree(tmp_path, repo=_repo_text(extra=leak))
+    outcome = guard.scan_raw_query_builders(tmp_path)
+    assert _raw_codes(outcome) == sorted(
+        [guard.CODE_RAWQ_UNPINNED_BUILDER, guard.CODE_RAWQ_COUNT]
+    )
+    assert any(v.function == "leak" and v.path == _REPO_REL for v in outcome.violations)
+    proc = _run_cli(tmp_path, "--fail-on-violation")
+    assert proc.returncode == 1
+    assert R4 in proc.stdout and "leak" in proc.stdout
+    assert "SECRET_SQL_X" not in proc.stdout + proc.stderr
+
+
+def test_rawq_changed_select_clause_literal_fails(tmp_path):
+    _write_raw_tree(tmp_path, repo=_repo_text(list_select="SELECT e.secretcol"))
+    outcome = guard.scan_raw_query_builders(tmp_path)
+    assert _raw_codes(outcome) == sorted(
+        [guard.CODE_RAWQ_SELECT_CHANGED, guard.CODE_RAWQ_UNPINNED_SELECT]
+    )
+    proc = _run_cli(tmp_path, "--fail-on-violation")
+    assert proc.returncode == 1 and R4 in proc.stdout
+    assert "secretcol" not in proc.stdout + proc.stderr
+
+
+def test_rawq_new_select_clause_literal_without_new_site_fails(tmp_path):
+    other = (
+        "    suspend fun other() {\n"
+        "        val (sql, args) = buildExpenseDynamicQueryParts(\n"
+        '            selectClause = "SELECT e.id",\n'
+        "        )\n"
+        "    }\n"
+    )
+    _write_raw_tree(tmp_path, repo=_repo_text(extra=other))
+    outcome = guard.scan_raw_query_builders(tmp_path)
+    assert _raw_codes(outcome) == [guard.CODE_RAWQ_UNPINNED_SELECT]
+
+
+def test_rawq_stale_pin_fails(tmp_path):
+    pins = _default_pins() + [_pin("gone", "goneDynamic", "SELECT e.*")]
+    _write_raw_tree(tmp_path, pins=pins)
+    outcome = guard.scan_raw_query_builders(tmp_path)
+    assert _raw_codes(outcome) == sorted(
+        [guard.CODE_RAWQ_STALE_PIN, guard.CODE_RAWQ_STALE_PIN, guard.CODE_RAWQ_COUNT]
+    )
+
+
+def test_rawq_renamed_builder_function_is_unpinned_and_stale(tmp_path):
+    renamed = _repo_text().replace("fun listAll", "fun listEverything")
+    _write_raw_tree(tmp_path, repo=renamed)
+    outcome = guard.scan_raw_query_builders(tmp_path)
+    assert _raw_codes(outcome) == sorted(
+        [guard.CODE_RAWQ_UNPINNED_BUILDER, guard.CODE_RAWQ_STALE_PIN]
+    )
+
+
+def test_rawq_count_mismatch_fails(tmp_path):
+    _write_raw_tree(tmp_path, expected=3)
+    outcome = guard.scan_raw_query_builders(tmp_path)
+    assert _raw_codes(outcome) == [guard.CODE_RAWQ_COUNT]
+    proc = _run_cli(tmp_path, "--fail-on-violation")
+    assert proc.returncode == 1 and guard.CODE_RAWQ_COUNT in proc.stdout
+
+
+def test_rawq_duplicate_pin_fails(tmp_path):
+    pins = _default_pins() + [_default_pins()[0]]
+    _write_raw_tree(tmp_path, pins=pins)
+    outcome = guard.scan_raw_query_builders(tmp_path)
+    assert _raw_codes(outcome) == sorted(
+        [guard.CODE_RAWQ_DUPLICATE_PIN, guard.CODE_RAWQ_COUNT]
+    )
+
+
+def test_rawq_unpinned_raw_query_dao_method_fails(tmp_path):
+    dao = _raw_dao_text(
+        "    @RawQuery\n    suspend fun sneakyDynamic(query: SupportSQLiteQuery): Int"
+    )
+    _write_raw_tree(tmp_path, dao=dao)
+    outcome = guard.scan_raw_query_builders(tmp_path)
+    assert _raw_codes(outcome) == [guard.CODE_RAWQ_UNPINNED_DAO]
+    assert [v.function for v in outcome.violations] == ["sneakyDynamic"]
+
+
+def test_rawq_commented_out_and_string_embedded_sites_are_ignored(tmp_path):
+    extra = (
+        "    // return fooDao.listDynamic(SimpleSQLiteQuery(sql, args.toTypedArray()))\n"
+        '    /* SimpleSQLiteQuery("SELECT 2") with selectClause = "SELECT bogus" */\n'
+        '    // selectClause = "SELECT commented"\n'
+        '    private val doc = "SimpleSQLiteQuery(sql) is built above"\n'
+    )
+    dao = _raw_dao_text(
+        "    // @RawQuery\n    /* @RawQuery suspend fun hidden(): Int */\n    fun notRaw(): Int = 0"
+    )
+    _write_raw_tree(tmp_path, repo=_repo_text(extra=extra), dao=dao)
+    outcome = guard.scan_raw_query_builders(tmp_path)
+    assert outcome.infra_error is None
+    assert outcome.violations == []
+    assert (outcome.builder_sites, outcome.raw_query_sites) == (2, 2)
+    proc = _run_cli(tmp_path, "--fail-on-violation")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+def test_rawq_builder_body_must_keep_amount_semantics_owners(tmp_path):
+    for refs in (("EFFECTIVE_AMOUNT_E_SQL",), ("COMPARABLE_HOME_VALUE_E_SQL",), ()):
+        _write_raw_tree(tmp_path, repo=_repo_text(refs=refs))
+        outcome = guard.scan_raw_query_builders(tmp_path)
+        assert _raw_codes(outcome) == [guard.CODE_RAWQ_BUILDER_REFERENCE], refs
+
+
+def test_rawq_builder_function_missing_fails(tmp_path):
+    _write_raw_tree(tmp_path, repo=_repo_text(builder="buildSomethingElse"))
+    outcome = guard.scan_raw_query_builders(tmp_path)
+    assert _raw_codes(outcome) == [guard.CODE_RAWQ_BUILDER_MISSING]
+
+
+def test_rawq_missing_pin_file_is_infra(tmp_path):
+    _write_raw_tree(tmp_path)
+    (tmp_path / guard.PIN_RELATIVE_PATH).unlink()
+    outcome = guard.scan_raw_query_builders(tmp_path)
+    assert outcome.infra_error == guard.E_PIN_MISSING
+    proc = subprocess.run(
+        [sys.executable, str(_SCRIPT), "--root", str(tmp_path)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=120,
+    )
+    assert proc.returncode == 2
+    assert guard.E_PIN_MISSING in proc.stderr and "PASS" not in proc.stdout
+
+
+@pytest.mark.parametrize(
+    "pin_text",
+    [
+        "version: 1\nexpectedCount: 1\nbuilders:\n  - file: x.kt\n",
+        "version: 2\nexpectedCount: 0\nbuilders: []\n",
+        "version: 1\nexpectedCount: 0\nbuilders: []\nextra: true\n",
+        "version: 1\nexpectedCount: -1\nbuilders: []\n",
+        "version: 1\nexpectedCount: 0\nbuilders: not-a-list\n",
+        "not: [valid",
+    ],
+)
+def test_rawq_malformed_pin_file_is_infra(tmp_path, pin_text):
+    _write_raw_tree(tmp_path, pin_text=pin_text)
+    outcome = guard.scan_raw_query_builders(tmp_path)
+    assert outcome.infra_error == guard.E_PIN_INVALID
+    proc = _run_cli(tmp_path, "--fail-on-violation")
+    assert proc.returncode == 2
+    assert guard.E_PIN_INVALID in proc.stderr and "PASS" not in proc.stdout
+
+
+def test_rawq_pin_entry_with_extra_field_is_infra(tmp_path):
+    bad = _default_pins()
+    bad[0]["wildcard"] = "*"
+    _write_raw_tree(tmp_path, pins=bad)
+    assert guard.scan_raw_query_builders(tmp_path).infra_error == guard.E_PIN_INVALID
+
+
+def test_rawq_unparseable_builder_file_is_infra(tmp_path):
+    _write_raw_tree(tmp_path, repo=_repo_text(extra='    val s = "never closed\n'))
+    outcome = guard.scan_raw_query_builders(tmp_path)
+    assert outcome.infra_error == guard.E_UNPARSEABLE
+
+
+def test_rawq_real_pin_file_pins_the_four_dao_methods():
+    pin_set, error = guard.load_raw_query_pins(_REPO_ROOT / guard.PIN_RELATIVE_PATH)
+    assert error is None
+    assert pin_set.expected_count == len(pin_set.pins) == 4
+    assert {p.dao_method for p in pin_set.pins} == {
+        "getExpensesDynamic",
+        "countExpensesWithoutHomeValueDynamic",
+        "getAssistantExpensesDynamic",
+        "getAssistantExpenseCountDynamic",
+    }
+    assert {p.select_clause for p in pin_set.pins} == {"SELECT e.*", "SELECT COUNT(*)"}
+    raw = yaml.safe_load((_REPO_ROOT / guard.PIN_RELATIVE_PATH).read_text(encoding="utf-8"))
+    assert all(b["owner"] == "@panospao7" and b["linkedIssue"] == "I-04-5" for b in raw["builders"])
+
+
+def test_rawq_real_tree_reports_four_pinned_builders(real_tree_report):
+    proc, _rows = real_tree_report
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "RAW_QUERY: builders=4 daoMethods=4" in proc.stdout
 

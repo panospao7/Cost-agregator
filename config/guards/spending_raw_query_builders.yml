@@ -1,0 +1,67 @@
+# Spending RawQuery Builder Pins - canonical production policy (exact schema)
+#
+# Rule G-SPENDING-PREDICATE-04 of scripts/verify_spending_predicate_usage.py
+# (registered guard spending_predicate_usage, I-04-5, owner item 144).
+#
+# SQL assembled in Kotlin and executed through an @RawQuery DAO method is not an
+# @Query literal, so Rules 01..03 cannot classify it.  Every
+# `SimpleSQLiteQuery(` construction site in app/src/main and every @RawQuery DAO
+# method must therefore be pinned here; any new builder, a changed selectClause
+# literal, a removed or renamed builder (stale pin) or a count mismatch fails
+# the guard until this file is updated in a reviewed change.
+#
+# Each entry is an exact site identity:
+#   - file:              repo-relative path of the Kotlin file that builds the query
+#   - enclosingFunction: exact function that contains the SimpleSQLiteQuery( call
+#   - daoMethod:         exact DAO method that receives the query
+#   - daoFile:           repo-relative path of the DAO that declares the @RawQuery method
+#   - selectClause:      exact `selectClause = "..."` literal passed to the builder
+#   - reason, owner, linkedIssue: controlled documentation fields
+#
+# expectedCount must equal the number of entries and the number of builder sites.
+# Entries must contain exactly the fields above: no wildcard values and no extra
+# fields are accepted; the guard rejects a malformed file with exit code 2.
+#
+# The shared builder (buildExpenseDynamicQueryParts) intentionally does not apply
+# the spending predicate: the Transactions/assistant ledger lists every row and the
+# amount filters use the single effective-amount / comparable-home-value owners.
+# The guard additionally requires the builder body to keep referencing
+# EFFECTIVE_AMOUNT_E_SQL and COMPARABLE_HOME_VALUE_E_SQL.
+version: 1
+expectedCount: 4
+builders:
+  - file: app/src/main/java/com/yourname/expensetracker/data/repository/ExpenseRepository.kt
+    enclosingFunction: getExpensesPagedDynamic
+    daoMethod: getExpensesDynamic
+    daoFile: app/src/main/java/com/yourname/expensetracker/data/database/dao/ExpenseDao.kt
+    selectClause: "SELECT e.*"
+    reason: "Read-only paged Transactions list; amount semantics via the single effective-amount owners, ledger rows are not spending-filtered"
+    owner: "@panospao7"
+    linkedIssue: "I-04-5"
+
+  - file: app/src/main/java/com/yourname/expensetracker/data/repository/ExpenseRepository.kt
+    enclosingFunction: countExpensesWithoutHomeValue
+    daoMethod: countExpensesWithoutHomeValueDynamic
+    daoFile: app/src/main/java/com/yourname/expensetracker/data/database/dao/ExpenseDao.kt
+    selectClause: "SELECT COUNT(*)"
+    reason: "Read-only count of rows without a comparable home value; integer result only, home currency is a bound argument"
+    owner: "@panospao7"
+    linkedIssue: "I-04-5"
+
+  - file: app/src/main/java/com/yourname/expensetracker/data/repository/ExpenseRepository.kt
+    enclosingFunction: getAssistantExpensesFiltered
+    daoMethod: getAssistantExpensesDynamic
+    daoFile: app/src/main/java/com/yourname/expensetracker/data/database/dao/ExpenseDao.kt
+    selectClause: "SELECT e.*"
+    reason: "Read-only assistant uncapped list; same filter contract as the paged builder with raw effective amount semantics"
+    owner: "@panospao7"
+    linkedIssue: "I-04-5"
+
+  - file: app/src/main/java/com/yourname/expensetracker/data/repository/ExpenseRepository.kt
+    enclosingFunction: getAssistantExpenseCountFiltered
+    daoMethod: getAssistantExpenseCountDynamic
+    daoFile: app/src/main/java/com/yourname/expensetracker/data/database/dao/ExpenseDao.kt
+    selectClause: "SELECT COUNT(*)"
+    reason: "Read-only assistant row count paired with the assistant list; integer result only"
+    owner: "@panospao7"
+    linkedIssue: "I-04-5"
