@@ -491,8 +491,10 @@ class TransactionsViewModelTest : ViewModelTestUtils() {
 
     @Test fun `reactive load failure keeps prior rows and emits bounded error`() = runTest(testDispatcher) {
         val rows = listOf(mockk<ExpenseWithCategory>(relaxed = true))
+        val gate = CompletableDeferred<Unit>() // hold the throw until the emitted rows have reached transactions
         every { expenses.getExpensesWithCategoryInPeriod(any(), any()) } returns flow {
             emit(rows)
+            gate.await()
             throw hostile
         }
         model.error.test {
@@ -500,6 +502,7 @@ class TransactionsViewModelTest : ViewModelTestUtils() {
             model.transactions.test {
                 awaitItem()
                 assertEquals(rows, awaitItem())
+                gate.complete(Unit)
                 assertEquals("Failed to load transactions (TRANSACTION_LOAD_FAILED)", (errors.awaitItem() as UiText.DynamicString).value)
                 assertEquals(rows, model.transactions.value)
                 cancelAndIgnoreRemainingEvents()
