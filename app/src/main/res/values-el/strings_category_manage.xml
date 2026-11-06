@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Category delete and rename (owner item 144); all entries below are DRAFT: owner native sign-off pending -->
+    <!-- category_manage_menu_cd: DRAFT: owner native sign-off pending -->
+    <string name="category_manage_menu_cd">Περισσότερες επιλογές για την κατηγορία %1$s</string>
+    <!-- category_manage_rename: DRAFT: owner native sign-off pending -->
+    <string name="category_manage_rename">Μετονομασία</string>
+    <!-- category_manage_delete: DRAFT: owner native sign-off pending -->
+    <string name="category_manage_delete">Διαγραφή</string>
+    <!-- category_manage_default_protected: DRAFT: owner native sign-off pending -->
+    <string name="category_manage_default_protected">Οι προεπιλεγμένες κατηγορίες δεν μπορούν να μετονομαστούν ή να διαγραφούν.</string>
+    <!-- category_manage_not_found: DRAFT: owner native sign-off pending -->
+    <string name="category_manage_not_found">Αυτή η κατηγορία δεν υπάρχει πλέον.</string>
+    <!-- category_manage_failed: DRAFT: owner native sign-off pending -->
+    <string name="category_manage_failed">Κάτι πήγε στραβά. Δοκιμάστε ξανά.</string>
+    <!-- category_rename_title: DRAFT: owner native sign-off pending -->
+    <string name="category_rename_title">Μετονομασία κατηγορίας</string>
+    <!-- category_rename_error_duplicate: DRAFT: owner native sign-off pending -->
+    <string name="category_rename_error_duplicate">Υπάρχει ήδη κατηγορία με αυτό το όνομα</string>
+    <!-- category_rename_success: DRAFT: owner native sign-off pending -->
+    <string name="category_rename_success">Μετονομάστηκε σε %1$s.</string>
+    <!-- category_delete_title: DRAFT: owner native sign-off pending -->
+    <string name="category_delete_title">Διαγραφή της κατηγορίας %1$s;</string>
+    <!-- category_delete_move_summary: DRAFT: owner native sign-off pending -->
+    <plurals name="category_delete_move_summary">
+        <item quantity="one">%1$d δαπάνη θα μετακινηθεί στην κατηγορία %2$s.</item>
+        <item quantity="other">%1$d δαπάνες θα μετακινηθούν στην κατηγορία %2$s.</item>
+    </plurals>
+    <!-- category_delete_count_loading: DRAFT: owner native sign-off pending -->
+    <string name="category_delete_count_loading">Καταμέτρηση δαπανών…</string>
+    <!-- category_delete_count_unavailable: DRAFT: owner native sign-off pending -->
+    <string name="category_delete_count_unavailable">Ο αριθμός των δαπανών δεν είναι διαθέσιμος. Οι δαπάνες αυτής της κατηγορίας θα μετακινηθούν στην κατηγορία που θα επιλέξετε.</string>
+    <!-- category_delete_picker_label: DRAFT: owner native sign-off pending -->
+    <string name="category_delete_picker_label">Μετακίνηση δαπανών σε</string>
+    <!-- category_delete_budget_note: DRAFT: owner native sign-off pending -->
+    <string name="category_delete_budget_note">Οι προϋπολογισμοί αυτής της κατηγορίας συγχωνεύονται στην κατηγορία που θα επιλέξετε.</string>
+    <!-- category_delete_error_replacement: DRAFT: owner native sign-off pending -->
+    <string name="category_delete_error_replacement">Επιλέξτε άλλη κατηγορία για τη μετακίνηση των δαπανών.</string>
+    <!-- category_delete_success: DRAFT: owner native sign-off pending -->
+    <string name="category_delete_success">Η κατηγορία %1$s διαγράφηκε. Οι δαπάνες μετακινήθηκαν στην κατηγορία %2$s.</string>
+</resources>

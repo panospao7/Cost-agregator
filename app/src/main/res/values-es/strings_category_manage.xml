@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Category delete and rename (owner item 144); all entries below are DRAFT: owner native sign-off pending -->
+    <!-- category_manage_menu_cd: DRAFT: owner native sign-off pending -->
+    <string name="category_manage_menu_cd">Más opciones para %1$s</string>
+    <!-- category_manage_rename: DRAFT: owner native sign-off pending -->
+    <string name="category_manage_rename">Renombrar</string>
+    <!-- category_manage_delete: DRAFT: owner native sign-off pending -->
+    <string name="category_manage_delete">Eliminar</string>
+    <!-- category_manage_default_protected: DRAFT: owner native sign-off pending -->
+    <string name="category_manage_default_protected">Las categorías predeterminadas no se pueden renombrar ni eliminar.</string>
+    <!-- category_manage_not_found: DRAFT: owner native sign-off pending -->
+    <string name="category_manage_not_found">Esta categoría ya no existe.</string>
+    <!-- category_manage_failed: DRAFT: owner native sign-off pending -->
+    <string name="category_manage_failed">Algo salió mal. Inténtalo de nuevo.</string>
+    <!-- category_rename_title: DRAFT: owner native sign-off pending -->
+    <string name="category_rename_title">Renombrar categoría</string>
+    <!-- category_rename_error_duplicate: DRAFT: owner native sign-off pending -->
+    <string name="category_rename_error_duplicate">Ya existe una categoría con este nombre</string>
+    <!-- category_rename_success: DRAFT: owner native sign-off pending -->
+    <string name="category_rename_success">Renombrada a %1$s.</string>
+    <!-- category_delete_title: DRAFT: owner native sign-off pending -->
+    <string name="category_delete_title">¿Eliminar %1$s?</string>
+    <!-- category_delete_move_summary: DRAFT: owner native sign-off pending -->
+    <plurals name="category_delete_move_summary">
+        <item quantity="one">%1$d gasto se moverá a %2$s.</item>
+        <item quantity="many">%1$d de gastos se moverán a %2$s.</item>
+        <item quantity="other">%1$d gastos se moverán a %2$s.</item>
+    </plurals>
+    <!-- category_delete_count_loading: DRAFT: owner native sign-off pending -->
+    <string name="category_delete_count_loading">Contando gastos…</string>
+    <!-- category_delete_count_unavailable: DRAFT: owner native sign-off pending -->
+    <string name="category_delete_count_unavailable">El número de gastos no está disponible. Los gastos de esta categoría se moverán a la categoría que elijas.</string>
+    <!-- category_delete_picker_label: DRAFT: owner native sign-off pending -->
+    <string name="category_delete_picker_label">Mover los gastos a</string>
+    <!-- category_delete_budget_note: DRAFT: owner native sign-off pending -->
+    <string name="category_delete_budget_note">Los presupuestos de esta categoría se combinan con la categoría elegida.</string>
+    <!-- category_delete_error_replacement: DRAFT: owner native sign-off pending -->
+    <string name="category_delete_error_replacement">Elige una categoría distinta para mover los gastos.</string>
+    <!-- category_delete_success: DRAFT: owner native sign-off pending -->
+    <string name="category_delete_success">Se eliminó %1$s. Los gastos se movieron a %2$s.</string>
+</resources>

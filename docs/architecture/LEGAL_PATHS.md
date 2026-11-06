@@ -126,6 +126,36 @@ FORBIDDEN:
 ```
 
 ```
+CATEGORY DELETE / MERGE / RENAME (implemented — owner item 144, 1.0.4):
+  DELETE and MERGE share ONE private path, CategoryRepository.reassignAndDeleteCategory, entered from
+  CategoryRepository.deleteCategory(id, replacementId) and mergeCategories(source, target):
+  → writeBarrier.checkWritesAllowed, then writeBarrier.runWrite { database.withTransaction { ... } }:
+      1. TransactionLifecycleCoordinator.reassignCategoryBulkDbOnly(from, to)  (the ONLY expense mover:
+         ExpenseDao.updateCategoryForCategory + one aggregate BULK_UPDATED event when rows moved; bounded
+         metadata fromCategoryId/toCategoryId/affectedCount; returns the post-commit batch unrun)
+      2. CategoryDao.reassignAllReferencesExceptExpenses(from, to)  (budgets MERGE into the target:
+         conflicting active source budget deactivated first; merchant mappings and canonicals, budget
+         adjustments, pending reviews, receipt item categorizations (suggested + user-corrected), recurring
+         occurrences, manual recurring expenses, installment plans, planned expenses, spending challenges,
+         bank connection default category, user corrections (both columns))
+      3. CategoryDao.delete(source)  (default categories are protected)
+  → AFTER the transaction commits: CategorizationEngine cache + classifier snapshot invalidation, then
+    TransactionLifecycleCoordinator.runPostCommit(batch) (best effort, cancellation rethrown). A failure
+    inside the transaction rolls back the expense move, its event and every re-point; the batch never runs.
+  → deleteCategory pre-checks: NotFound, CannotDeleteDefault, SameAsSource, ReplacementInvalid.
+  RENAME: CategoryRepository.renameCategory(id, name) → checkWritesAllowed → runWrite + withTransaction
+  { default/NotFound checks, NOCASE duplicate check, CategoryDao.updateNameById } → cache + snapshot
+  invalidation. Default categories cannot be renamed. No schema change.
+
+FORBIDDEN:
+  ❌ Any CategoryDao/ExpenseDao-level UPDATE of expenses.categoryId outside the coordinator
+     (CategoryDao.reassignExpensesToCategory is removed)
+  ❌ Running the reassign post-commit batch before the outer transaction committed, or after a rollback
+  ❌ Deleting a category without first re-pointing every referencing table (budgets use RESTRICT)
+  ❌ Merchant names, amounts or free text in the BULK_UPDATED category-reassign event
+```
+
+```
 SPENDING INCLUSION (implemented — loan-installments S3; the first caller arrives with the plan coordinator, S6a):
   → TransactionLifecycleCoordinator.setSpendingExclusionDbOnly(expenseId, reason)
     (any sibling setSpendingExclusion* op follows the same rules)

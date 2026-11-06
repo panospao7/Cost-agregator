@@ -896,21 +896,6 @@ entries:
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.CategoryRepository
   kind: function
-  method: deleteCategory
-  receiver: null
-  parameterTypes:
-  - Long
-  daoAccessor: categoryDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.CategoryDao
-  operation: delete
-  barrierMode: direct
-  reason: "Canonical category deletion \u2014 guarded by budget-reference and isDefault\
-    \ checks"
-  owner: '@panospao7'
-  linkedIssue: MIT-003
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.CategoryRepository
-  kind: function
   method: ensureDefaultCategories
   receiver: null
   parameterTypes: []
@@ -972,20 +957,73 @@ entries:
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.CategoryRepository
   kind: function
-  method: mergeCategories
+  method: reassignAndDeleteCategory
   receiver: null
   parameterTypes:
   - Long
   - Long
+  - String
   daoAccessor: categoryDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.CategoryDao
-  operation: mergeCategories
-  barrierMode: direct
-  reason: 'GR-14a EXACT_POLICY: default @Transaction CategoryDao multi-table merge
-    newly indexed by the GR-14a mutator rule; canonical write barrier lexically precedes
-    the withContext(IO) body that performs the call'
+  operation: delete
+  barrierMode: helper
+  reason: 'Item 144 shared delete/merge path: source category delete after its references
+    were re-pointed, in one transaction with the TLC expense move; barrier via checkWritesAllowed
+    helper (public callers) plus runWrite'
   owner: '@panospao7'
-  linkedIssue: GR-14a
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.CategoryRepository
+  kind: function
+  method: reassignAndDeleteCategory
+  receiver: null
+  parameterTypes:
+  - Long
+  - Long
+  - String
+  daoAccessor: categoryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.CategoryDao
+  operation: reassignAllReferencesExceptExpenses
+  barrierMode: helper
+  reason: 'Item 144 shared delete/merge path: @Transaction multi-table re-point of every
+    non-expense category reference (expenses move only via the TLC reassignCategoryBulkDbOnly
+    in the same transaction); barrier via checkWritesAllowed helper plus runWrite'
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.CategoryRepository
+  kind: function
+  method: renameCategory
+  receiver: null
+  parameterTypes:
+  - Long
+  - String
+  daoAccessor: categoryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.CategoryDao
+  operation: updateNameById
+  barrierMode: helper
+  reason: 'Item 144 category rename: validated and NOCASE-deduped name update inside
+    one transaction; barrier via checkWritesAllowed helper plus runWrite'
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.CategoryRepository
+  kind: function
+  method: renameCategory
+  receiver: null
+  parameterTypes:
+  - Long
+  - String
+  daoAccessor: categoryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.CategoryDao
+  operation: updateDenormalizedCategoryNames
+  barrierMode: helper
+  reason: 'Item 144 category rename: keeps denormalized category-name columns (budget
+    adjustment recommendations, receipt item categorizations) in sync with the new name
+    in the same transaction as updateNameById; barrier via checkWritesAllowed helper
+    plus runWrite'
+  owner: '@panospao7'
+  linkedIssue: MIT-003
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.DatabaseBackupRepositoryImpl
   kind: function
@@ -7234,6 +7272,42 @@ entries:
   barrierMode: helper
   reason: "Spending-inclusion change — UPDATED lifecycle event insert; barrier\
     \ via checkWritesAllowed helper"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+  kind: function
+  method: reassignCategoryBulkDbOnly
+  receiver: null
+  parameterTypes:
+  - Long
+  - Long
+  - String
+  - String?
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: updateCategoryForCategory
+  barrierMode: helper
+  reason: "Item 144 category delete/merge: sole writer of the bulk expense category\
+    \ re-assignment; barrier via checkWritesAllowed helper plus re-entrant runWrite"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+  kind: function
+  method: reassignCategoryBulkDbOnly
+  receiver: null
+  parameterTypes:
+  - Long
+  - Long
+  - String
+  - String?
+  daoAccessor: transactionEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.TransactionEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "Item 144 bulk category re-assignment — one aggregate BULK_UPDATED lifecycle\
+    \ event insert; barrier via checkWritesAllowed helper plus re-entrant runWrite"
   owner: '@panospao7'
   linkedIssue: MIT-003
 - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt

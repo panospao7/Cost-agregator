@@ -25,7 +25,7 @@ import java.io.File
  *   BOTH sections (a cross-section duplicate fails closed), and no
  *   duplicate/wildcard/raw/write tuples.
      * - **Ownership policy:** The active `db_ownership_policy.yml` is the
-     *   activated v2 document (`schemaVersion: 2`, 463 entries — one entry per
+     *   activated v2 document (`schemaVersion: 2`, 467 entries — one entry per
      *   canonical mutation key, with `ownerFqcn` / `daoAccessor` / `barrierMode`
      *   fields). The fixture parser accepts the v2 document header and entry
      *   schema and maps v2 fields onto the shared [ParsedEntry] model; legacy
@@ -1068,7 +1068,7 @@ class DbGuardPolicyFixtureTest {
     // ══════════════════════════════════════════════════════════════════
 
     @Test
-    fun `manifest — ownership policy has exactly 463 entries`() {
+    fun `manifest — ownership policy has exactly 467 entries`() {
         // Release 1.0 G3 S4 (owner pre-approved shrink): the two direct transactionEventDao.insert
         // identities (NotificationRepository, ReviewQueueRepository) were removed: 429 -> 427.
         // Release 1.0 R21 S1 adds one approved exact identity
@@ -1106,8 +1106,15 @@ class DbGuardPolicyFixtureTest {
         // (MerchantNormalizationRepository.repointAliases / dao.reassignAliases), so 461.
         // 1.0.4 Batch 3 P-04-1 (owner item 143): +2 exact releaseClaimedReminderDelivery identities
         // (reminderDeliveryDao.releaseClaimedDelivery, lifecycleEventDao.insert), so 463.
+        // 1.0.4 category delete and rename (owner item 144): -2 CategoryRepository rows
+        // (deleteCategory/delete, mergeCategories/mergeCategories) and +3 (shared
+        // reassignAndDeleteCategory: delete + reassignAllReferencesExceptExpenses; renameCategory:
+        // updateNameById) and +2 TLC reassignCategoryBulkDbOnly rows (expenseDao.updateCategoryForCategory,
+        // transactionEventDao.insert), so 466.
+        // 1.0.4 category denormalized-name sync (owner item 144): +1 exact identity
+        // (renameCategory / updateDenormalizedCategoryNames), so 467.
         val entries = parseEntries(ownershipPolicyFile)
-        assertEquals("Ownership policy must have exactly 463 entries", 463, entries.size)
+        assertEquals("Ownership policy must have exactly 467 entries", 467, entries.size)
     }
 
     @Test
@@ -1778,7 +1785,7 @@ class DbGuardPolicyFixtureTest {
     fun `ownership — CategoryRepository entries are exactly enumerated incl adjudicated seeding and merge`() {
         val entries = parseEntries(ownershipPolicyFile)
         val matching = entries.filter { it.className == "CategoryRepository" }
-        assertEquals("Should be exactly 7 CategoryRepository entries", 7, matching.size)
+        assertEquals("Should be exactly 9 CategoryRepository entries", 9, matching.size)
 
         val addEntry = findEntry(entries, "CategoryRepository", methodName = "addCategory")
         assertNotNull("CategoryRepository.addCategory entry not found in ownership policy", addEntry)
@@ -1787,12 +1794,35 @@ class DbGuardPolicyFixtureTest {
         assertEquals("CategoryRepository.addCategory DAOs", setOf("categoryDao"), addEntry.daos.toSet())
         assertEquals("CategoryRepository.addCategory barrier_required", true, addEntry.barrierRequired)
 
-        val deleteEntry = findEntry(entries, "CategoryRepository", methodName = "deleteCategory")
-        assertNotNull("CategoryRepository.deleteCategory entry not found in ownership policy", deleteEntry)
-        assertEquals("CategoryRepository.deleteCategory operation",
-            "delete", deleteEntry!!.operation)
-        assertEquals("CategoryRepository.deleteCategory DAOs", setOf("categoryDao"), deleteEntry.daos.toSet())
-        assertEquals("CategoryRepository.deleteCategory barrier_required", true, deleteEntry.barrierRequired)
+        // Item 144: delete and merge share one private path (reassignAndDeleteCategory); the
+        // public deleteCategory/mergeCategories no longer hold DAO mutations, so their old rows
+        // are gone. The shared path owns exactly two rows and renameCategory exactly one.
+        val sharedEntries = matching.filter { it.method == "reassignAndDeleteCategory" }
+        assertEquals("reassignAndDeleteCategory must have exactly 2 entries", 2, sharedEntries.size)
+        assertEquals(
+            "reassignAndDeleteCategory rows must be the exact enumerated (DAO, operation) set",
+            setOf("categoryDao" to "delete", "categoryDao" to "reassignAllReferencesExceptExpenses"),
+            sharedEntries.map { it.daos.single() to it.operation }.toSet()
+        )
+        val renameEntry = findEntry(entries, "CategoryRepository", methodName = "renameCategory")
+        assertNotNull("CategoryRepository.renameCategory entry not found in ownership policy", renameEntry)
+        assertEquals("CategoryRepository.renameCategory operation", "updateNameById", renameEntry!!.operation)
+        assertEquals("CategoryRepository.renameCategory DAOs", setOf("categoryDao"), renameEntry.daos.toSet())
+        val renameEntries = matching.filter { it.method == "renameCategory" }
+        assertEquals("renameCategory must have exactly 2 entries", 2, renameEntries.size)
+        assertEquals(
+            "renameCategory rows must be the exact enumerated (DAO, operation) set",
+            setOf("categoryDao" to "updateNameById", "categoryDao" to "updateDenormalizedCategoryNames"),
+            renameEntries.map { it.daos.single() to it.operation }.toSet()
+        )
+        for (entry in sharedEntries + renameEntries) {
+            assertEquals("CategoryRepository.${entry.method} (${entry.operation}) linked_issue",
+                "MIT-003", entry.linkedIssue)
+        }
+        assertEquals(
+            "CategoryRepository must no longer carry direct deleteCategory/mergeCategories rows",
+            0, matching.count { it.method == "deleteCategory" || it.method == "mergeCategories" }
+        )
 
         // GR-08o adjudicated ensureDefaultCategories rows: exactly 4, all
         // helper-barriered and MIT-DB-08O.
@@ -1824,18 +1854,9 @@ class DbGuardPolicyFixtureTest {
             )
         }
 
-        // GR-14a adjudicated merge row: direct barrier, GR-14a issue.
-        val mergeEntry = findEntry(entries, "CategoryRepository", methodName = "mergeCategories")
-        assertNotNull("CategoryRepository.mergeCategories entry not found in ownership policy", mergeEntry)
-        assertEquals("CategoryRepository.mergeCategories operation",
-            "mergeCategories", mergeEntry!!.operation)
-        assertEquals("CategoryRepository.mergeCategories DAOs", setOf("categoryDao"), mergeEntry.daos.toSet())
-        assertEquals("CategoryRepository.mergeCategories barrier_required", true, mergeEntry.barrierRequired)
-        assertEquals("CategoryRepository.mergeCategories barrier_via", null, mergeEntry.barrierVia)
-        assertEquals("CategoryRepository.mergeCategories linked_issue", "GR-14a", mergeEntry.linkedIssue)
-
-        // No drift: the 7 rows are fully accounted for by the exact blocks above
-        // (2 + 4 + 1 == 7), so any unexpected row would have failed a count pin.
+        // No drift: the 9 rows are fully accounted for by the exact blocks above
+        // (1 add + 4 ensure + 2 shared delete/merge path + 2 rename == 9), so any
+        // unexpected row would have failed a count pin.
     }
 
     @Test

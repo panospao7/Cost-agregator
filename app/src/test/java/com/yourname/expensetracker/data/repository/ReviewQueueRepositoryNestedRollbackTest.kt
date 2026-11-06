@@ -469,7 +469,13 @@ class ReviewQueueRepositoryNestedRollbackTest {
         items.insert(item(receiptId, 3, suggested = d, userCorrected = null))
 
         if (mode == Seed.MERGED_AWAY) {
-            database.categoryDao().mergeCategories(c, d)
+            // Item 144: CategoryDao.mergeCategories was replaced by
+            // reassignAllReferencesExceptExpenses, which now also moves
+            // userCorrectedCategoryId. This fixture needs the legacy stale-reference state
+            // (suggested moved to D, userCorrected left on the deleted C), so it reproduces it
+            // with the suggested-only reassign plus the real DAO delete.
+            database.categoryDao().reassignReceiptItemCategorizationsToCategory(c, d)
+            database.categoryDao().delete(database.categoryDao().getById(c)!!)
         }
         return Fixture(c, d, receiptId, majorityCategoryId)
     }

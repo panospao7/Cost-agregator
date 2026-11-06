@@ -5648,7 +5648,14 @@ def test_checked_in_structural_only_manifest_contract_via_production_apis():
     # (MerchantNormalizationRepository.repointAliases / dao.reassignAliases), yielding 461.
     # 1.0.4 Batch 3 P-04-1 (owner item 143): +2 exact releaseClaimedReminderDelivery identities
     # (reminderDeliveryDao.releaseClaimedDelivery, lifecycleEventDao.insert), yielding 463.
-    assert len(entries) == 463
+    # 1.0.4 category delete and rename (owner item 144): -2 CategoryRepository identities
+    # (deleteCategory / dao.delete, mergeCategories / dao.mergeCategories), +3
+    # (reassignAndDeleteCategory / dao.delete, dao.reassignAllReferencesExceptExpenses;
+    # renameCategory / dao.updateNameById) and +2 TLC reassignCategoryBulkDbOnly identities
+    # (expenseDao.updateCategoryForCategory, transactionEventDao.insert), yielding 466.
+    # 1.0.4 category denormalized-name sync (owner item 144): +1 exact identity
+    # (renameCategory / dao.updateDenormalizedCategoryNames), yielding 467.
+    assert len(entries) == 467
     sweep_path = (
         "app/src/main/java/com/yourname/expensetracker/data/repository/"
         "SavingsSweepAcceptanceCoordinator.kt"
@@ -6145,8 +6152,10 @@ def test_current_db_gate_activated_policy_real_config_pipeline(tmp_path, monkeyp
     # (MerchantNormalizationRepository.repointAliases / dao.reassignAliases), yielding 461.
     # 1.0.4 Batch 3 P-04-1 (owner item 143): +2 exact releaseClaimedReminderDelivery identities
     # (reminderDeliveryDao.releaseClaimedDelivery, lifecycleEventDao.insert), yielding 463.
+    # 1.0.4 category delete and rename (owner item 144): net +3 (see the pin above), yielding 466,
+    # then +1 denormalized-name sync identity, yielding 467.
     # Re-derived per the checked-in-manifest contract pin above.
-    assert len(entries) == 463
+    assert len(entries) == 467
 
     # The structural gate really ran (post-activation it is no longer
     # short-circuited by a loader block) and stayed clean.
