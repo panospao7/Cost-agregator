@@ -759,7 +759,7 @@ class SpendingMapViewModel @Inject constructor(
                 }
             )
         }
-        val heatmap =heatmapEngine.computeNormalized(moneyExpenses)
+        val heatmap = heatmapEngine.computeNormalized(moneyExpenses)
         val insights = insightsEngine.computeNormalized(moneyExpenses)
 
         val categoriesById = runCatching {

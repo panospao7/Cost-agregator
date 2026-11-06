@@ -209,6 +209,15 @@ class ReceiptParserMoneyBoundaryTest {
     }
 
     @Test
+    fun `P-03-5 a receipt whose item gap exceeds half the tax is now read as tax-exclusive`() {
+        // Items 96, VAT 1, total 100: the gap (4) is under 5% of the total but over half the tax,
+        // so the tightened rule reads it as tax-exclusive (it was inclusive before P-03-5).
+        val parsed = parser.parse("MARKET\nCoffee   40.00\nBread   56.00\nVAT 1.00\nTOTAL 100.00 EUR")
+
+        assertFalse(parsed.taxInclusive)
+    }
+
+    @Test
     fun `confidence cross validation keeps the strict ten percent threshold`() {
         val atBoundary = parser.parse("MARKET\nCoffee   40.00\nBread   50.00\nTOTAL 100.00 EUR")
         val withinBoundary = parser.parse("MARKET\nCoffee   40.00\nBread   50.01\nTOTAL 100.00 EUR")
