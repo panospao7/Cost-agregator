@@ -432,6 +432,9 @@ class InstallmentRestoreReconcileTest {
             operationRunRecorder = recorder,
             diagnosticSink = mockk(relaxed = true),
             timeProvider = FakeTimeProvider(NOW_MS),
+            currencySettingsRepository = io.mockk.mockk<com.yourname.expensetracker.domain.currency.CurrencySettingsRepository>(relaxed = true) {
+                io.mockk.every { homeCurrency() } returns kotlinx.coroutines.flow.flowOf("EUR")
+            },
             installmentPreBackupReconciler = dagger.Lazy { reconciler },
             databaseWriteBarrier = barrier
         )

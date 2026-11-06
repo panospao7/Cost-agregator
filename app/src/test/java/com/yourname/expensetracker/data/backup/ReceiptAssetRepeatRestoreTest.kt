@@ -359,6 +359,9 @@ class ReceiptAssetRepeatRestoreTest {
             stagedImportVerifier = { _, _, _, _, summary -> summary },
             liveImportVerifier = { _, _, _, summary -> summary },
             timeProvider = FakeTimeProvider(fixedTime),
+            currencySettingsRepository = io.mockk.mockk<com.yourname.expensetracker.domain.currency.CurrencySettingsRepository>(relaxed = true) {
+                io.mockk.every { homeCurrency() } returns kotlinx.coroutines.flow.flowOf("EUR")
+            },
             // S6c-4: restore never reconciles; a strict mock fails the test if it is ever called.
             installmentPreBackupReconciler = dagger.Lazy {
                 mockk<com.yourname.expensetracker.domain.installment.lifecycle.InstallmentPreBackupReconciler>()

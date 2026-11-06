@@ -392,6 +392,9 @@ class RestoreSemanticPostSwapTest {
             operationRunRecorder = recorder,
             diagnosticSink = diagnosticSink,
             timeProvider = FakeTimeProvider(FIXED_TIME),
+            currencySettingsRepository = io.mockk.mockk<com.yourname.expensetracker.domain.currency.CurrencySettingsRepository>(relaxed = true) {
+                io.mockk.every { homeCurrency() } returns kotlinx.coroutines.flow.flowOf("EUR")
+            },
             installmentPreBackupReconciler = dagger.Lazy { preBackupReconciler }
         )
         return Fixture(directory, liveDb, repo, journal, failReasons, trace, events, verifyExpectations)

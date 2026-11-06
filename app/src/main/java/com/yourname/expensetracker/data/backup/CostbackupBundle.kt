@@ -72,7 +72,14 @@ object CostbackupBundle {
          * True when a `semanticAggregates` key was present but structurally malformed (INV-12). The
          * set is then `null`. Never serialised; restore blocks on it before any destructive step.
          */
-        val semanticSectionMalformed: Boolean = false
+        val semanticSectionMalformed: Boolean = false,
+        /**
+         * FL-07: the home currency code (ISO 4217 shape) the backup was made with, written inside
+         * the encrypted manifest only. Optional: `null` for a legacy manifest or when the writer
+         * could not read it. [fromJson] never throws on it and drops a malformed value. Restore
+         * applies it only for a supported code, after the journal commit.
+         */
+        val homeCurrency: String? = null
     ) {
         fun toJson(): JSONObject = JSONObject().apply {
             put("backupFormatVersion", backupFormatVersion)
@@ -84,9 +91,18 @@ object CostbackupBundle {
             put("options", options.toJson())
             put("privacyMode", privacyMode)
             semanticAggregates?.let { put("semanticAggregates", it.toJson()) }
+            homeCurrency?.let { put("homeCurrency", it) }
         }
 
         companion object {
+            private val HOME_CURRENCY_SHAPE = Regex("^[A-Z]{3}$")
+
+            /** FL-07: absent, non-string or malformed values are ignored (null), never thrown. */
+            private fun parseHomeCurrency(json: JSONObject): String? {
+                val raw = json.opt("homeCurrency") as? String ?: return null
+                return raw.trim().uppercase().takeIf { HOME_CURRENCY_SHAPE.matches(it) }
+            }
+
             /**
              * Parses a manifest. Legacy bundles without a `createdAt` field fall back
              * to the caller-supplied [nowEpochMs] — no hidden wall-clock read.
@@ -111,7 +127,8 @@ object CostbackupBundle {
                         ?: BackupOptionsManifest(),
                     privacyMode = json.optString("privacyMode", null),
                     semanticAggregates = semantic.first,
-                    semanticSectionMalformed = semantic.second
+                    semanticSectionMalformed = semantic.second,
+                    homeCurrency = parseHomeCurrency(json)
                 )
             }
 
@@ -358,7 +375,8 @@ object CostbackupBundle {
         includeReceiptImages: Boolean = true,
         encryptionService: BackupEncryptionService = BackupEncryptionService(),
         privacyModeName: String? = null,
-        semanticAggregates: SemanticAggregateSet? = null
+        semanticAggregates: SemanticAggregateSet? = null,
+        homeCurrency: String? = null
     ): Result<File> = runCatching {
         val parentDir = outputFile.parentFile ?: File(".")
         parentDir.mkdirs()
@@ -376,7 +394,8 @@ object CostbackupBundle {
                 includeReceiptImages = includeReceiptImages,
                 encryptionService = encryptionService,
                 privacyModeName = privacyModeName,
-                semanticAggregates = semanticAggregates
+                semanticAggregates = semanticAggregates,
+                homeCurrency = homeCurrency
             )
         }
         Timber.d("Created .costbackup bundle (%d bytes)", outputFile.length())
@@ -406,7 +425,8 @@ object CostbackupBundle {
         encryptionService: BackupEncryptionService = BackupEncryptionService(),
         privacyModeName: String? = null,
         tempDir: File? = null,
-        semanticAggregates: SemanticAggregateSet? = null
+        semanticAggregates: SemanticAggregateSet? = null,
+        homeCurrency: String? = null
     ): Result<Unit> = runCatching {
         writeToStream(
             outputStream = outputStream,
@@ -421,7 +441,8 @@ object CostbackupBundle {
             includeReceiptImages = includeReceiptImages,
             encryptionService = encryptionService,
             privacyModeName = privacyModeName,
-            semanticAggregates = semanticAggregates
+            semanticAggregates = semanticAggregates,
+            homeCurrency = homeCurrency
         )
         Unit
     }
@@ -443,7 +464,8 @@ object CostbackupBundle {
         includeReceiptImages: Boolean,
         encryptionService: BackupEncryptionService,
         privacyModeName: String?,
-        semanticAggregates: SemanticAggregateSet?
+        semanticAggregates: SemanticAggregateSet?,
+        homeCurrency: String?
     ) {
         // 1. Create a temp file for streaming ZIP construction (avoids OOM)
         tempDir.mkdirs()
@@ -451,7 +473,7 @@ object CostbackupBundle {
 
         try {
             // 2. Build ZIP streaming to temp file (avoids OOM from ByteArrayOutputStream)
-            buildZip(tempZip, databaseFile, receiptFiles, tableCounts, databaseVersion, redacted, includeReceiptImages, nowEpochMs, privacyModeName, semanticAggregates)
+            buildZip(tempZip, databaseFile, receiptFiles, tableCounts, databaseVersion, redacted, includeReceiptImages, nowEpochMs, privacyModeName, semanticAggregates, homeCurrency)
 
             // 3. Encrypt from temp file + write header + ciphertext to the output stream
             writeHeader(outputStream)
@@ -654,7 +676,8 @@ object CostbackupBundle {
         includeReceiptImages: Boolean,
         nowEpochMs: Long,
         privacyModeName: String? = null,
-        semanticAggregates: SemanticAggregateSet? = null
+        semanticAggregates: SemanticAggregateSet? = null,
+        homeCurrency: String? = null
     ) {
         ZipOutputStream(BufferedOutputStream(FileOutputStream(tempZip))).use { zos ->
 
@@ -672,7 +695,8 @@ object CostbackupBundle {
                     receiptImages = includeReceiptImages && receiptFiles.isNotEmpty()
                 ),
                 privacyMode = privacyModeName,
-                semanticAggregates = semanticAggregates
+                semanticAggregates = semanticAggregates,
+                homeCurrency = homeCurrency
             )
             zos.putNextEntry(ZipEntry("manifest.json"))
             zos.write(manifest.toJson().toString(2).toByteArray(Charsets.UTF_8))
