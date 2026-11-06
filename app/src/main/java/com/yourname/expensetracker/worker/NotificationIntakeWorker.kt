@@ -135,6 +135,27 @@ class NotificationIntakeWorker @AssistedInject constructor(
                     return@runGuardedWithContext
                 }
 
+                // P-01-3: Re-check the user's "apps to skip" list BEFORE any payload load, so rows
+                // queued before the app was blocked never become reviews. Same source of truth as
+                // NotificationCaptureGate step 6 / service deferred path (BlockedPackageDao.isBlocked
+                // via the repository). A lookup failure propagates to the handler below (no
+                // processing; fail closed). No package name is logged.
+                ctx.checkpoint("intake:blockedPackageCheck")
+                if (repository.isPackageBlocked(claimedMeta.packageName)) {
+                    Timber.d("IntakeWorker: queued row dropped, reason=%s", DiagnosticReasonCode.BLOCKED_PACKAGE.name)
+                    ctx.checkpoint("intake:blockedPackageDrop")
+                    intakeDao.markTerminal(
+                        id = intakeId,
+                        status = NotificationIntakeStatus.DROPPED_POLICY.name,
+                        rawId = null, expenseId = null, reviewId = null,
+                        finalOutcome = DiagnosticReasonCode.BLOCKED_PACKAGE.name,
+                        nowMs = now
+                    )
+                    ctx.addRowsUpdated()
+                    purgePayloadBestEffort(intakeId, now, ctx)
+                    return@runGuardedWithContext
+                }
+
                 // PR12H-2: Only now load the payload — after privacy is confirmed
                 ctx.checkpoint("intake:loadPayload")
                 val payload = intakeDao.getPayloadForProcessing(intakeId)
