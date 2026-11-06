@@ -3542,7 +3542,8 @@ class DatabaseBackupRepositoryImplTest {
                     "budget_forecasts" -> ", budgetId INTEGER"
                     // Columns read by the loan installment orphan checks (BackupVerifier) and the
                     // plan label sanitizer (ExportAnonymizer).
-                    "expenses" -> ", spendingExclusionReason TEXT"
+                    "expenses" -> ", spendingExclusionReason TEXT, refundNettedAmount REAL NOT NULL DEFAULT 0.0"
+                    "expense_refund_links" -> ", refundExpenseId INTEGER, purchaseExpenseId INTEGER, appliedAmount REAL"
                     "installment_plans" -> ", purchaseExpenseId INTEGER, displayName TEXT, lenderLabel TEXT"
                     "installment_entries" -> ", planId INTEGER, linkedExpenseId INTEGER, status TEXT"
                     else -> ""

@@ -10,7 +10,7 @@ import org.robolectric.annotation.Config
 import java.io.File
 
 /**
- * P-07-1 / S0b: every AppDatabase entity of the exported schema 152 must be classified in
+ * P-07-1 / S0b: every AppDatabase entity of the exported schema 153 must be classified in
  * the [BackupVerifier] table registry, with exactly one tier and no exclusion list. A table
  * added to the schema without a tier (or a tier entry for a table that no longer exists)
  * fails here.
@@ -21,12 +21,14 @@ import java.io.File
 @Config(sdk = [28])
 class BackupVerifierTableCoverageTest {
 
-    private val schemaVersion = 152
+    // Latest exported schema: 153 adds expense_refund_links (refund netting, INV-20).
+    private val schemaVersion = 153
 
     @Test
-    fun P071_registry_table_names_equal_exported_schema_152_entity_tables_exactly() {
+    fun P071_registry_table_names_equal_exported_schema_153_entity_tables_exactly() {
         val schemaTables = schemaEntityTableNames()
-        assertTrue("schema 152 must declare entity tables", schemaTables.isNotEmpty())
+        assertTrue("schema 153 must declare entity tables", schemaTables.isNotEmpty())
+        assertTrue("expense_refund_links must be a schema table", "expense_refund_links" in schemaTables)
 
         val registry = BackupVerifier.allTableNames()
 

@@ -16,21 +16,21 @@ import com.yourname.expensetracker.data.security.BankTokenCipher
  * ## Supported schema range (no destructive fallback)
  * The app opens ONLY databases whose schema version is within
  * [DatabaseSchemaPolicy.MIGRATION_BASELINE] (v145) through
- * [APP_DATABASE_SCHEMA_VERSION] (v152); the registered migrations in
+ * [APP_DATABASE_SCHEMA_VERSION] (v153); the registered migrations in
  * [DatabaseSchemaPolicy.ALL_MIGRATIONS] carry data forward within that range.
  *
  * ### Older, newer, or unreadable databases
- * A database below v145, above v152, or unreadable is REFUSED by
+ * A database below v145, above v153, or unreadable is REFUSED by
  * `DatabaseOpenGate` before Room opens it. There is no destructive migration
  * fallback: user data is never dropped or recreated. The
  * `UnsupportedDatabaseActivity` explains the state and offers an export of the
  * untouched file (user-started SAF export only).
  *
  * ### Backups
- * Backups whose schema is below v145 or above v152 are rejected before any
+ * Backups whose schema is below v145 or above v153 are rejected before any
  * swap with BACKUP_SCHEMA_UNSUPPORTED_LEGACY / BACKUP_SCHEMA_UNSUPPORTED_NEWER.
  */
-const val APP_DATABASE_SCHEMA_VERSION = 152
+const val APP_DATABASE_SCHEMA_VERSION = 153
 
 @Database(
     entities = [
@@ -107,7 +107,8 @@ const val APP_DATABASE_SCHEMA_VERSION = 152
         BankStatementImportItem::class,
         NegotiationOutcomeEntity::class,
         InstallmentPlan::class,
-        InstallmentEntry::class
+        InstallmentEntry::class,
+        ExpenseRefundLink::class
     ],
     version = APP_DATABASE_SCHEMA_VERSION,
     exportSchema = true
@@ -186,6 +187,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun bankStatementImportItemDao(): BankStatementImportItemDao
     abstract fun negotiationOutcomeDao(): NegotiationOutcomeDao
     abstract fun installmentPlanDao(): InstallmentPlanDao
+    abstract fun expenseRefundLinkDao(): ExpenseRefundLinkDao
 
     companion object {
         const val DATABASE_NAME = "expense_tracker_db"

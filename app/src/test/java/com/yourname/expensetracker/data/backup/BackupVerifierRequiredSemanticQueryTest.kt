@@ -37,7 +37,8 @@ class BackupVerifierRequiredSemanticQueryTest {
             "recurring_occurrences",
             "budget_forecasts",
             "installment_entries",
-            "installment_plans"
+            "installment_plans",
+            "expense_refund_links"
         )) {
             val db = completeDatabase(table)
             try {
@@ -119,7 +120,9 @@ class BackupVerifierRequiredSemanticQueryTest {
                 // Loan installments (INV-30): columns read by the five installment orphan checks.
                 "installment_entries" -> ", planId INTEGER, linkedExpenseId INTEGER, status TEXT"
                 "installment_plans" -> ", purchaseExpenseId INTEGER"
-                "expenses" -> ", spendingExclusionReason TEXT"
+                "expenses" -> ", spendingExclusionReason TEXT, refundNettedAmount REAL NOT NULL DEFAULT 0.0"
+                // Refund netting (INV-20): columns read by the two refund semantic checks.
+                "expense_refund_links" -> ", refundExpenseId INTEGER, purchaseExpenseId INTEGER, appliedAmount REAL"
                 else -> ""
             }
             db.execSQL("CREATE TABLE \"$table\" (id INTEGER PRIMARY KEY$reference)")

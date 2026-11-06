@@ -14,7 +14,7 @@ import java.io.File
 import java.math.BigDecimal
 
 /**
- * UF-46 / S1 fixture F on the REAL Room schema (exported `152.json`), built through
+ * UF-46 / S1 fixture F on the REAL Room schema (exported `153.json`, the latest schema), built through
  * `MigrationTestHelper` exactly as `BackupVerifierInstallmentOrphanTest` and
  * `BackupVerifierSavingsLedgerTest` do. Synthetic data only.
  *
@@ -32,7 +32,11 @@ import java.math.BigDecimal
  */
 internal object RealSchemaFixture {
 
-    const val SCHEMA_VERSION = 152
+    /** The latest schema (153, refund netting): full BackupVerifier semantic checks need the link table. */
+    const val SCHEMA_VERSION = 153
+
+    /** First schema carrying the spending-exclusion column (flagged row E7 is legal from here). */
+    const val SPENDING_EXCLUSION_SCHEMA_VERSION = 152
 
     /** A reason text that is neither of the two orphan-checked installment reasons. */
     const val EXCLUSION_REASON = "FIXTURE_EXCLUSION"
@@ -83,8 +87,8 @@ internal object RealSchemaFixture {
         withFlaggedPurchase: Boolean = false,
         reverseInsertOrder: Boolean = false
     ) {
-        require(!withFlaggedPurchase || version >= SCHEMA_VERSION) { "flagged row needs schema 152" }
-        val hasFlagColumn = version >= SCHEMA_VERSION
+        require(!withFlaggedPurchase || version >= SPENDING_EXCLUSION_SCHEMA_VERSION) { "flagged row needs schema 152" }
+        val hasFlagColumn = version >= SPENDING_EXCLUSION_SCHEMA_VERSION
         val rows = fixtureRows(withFlaggedPurchase).let { if (reverseInsertOrder) it.reversed() else it }
         rows.forEach { row ->
             insertExpense(db, row.id, row.type, row.currency, row.amount, row.isNotMine, row.shared,

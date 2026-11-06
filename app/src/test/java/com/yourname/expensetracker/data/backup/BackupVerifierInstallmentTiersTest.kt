@@ -139,7 +139,11 @@ class BackupVerifierInstallmentTiersTest {
     fun INV30_expectedCountsAfterMigration_from_152_and_from_unknown_do_not_add_installment_counts() {
         val counts = mapOf("expenses" to 4)
 
-        assertEquals(counts, BackupVerifier.expectedCountsAfterMigration(counts, 152))
+        // A 152 source gains only the refund link table (INV-20), never the installment tables.
+        assertEquals(
+            counts + ("expense_refund_links" to 0),
+            BackupVerifier.expectedCountsAfterMigration(counts, 152)
+        )
         assertEquals(counts, BackupVerifier.expectedCountsAfterMigration(counts, 153))
         assertEquals(counts, BackupVerifier.expectedCountsAfterMigration(counts, null))
     }
@@ -148,19 +152,25 @@ class BackupVerifierInstallmentTiersTest {
     fun INV30_expectedCountsAfterMigration_keeps_a_count_already_present_in_the_manifest() {
         val counts = mapOf("installment_plans" to 2, "installment_entries" to 6)
 
-        assertEquals(counts, BackupVerifier.expectedCountsAfterMigration(counts, 151))
+        // A 151 source legitimately seeds the refund link table at zero; the installment counts stay as recorded.
+        assertEquals(
+            counts + ("expense_refund_links" to 0),
+            BackupVerifier.expectedCountsAfterMigration(counts, 151)
+        )
     }
 
     // ── real databases ───────────────────────────────────────────
 
     @Test
     fun INV30_current_database_with_plans_and_entries_verifies_exactly_and_rejects_wrong_counts() {
-        val name = "backup-installments-152"
-        val db = helper.createDatabase(name, 152)
+        // Created at the latest schema (153): the full verifier also runs the refund link semantic checks,
+        // which need the expense_refund_links table.
+        val name = "backup-installments-153"
+        val db = helper.createDatabase(name, 153)
         seedPlanWithEntries(db)
         db.close()
         val file = databaseFile(name)
-        val counts = manifestCounts(file, 152)
+        val counts = manifestCounts(file, 153)
         assertEquals(1, counts["installment_plans"])
         assertEquals(2, counts["installment_entries"])
 

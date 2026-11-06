@@ -81,8 +81,8 @@ class Migration148to149Test {
     }
 
     @Test
-    fun schema_version_is_152() {
-        assertEquals(152, DatabaseSchemaPolicy.CURRENT_VERSION)
+    fun schema_version_is_153() {
+        assertEquals(153, DatabaseSchemaPolicy.CURRENT_VERSION)
     }
 
     @Test

@@ -270,6 +270,46 @@ object DatabaseMigrations {
         }
     }
 
+    /**
+     * Refund netting (S1): purely additive, no backfill, no destructive step.
+     *
+     * - `expenses.refundNettedAmount` is `REAL NOT NULL DEFAULT 0.0`, so every existing row reads
+     *   0.0 and keeps exactly the pre-feature effective amount and aggregates (INV-24).
+     * - `expense_refund_links` is new and empty after migration. Two foreign keys to
+     *   `expenses(id)` ON DELETE CASCADE (safety net for the full-wipe delete only), a unique index
+     *   on (refundExpenseId, purchaseExpenseId) that also serves as the refund FK child index, and a
+     *   plain index on purchaseExpenseId for the purchase FK.
+     * - DDL mirrors the Room entity (ExpenseRefundLink / Expense): same column set, NOT NULL,
+     *   defaults, FK clauses and `index_<table>_<cols>` index names, so the Room validator passes.
+     */
+    val MIGRATION_152_153 = object : Migration(152, 153) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL("ALTER TABLE `expenses` ADD COLUMN `refundNettedAmount` REAL NOT NULL DEFAULT 0.0")
+            database.execSQL(
+                "CREATE TABLE IF NOT EXISTS `expense_refund_links` (" +
+                    "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                    "`refundExpenseId` INTEGER NOT NULL, " +
+                    "`purchaseExpenseId` INTEGER NOT NULL, " +
+                    "`appliedAmount` REAL NOT NULL, " +
+                    "`currency` TEXT NOT NULL, " +
+                    "`createdAt` INTEGER NOT NULL, " +
+                    "`source` TEXT NOT NULL, " +
+                    "FOREIGN KEY(`refundExpenseId`) REFERENCES `expenses`(`id`) " +
+                    "ON UPDATE NO ACTION ON DELETE CASCADE , " +
+                    "FOREIGN KEY(`purchaseExpenseId`) REFERENCES `expenses`(`id`) " +
+                    "ON UPDATE NO ACTION ON DELETE CASCADE )"
+            )
+            database.execSQL(
+                "CREATE UNIQUE INDEX IF NOT EXISTS `index_expense_refund_links_refundExpenseId_purchaseExpenseId` " +
+                    "ON `expense_refund_links` (`refundExpenseId`, `purchaseExpenseId`)"
+            )
+            database.execSQL(
+                "CREATE INDEX IF NOT EXISTS `index_expense_refund_links_purchaseExpenseId` " +
+                    "ON `expense_refund_links` (`purchaseExpenseId`)"
+            )
+        }
+    }
+
     /** All registered migrations, starting from v145 baseline. */
     val ALL: Array<Migration> = arrayOf(
         MIGRATION_145_146,
@@ -278,6 +318,7 @@ object DatabaseMigrations {
         MIGRATION_148_149,
         MIGRATION_149_150,
         MIGRATION_150_151,
-        MIGRATION_151_152
+        MIGRATION_151_152,
+        MIGRATION_152_153
     )
 }
