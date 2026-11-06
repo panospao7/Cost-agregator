@@ -127,7 +127,8 @@ class HomeViewModelTotalsLiveTest {
             currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true).also {
                 every { it.homeCurrency() } returns flowOf("EUR")
             },
-            homeInstallmentWeatherSource = mockk(relaxed = true)
+            homeInstallmentWeatherSource = mockk(relaxed = true),
+            markRecurringBillPaid = mockk(relaxed = true)
         )
     }
 

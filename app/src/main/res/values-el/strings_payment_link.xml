@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- fc-paid-unlinked S3 (all 13 keys below are DRAFT: owner native sign-off pending) -->
+    <!-- recurring_link_suggestion_title_format: DRAFT: owner native sign-off pending -->
+    <string name="recurring_link_suggestion_title_format">Έχει ήδη πληρωθεί; %1$s στις %2$s</string>
+    <!-- recurring_link_action: DRAFT: owner native sign-off pending -->
+    <string name="recurring_link_action">Σύνδεση</string>
+    <!-- recurring_link_decline: DRAFT: owner native sign-off pending -->
+    <string name="recurring_link_decline">Όχι αυτός ο λογαριασμός</string>
+    <!-- recurring_link_suggestion_cd_format: DRAFT: owner native sign-off pending -->
+    <string name="recurring_link_suggestion_cd_format">Πιθανή πληρωμή για %1$s: %2$s στις %3$s, ταιριάζει με τον λογαριασμό που λήγει στις %4$s</string>
+    <!-- recurring_link_action_cd_format: DRAFT: owner native sign-off pending -->
+    <string name="recurring_link_action_cd_format">Σύνδεση της πληρωμής %2$s της %3$s με το %1$s</string>
+    <!-- recurring_link_decline_cd_format: DRAFT: owner native sign-off pending -->
+    <string name="recurring_link_decline_cd_format">Η πληρωμή %2$s της %3$s δεν αφορά το %1$s</string>
+    <!-- recurring_link_done_format: DRAFT: owner native sign-off pending -->
+    <string name="recurring_link_done_format">Συνδέθηκε. Το %1$s επισημάνθηκε ως πληρωμένο.</string>
+    <!-- recurring_link_declined: DRAFT: owner native sign-off pending -->
+    <string name="recurring_link_declined">Εντάξει. Δεν θα προτείνουμε ξανά αυτή την πληρωμή για αυτόν τον λογαριασμό.</string>
+    <!-- recurring_link_no_longer_valid: DRAFT: owner native sign-off pending -->
+    <string name="recurring_link_no_longer_valid">Αυτή η πληρωμή δεν μπορεί πλέον να συνδεθεί με αυτόν τον λογαριασμό. Η λίστα ανανεώθηκε.</string>
+    <!-- recurring_link_suggestions_unavailable: DRAFT: owner native sign-off pending -->
+    <string name="recurring_link_suggestions_unavailable">Οι προτάσεις πληρωμής δεν είναι διαθέσιμες αυτή τη στιγμή.</string>
+    <!-- home_paid_bill_hint: DRAFT: owner native sign-off pending -->
+    <plurals name="home_paid_bill_hint">
+        <item quantity="one">%1$d λογαριασμός ίσως έχει ήδη πληρωθεί.</item>
+        <item quantity="other">%1$d λογαριασμοί ίσως έχουν ήδη πληρωθεί.</item>
+    </plurals>
+    <!-- home_paid_bill_hint_action: DRAFT: owner native sign-off pending -->
+    <string name="home_paid_bill_hint_action">Έλεγχος</string>
+    <!-- home_paid_bill_hint_review_cd: DRAFT: owner native sign-off pending -->
+    <string name="home_paid_bill_hint_review_cd">Έλεγχος πιθανών πληρωμένων λογαριασμών</string>
+</resources>

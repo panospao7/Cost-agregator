@@ -43,6 +43,8 @@ class PaymentLinkArchitectureGuardTest {
         const val MATCHER = BASE + "domain/recurring/lifecycle/RecurringPaymentLinkMatcher.kt"
         const val TYPES = BASE + "domain/recurring/lifecycle/PaymentLinkSuggestion.kt"
         const val UI_PREFIX = BASE + "ui/"
+        const val HOME_VIEW_MODEL = BASE + "ui/screens/home/HomeViewModel.kt"
+        const val MANUAL_RECURRING_VIEW_MODEL = BASE + "ui/screens/recurringmanual/ManualRecurringExpenseViewModel.kt"
 
         /** Coordinator-level API: the coordinator declares it, only the use case calls it. */
         val COORDINATOR_API = Regex("""\b(findPaymentLinkSuggestions|confirmPaymentLink|declinePaymentLink)\b""")
@@ -163,6 +165,35 @@ class PaymentLinkArchitectureGuardTest {
             "Only the use case and ui/ may reference linkExistingPayment / declinePayment:\n${errors.joinToString("\n")}",
             errors.isEmpty()
         )
+    }
+
+    @Test
+    fun `INV-1 inside ui only the two view models call the suggestion API and only through the use case`() {
+        val findSuggestions = Regex("""\bfindSuggestions\b""")
+        val coordinatorType = Regex("""\bRecurringLifecycleCoordinator\b""")
+        val useCaseType = Regex("""\bMarkRecurringBillPaidUseCase\b""")
+        val readers = mutableSetOf<String>()
+        val writers = mutableSetOf<String>()
+        val viewModelTexts = mutableMapOf<String, String>()
+        FailClosedScan.walkSourceFiles(sourceRoot) { file, raw ->
+            val relative = FailClosedScan.relativePath(sourceRoot, file)
+            if (!relative.startsWith(UI_PREFIX)) return@walkSourceFiles
+            val text = code(raw)
+            if (findSuggestions.containsMatchIn(text)) readers += relative
+            if (USE_CASE_API.containsMatchIn(text)) writers += relative
+            if (relative == HOME_VIEW_MODEL || relative == MANUAL_RECURRING_VIEW_MODEL) viewModelTexts[relative] = text
+        }
+        assertEquals("ui/ readers of findSuggestions", setOf(HOME_VIEW_MODEL, MANUAL_RECURRING_VIEW_MODEL), readers)
+        assertEquals("ui/ callers of linkExistingPayment / declinePayment", setOf(MANUAL_RECURRING_VIEW_MODEL), writers)
+        assertEquals(setOf(HOME_VIEW_MODEL, MANUAL_RECURRING_VIEW_MODEL), viewModelTexts.keys)
+        for ((relative, text) in viewModelTexts) {
+            assertTrue("$relative must reach the suggestion API through MarkRecurringBillPaidUseCase", useCaseType.containsMatchIn(text))
+            assertFalse("$relative must never reference the coordinator", coordinatorType.containsMatchIn(text))
+            assertFalse(
+                "$relative must never reference the coordinator-level API",
+                COORDINATOR_API.containsMatchIn(text)
+            )
+        }
     }
 
     @Test

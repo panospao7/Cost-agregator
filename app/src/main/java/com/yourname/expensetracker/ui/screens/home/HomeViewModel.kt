@@ -32,6 +32,8 @@ import com.yourname.expensetracker.domain.model.PeriodType
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.model.recommendation.DashboardFollowThroughRecommendation
+import com.yourname.expensetracker.domain.recurring.lifecycle.PaymentLinkSuggestions
+import com.yourname.expensetracker.domain.recurring.usecase.MarkRecurringBillPaidUseCase
 import com.yourname.expensetracker.domain.usecase.dashboard.CategorySpending
 import com.yourname.expensetracker.domain.usecase.dashboard.CompiledDashboardData
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardWidgetRegistry
@@ -46,6 +48,7 @@ import com.yourname.expensetracker.service.NavigationAction
 import com.yourname.expensetracker.service.NavigationTargetResolver
 import com.yourname.expensetracker.service.RecommendationDismissalHandler
 import com.yourname.expensetracker.service.RecommendationStateManager
+import com.yourname.expensetracker.ui.screens.recurringmanual.toUiOrNull
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.ui.navigation.InstallmentsFeature
 import com.yourname.expensetracker.ui.util.guardedWrite
@@ -54,6 +57,7 @@ import com.yourname.expensetracker.domain.widget.model.WidgetStyle
 import com.yourname.expensetracker.domain.widget.model.WidgetStyleConfig
 import com.yourname.expensetracker.domain.widget.service.WidgetStyleRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.withLock
@@ -118,6 +122,22 @@ sealed interface HomeCurrencyUiState {
     data class Error(val message: UiText) : HomeCurrencyUiState
 }
 
+/**
+ * FC-PAID-UNLINKED: Home hint "N bills may already be paid". Count only: no amount, no merchant, and
+ * never an input to any forecast number (INV-1). [Unavailable] renders nothing on Home (never "0 bills").
+ */
+sealed interface PaymentLinkHintUiState {
+    /** First read not finished. Renders nothing; a recompute keeps the previous value instead. */
+    data object Loading : PaymentLinkHintUiState
+
+    /** [count] is the number of suggestions (not rules), always 1 or more. */
+    data class Ready(val count: Int) : PaymentLinkHintUiState
+
+    data object None : PaymentLinkHintUiState
+
+    data object Unavailable : PaymentLinkHintUiState
+}
+
 // ---------------------------------------------------------------------------
 // ViewModel
 // ---------------------------------------------------------------------------
@@ -146,7 +166,9 @@ class HomeViewModel @Inject constructor(
     private val advancedAnalyticsEngine: com.yourname.expensetracker.domain.analytics.AdvancedAnalyticsEngine,
     private val currencySettingsRepository: CurrencySettingsRepository,
     /** S8b-3: Home-only installment-aware weather source (dormant behind the feature flag). */
-    private val homeInstallmentWeatherSource: HomeInstallmentWeatherSource
+    private val homeInstallmentWeatherSource: HomeInstallmentWeatherSource,
+    /** FC-PAID-UNLINKED: read-only source of the "may already be paid" hint count (use case only). */
+    private val markRecurringBillPaid: MarkRecurringBillPaidUseCase
 ) : ViewModel() {
 
     /** Test seam for the compile-time gate [InstallmentsFeature.ENABLED]; production never changes it. */
@@ -213,6 +235,13 @@ class HomeViewModel @Inject constructor(
     private var yearTotalsJob: kotlinx.coroutines.Job? = null
     private var drillJob: kotlinx.coroutines.Job? = null
 
+    // FC-PAID-UNLINKED: declared before init (init starts the first read).
+    private val _paymentLinkHint = MutableStateFlow<PaymentLinkHintUiState>(PaymentLinkHintUiState.Loading)
+
+    /** Home hint state. Read-only; the forecast code never reads it. */
+    val paymentLinkHint: StateFlow<PaymentLinkHintUiState> = _paymentLinkHint.asStateFlow()
+    private var paymentLinkHintJob: kotlinx.coroutines.Job? = null
+
     init {
         viewModelScope.launch {
             try {
@@ -226,6 +255,9 @@ class HomeViewModel @Inject constructor(
 
         // S4-009: Load initial totals in ViewModel using injected TimeProvider — no Calendar.getInstance() fallback
         loadTotalsForYear(com.yourname.expensetracker.domain.util.TimePeriodUtils.getYear(timeProvider.now()))
+
+        // FC-PAID-UNLINKED: first hint read (resume re-reads).
+        refreshPaymentLinkHint()
 
         // S4-010: Refresh dashboard at local midnight so time-sensitive widgets stay current
         viewModelScope.launch {
@@ -499,6 +531,37 @@ class HomeViewModel @Inject constructor(
 
     fun toggleEditMode() {
         isEditMode.value = !isEditMode.value
+    }
+
+    /**
+     * FC-PAID-UNLINKED: recomputes the Home hint (init and every resume). Calls only the use case
+     * (read-only). A newer call cancels the older one; the previous value stays visible meanwhile.
+     * An unreadable result is [PaymentLinkHintUiState.Unavailable], never [PaymentLinkHintUiState.None]
+     * (INV-11). Cancellation is rethrown; no other exception text is kept or logged.
+     */
+    fun refreshPaymentLinkHint() {
+        paymentLinkHintJob?.cancel()
+        paymentLinkHintJob = viewModelScope.launch {
+            val next: PaymentLinkHintUiState = try {
+                when (val result = markRecurringBillPaid.findSuggestions()) {
+                    is PaymentLinkSuggestions.Available -> {
+                        // Count only items the Recurring screen can render (same toUiOrNull rule).
+                        val renderableCount = result.items.count { it.toUiOrNull() != null }
+                        if (renderableCount == 0) {
+                            PaymentLinkHintUiState.None
+                        } else {
+                            PaymentLinkHintUiState.Ready(renderableCount)
+                        }
+                    }
+                    is PaymentLinkSuggestions.Unavailable -> PaymentLinkHintUiState.Unavailable
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                PaymentLinkHintUiState.Unavailable
+            }
+            _paymentLinkHint.value = next
+        }
     }
 
     /**

@@ -26,6 +26,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
@@ -91,6 +94,9 @@ fun HomeRoute(
     onNavigateToMap: (String?) -> Unit = {},
     onNavigateToBudgetDetail: (String) -> Unit = {},
     onNavigateToFeature: (NavigationDestination) -> Unit = {},
+    // FC-PAID-UNLINKED: opens the Recurring Expenses (ManualRecurringExpense) screen from the hint.
+    // Deliberately separate from onNavigateToRecurring, which opens the detected-patterns screen.
+    onNavigateToPaidBillReview: () -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel(),
     notificationStatusViewModel: NotificationCaptureStatusViewModel = hiltViewModel()
 ) {
@@ -99,16 +105,19 @@ fun HomeRoute(
     var notificationAccessOpenFailed by remember { mutableStateOf(false) }
     val notificationContext = LocalContext.current
     val notificationLifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(notificationLifecycleOwner, notificationStatusViewModel) {
+    DisposableEffect(notificationLifecycleOwner, notificationStatusViewModel, viewModel) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 notificationStatusViewModel.refresh()
+                // FC-PAID-UNLINKED: back from the Recurring screen the hint reflects any Link / Not this bill.
+                viewModel.refreshPaymentLinkHint()
             }
         }
         notificationLifecycleOwner.lifecycle.addObserver(observer)
         onDispose { notificationLifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
+    val paymentLinkHint by viewModel.paymentLinkHint.collectAsState()
     val state by viewModel.dashboard.collectAsState()
     val categories by viewModel.categories.collectAsState()
     val recommendations by viewModel.recommendations.collectAsState()
@@ -146,6 +155,8 @@ fun HomeRoute(
         onManageNotificationAccess = {
             notificationAccessOpenFailed = !NotificationListenerSettingsLauncher.open(notificationContext)
         },
+        paymentLinkHint = paymentLinkHint,
+        onReviewPaidBills = onNavigateToPaidBillReview,
     )
 }
 
@@ -168,6 +179,9 @@ fun HomeScreen(
     notificationCaptureStatus: NotificationCaptureStatus = NotificationCaptureStatus.CONSENT_OFF,
     notificationAccessOpenFailed: Boolean = false,
     onManageNotificationAccess: () -> Unit = {},
+    // FC-PAID-UNLINKED: only Ready renders; Loading, None and Unavailable render nothing.
+    paymentLinkHint: PaymentLinkHintUiState = PaymentLinkHintUiState.None,
+    onReviewPaidBills: () -> Unit = {},
 ) {
 
     var showQuickSettings by remember { mutableStateOf(false) }
@@ -317,7 +331,8 @@ fun HomeScreen(
                 item(key = "home_status_banners", span = { GridItemSpan(maxLineSpan) }) {
                     val hasStatusBanner = homeCurrencyState !is HomeCurrencyUiState.Ready ||
                         state.isPartial ||
-                        notificationCaptureStatus == NotificationCaptureStatus.ACCESS_OFF
+                        notificationCaptureStatus == NotificationCaptureStatus.ACCESS_OFF ||
+                        paymentLinkHint is PaymentLinkHintUiState.Ready
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -366,6 +381,14 @@ fun HomeScreen(
                                 status = notificationCaptureStatus,
                                 onManageAccess = onManageNotificationAccess,
                                 openFailed = notificationAccessOpenFailed,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                        // FC-PAID-UNLINKED: count only (no amounts, no merchants).
+                        (paymentLinkHint as? PaymentLinkHintUiState.Ready)?.let { ready ->
+                            PaymentLinkHintCard(
+                                count = ready.count,
+                                onReview = onReviewPaidBills,
                                 modifier = Modifier.fillMaxWidth()
                             )
                         }
@@ -1074,6 +1097,50 @@ fun HomeScreen(
                 currency = homeCurrency ?: "",
                 onDismiss = { showCategoryBreakdown = false }
             )
+            }
+        }
+    }
+}
+
+/**
+ * FC-PAID-UNLINKED hint: "N bills may already be paid". One clickable node (the whole card, at least
+ * 48dp high) named by the plural text; the visual "Review" button is not a second TalkBack stop.
+ * Count only: no money, no merchant, no dismiss.
+ */
+@Composable
+internal fun PaymentLinkHintCard(
+    count: Int,
+    onReview: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val reviewClickLabel = stringResource(R.string.home_paid_bill_hint_review_cd)
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .clickable(onClickLabel = reviewClickLabel, role = Role.Button, onClick = onReview),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = pluralStringResource(R.plurals.home_paid_bill_hint, count, count),
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f)
+            )
+            TextButton(
+                onClick = onReview,
+                modifier = Modifier.clearAndSetSemantics { }
+            ) {
+                Text(stringResource(R.string.home_paid_bill_hint_action))
             }
         }
     }

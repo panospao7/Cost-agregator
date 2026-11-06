@@ -203,6 +203,7 @@ class HomeViewModelWidgetsTest {
             mockk<AdvancedAnalyticsEngine>(relaxed = true),
             currencySettingsRepository = currencySettingsRepository,
             homeInstallmentWeatherSource = mockk(relaxed = true),
+            markRecurringBillPaid = mockk(relaxed = true),
         )
         viewModel = created
         return created

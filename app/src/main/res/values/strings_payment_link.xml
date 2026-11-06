@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- FC-PAID-UNLINKED S3: "paid already" suggestion block on the Recurring Expenses bill card and the
+         Home hint. Wording is "bill", matching recurring_mark_paid_dialog_title. Strings never carry raw
+         notification, OCR or receipt text; the block shows the rule merchant, the amount and dates. -->
+    <!-- %1$s = amount with currency, %2$s = payment date -->
+    <string name="recurring_link_suggestion_title_format">Paid already? %1$s on %2$s</string>
+    <string name="recurring_link_action">Link</string>
+    <string name="recurring_link_decline">Not this bill</string>
+    <!-- %1$s = merchant, %2$s = amount with currency, %3$s = payment date, %4$s = due date -->
+    <string name="recurring_link_suggestion_cd_format">Possible payment for %1$s: %2$s on %3$s, matches the bill due %4$s</string>
+    <!-- %1$s = merchant, %2$s = amount with currency, %3$s = payment date -->
+    <string name="recurring_link_action_cd_format">Link the %2$s payment on %3$s to %1$s</string>
+    <!-- %1$s = merchant, %2$s = amount with currency, %3$s = payment date -->
+    <string name="recurring_link_decline_cd_format">The %2$s payment on %3$s is not for %1$s</string>
+    <!-- %1$s = merchant -->
+    <string name="recurring_link_done_format">Linked. %1$s is marked as paid.</string>
+    <string name="recurring_link_declined">Got it. We won\'t suggest this payment for this bill again.</string>
+    <string name="recurring_link_no_longer_valid">That payment can no longer be linked to this bill. The list was refreshed.</string>
+    <string name="recurring_link_suggestions_unavailable">Payment suggestions are unavailable right now.</string>
+    <plurals name="home_paid_bill_hint">
+        <item quantity="one">%1$d bill may already be paid.</item>
+        <item quantity="other">%1$d bills may already be paid.</item>
+    </plurals>
+    <string name="home_paid_bill_hint_action">Review</string>
+    <string name="home_paid_bill_hint_review_cd">Review possible paid bills</string>
+</resources>

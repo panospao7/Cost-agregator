@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- fc-paid-unlinked S3 (all 13 keys below are DRAFT: owner native sign-off pending) -->
+    <!-- recurring_link_suggestion_title_format: DRAFT: owner native sign-off pending -->
+    <string name="recurring_link_suggestion_title_format">¿Ya pagada? %1$s el %2$s</string>
+    <!-- recurring_link_action: DRAFT: owner native sign-off pending -->
+    <string name="recurring_link_action">Vincular</string>
+    <!-- recurring_link_decline: DRAFT: owner native sign-off pending -->
+    <string name="recurring_link_decline">No es esta factura</string>
+    <!-- recurring_link_suggestion_cd_format: DRAFT: owner native sign-off pending -->
+    <string name="recurring_link_suggestion_cd_format">Posible pago de %1$s: %2$s el %3$s, coincide con la factura que vence el %4$s</string>
+    <!-- recurring_link_action_cd_format: DRAFT: owner native sign-off pending -->
+    <string name="recurring_link_action_cd_format">Vincular el pago de %2$s del %3$s con %1$s</string>
+    <!-- recurring_link_decline_cd_format: DRAFT: owner native sign-off pending -->
+    <string name="recurring_link_decline_cd_format">El pago de %2$s del %3$s no es de %1$s</string>
+    <!-- recurring_link_done_format: DRAFT: owner native sign-off pending -->
+    <string name="recurring_link_done_format">Vinculado. %1$s se marcó como pagada.</string>
+    <!-- recurring_link_declined: DRAFT: owner native sign-off pending -->
+    <string name="recurring_link_declined">Entendido. No volveremos a sugerir este pago para esta factura.</string>
+    <!-- recurring_link_no_longer_valid: DRAFT: owner native sign-off pending -->
+    <string name="recurring_link_no_longer_valid">Ese pago ya no se puede vincular a esta factura. Se actualizó la lista.</string>
+    <!-- recurring_link_suggestions_unavailable: DRAFT: owner native sign-off pending -->
+    <string name="recurring_link_suggestions_unavailable">Las sugerencias de pago no están disponibles ahora.</string>
+    <!-- home_paid_bill_hint: DRAFT: owner native sign-off pending -->
+    <plurals name="home_paid_bill_hint">
+        <item quantity="one">%1$d factura podría estar ya pagada.</item>
+        <item quantity="many">%1$d de facturas podrían estar ya pagadas.</item>
+        <item quantity="other">%1$d facturas podrían estar ya pagadas.</item>
+    </plurals>
+    <!-- home_paid_bill_hint_action: DRAFT: owner native sign-off pending -->
+    <string name="home_paid_bill_hint_action">Revisar</string>
+    <!-- home_paid_bill_hint_review_cd: DRAFT: owner native sign-off pending -->
+    <string name="home_paid_bill_hint_review_cd">Revisar posibles facturas pagadas</string>
+</resources>

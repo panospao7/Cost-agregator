@@ -662,6 +662,9 @@ fun MainScreen(
                     0 -> HomeRoute(
                         onNavigateToReview = { navigation.navigateToTab(2) },
                         onNavigateToRecurring = { navigation.navigateTo(NavigationDestination.RecurringExpenses) },
+                        // FC-PAID-UNLINKED: the "may already be paid" hint opens the Recurring Expenses
+                        // screen (bill cards), not the detected-patterns screen above.
+                        onNavigateToPaidBillReview = { navigation.navigateTo(NavigationDestination.ManualRecurringExpense) },
                         onNavigateToTransactions = { filter ->
                             activeTransactionFilter = filter
                             navigation.navigateTo(NavigationDestination.Transactions())

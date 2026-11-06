@@ -83,7 +83,7 @@ New sealed state `PaymentLinkSuggestionsUiState` (held alongside the existing `M
 | `None` | Nothing. No "no suggestions" text. | `Available([])`: no rules, no expenses, no pairs, all declined, SKIPPED/PAID neighbour blocks (INV-6), unmaterialized, future-dated (AE-24, AE-25, AE-26, AE-27). |
 | `Unavailable` | The muted unavailable line. Never `None`, never a zero. | `Unavailable(READ_BLOCKED)` (restore running or read barrier, INV-11, AE-18) and `Unavailable(READ_FAILED)` (any other read error). Both map to the same line; the reason code is not shown. Retry = the existing toolbar Refresh action. |
 
-`SuggestionUi` holds only what is rendered: `occurrenceId`, `ruleId`, `expenseId`, formatted paid amount (from amount plus currency), payment date, due date. If the expense or rule cannot be read at render time, the item is dropped and a recompute is requested. A blank or zero amount is never shown.
+`SuggestionUi` holds only what is rendered: `occurrenceId`, `ruleId`, `expenseId`, formatted paid amount (from amount plus currency), payment date, due date. If the expense cannot be rendered truthfully at render time, the item is dropped and the next normal recompute applies (no automatic recompute, to avoid a loop); the Home hint counts only renderable items. If the rule is missing, the item is dropped and a recompute is requested. A blank or zero amount is never shown.
 
 Action results (transient, via the existing `actionMessage` snackbar plus `inFlightRuleIds`; not a sealed screen state):
 
