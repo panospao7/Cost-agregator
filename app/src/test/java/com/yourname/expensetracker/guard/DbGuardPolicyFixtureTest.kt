@@ -25,7 +25,7 @@ import java.io.File
  *   BOTH sections (a cross-section duplicate fails closed), and no
  *   duplicate/wildcard/raw/write tuples.
      * - **Ownership policy:** The active `db_ownership_policy.yml` is the
-     *   activated v2 document (`schemaVersion: 2`, 467 entries — one entry per
+     *   activated v2 document (`schemaVersion: 2`, 466 entries — one entry per
      *   canonical mutation key, with `ownerFqcn` / `daoAccessor` / `barrierMode`
      *   fields). The fixture parser accepts the v2 document header and entry
      *   schema and maps v2 fields onto the shared [ParsedEntry] model; legacy
@@ -1068,7 +1068,7 @@ class DbGuardPolicyFixtureTest {
     // ══════════════════════════════════════════════════════════════════
 
     @Test
-    fun `manifest — ownership policy has exactly 467 entries`() {
+    fun `manifest — ownership policy has exactly 466 entries`() {
         // Release 1.0 G3 S4 (owner pre-approved shrink): the two direct transactionEventDao.insert
         // identities (NotificationRepository, ReviewQueueRepository) were removed: 429 -> 427.
         // Release 1.0 R21 S1 adds one approved exact identity
@@ -1113,8 +1113,10 @@ class DbGuardPolicyFixtureTest {
         // transactionEventDao.insert), so 466.
         // 1.0.4 category denormalized-name sync (owner item 144): +1 exact identity
         // (renameCategory / updateDenormalizedCategoryNames), so 467.
+        // 1.0.4 J-12-2 (owner item 144): -1 dead CsvExpenseImporter.getOrCreateCategory /
+        // categoryDao.insert identity (unknown CSV categories now map to Uncategorized), so 466.
         val entries = parseEntries(ownershipPolicyFile)
-        assertEquals("Ownership policy must have exactly 467 entries", 467, entries.size)
+        assertEquals("Ownership policy must have exactly 466 entries", 466, entries.size)
     }
 
     @Test

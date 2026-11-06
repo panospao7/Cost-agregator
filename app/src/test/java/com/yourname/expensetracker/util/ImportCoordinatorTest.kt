@@ -76,7 +76,7 @@ class ImportCoordinatorTest {
         assertThat(result.success).isFalse()
         assertThat(result.importedCount).isEqualTo(1)
         assertThat(result.errorCount).isEqualTo(1)
-        assertThat(result.errors).containsExactly("Row 1: Validation: amount must be positive")
+        assertThat(result.errors).containsExactly("Row 1: ${CsvImportFailureCode.ROW_REJECTED.name}")
         assertThat(result.expenseIds).containsExactly(101L)
     }
 

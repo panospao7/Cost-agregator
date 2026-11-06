@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- J-12-2 CSV import UI (all 32 keys below are DRAFT: owner native sign-off pending) -->
+    <!-- csv_import_card_title: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_card_title">Importar CSV</string>
+    <!-- csv_import_card_description: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_card_description">Restaura gastos desde un archivo CSV exportado por esta aplicación. Verás una vista previa antes de guardar nada.</string>
+    <!-- csv_import_choose_file: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_choose_file">Elegir archivo CSV</string>
+    <!-- csv_import_choose_file_cd: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_choose_file_cd">Elegir un archivo CSV para importar</string>
+    <!-- csv_import_reading: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_reading">Leyendo el archivo</string>
+    <!-- csv_import_preview_title: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_preview_title">Revisar importación</string>
+    <!-- csv_import_preview_nothing: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_preview_nothing">No se puede importar ninguna fila de este archivo.</string>
+    <!-- csv_import_confirm: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_confirm">Importar</string>
+    <!-- csv_import_progress_format: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_progress_format">Importando fila %1$d de %2$d</string>
+    <!-- csv_import_progress_cd_format: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_progress_cd_format">Progreso de la importación: %1$d de %2$d filas</string>
+    <!-- csv_import_cancel_import: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_cancel_import">Cancelar importación</string>
+    <!-- csv_import_result_title: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_result_title">Importación finalizada</string>
+    <!-- csv_import_error_size_limit: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_error_size_limit">Este archivo supera los 5 MB y no se puede importar.</string>
+    <!-- csv_import_error_read_failed: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_error_read_failed">No se pudo leer el archivo.</string>
+    <!-- csv_import_error_format: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_error_format">Error de importación: %1$s.</string>
+
+    <!-- csv_import_failure_invalid_date: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_failure_invalid_date">fecha no válida (se espera aaaa-MM-dd)</string>
+    <!-- csv_import_failure_invalid_amount: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_failure_invalid_amount">importe no válido</string>
+    <!-- csv_import_failure_missing_column: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_failure_missing_column">falta la fecha o el comercio</string>
+    <!-- csv_import_failure_invalid_header: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_failure_invalid_header">fila de encabezado mal formada</string>
+    <!-- csv_import_failure_malformed_row: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_failure_malformed_row">fila mal formada (comillas sin cerrar)</string>
+    <!-- csv_import_failure_unknown_transaction_type: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_failure_unknown_transaction_type">tipo de transacción no reconocido</string>
+    <!-- csv_import_failure_row_rejected: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_failure_row_rejected">rechazada por no ser válida</string>
+    <!-- csv_import_failure_write_blocked: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_failure_write_blocked">los cambios están en pausa durante una copia de seguridad o restauración</string>
+    <!-- csv_import_failure_internal: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_failure_internal">error inesperado</string>
+
+    <!-- csv_import_preview_valid: DRAFT: owner native sign-off pending -->
+    <plurals name="csv_import_preview_valid">
+        <item quantity="one">Se importará %1$d fila.</item>
+        <item quantity="many">Se importarán %1$d filas.</item>
+        <item quantity="other">Se importarán %1$d filas.</item>
+    </plurals>
+    <!-- csv_import_preview_invalid: DRAFT: owner native sign-off pending -->
+    <plurals name="csv_import_preview_invalid">
+        <item quantity="one">Se omitirá %1$d fila: %2$s.</item>
+        <item quantity="many">Se omitirán %1$d filas: %2$s.</item>
+        <item quantity="other">Se omitirán %1$d filas: %2$s.</item>
+    </plurals>
+    <!-- csv_import_preview_unknown_category: DRAFT: owner native sign-off pending -->
+    <plurals name="csv_import_preview_unknown_category">
+        <item quantity="one">%1$d fila tiene una categoría desconocida y se archivará en Sin categoría.</item>
+        <item quantity="many">%1$d filas tienen una categoría desconocida y se archivarán en Sin categoría.</item>
+        <item quantity="other">%1$d filas tienen una categoría desconocida y se archivarán en Sin categoría.</item>
+    </plurals>
+    <!-- csv_import_preview_skipped_installments: DRAFT: owner native sign-off pending -->
+    <plurals name="csv_import_preview_skipped_installments">
+        <item quantity="one">Se omitirá %1$d fila de cuotas.</item>
+        <item quantity="many">Se omitirán %1$d filas de cuotas.</item>
+        <item quantity="other">Se omitirán %1$d filas de cuotas.</item>
+    </plurals>
+    <!-- csv_import_result_imported: DRAFT: owner native sign-off pending -->
+    <plurals name="csv_import_result_imported">
+        <item quantity="one">%1$d gasto importado</item>
+        <item quantity="many">%1$d gastos importados</item>
+        <item quantity="other">%1$d gastos importados</item>
+    </plurals>
+    <!-- csv_import_result_duplicates: DRAFT: owner native sign-off pending -->
+    <plurals name="csv_import_result_duplicates">
+        <item quantity="one">%1$d duplicado omitido</item>
+        <item quantity="many">%1$d duplicados omitidos</item>
+        <item quantity="other">%1$d duplicados omitidos</item>
+    </plurals>
+    <!-- csv_import_result_failed: DRAFT: owner native sign-off pending -->
+    <plurals name="csv_import_result_failed">
+        <item quantity="one">%1$d fila fallida</item>
+        <item quantity="many">%1$d filas fallidas</item>
+        <item quantity="other">%1$d filas fallidas</item>
+    </plurals>
+    <!-- csv_import_cancelled: DRAFT: owner native sign-off pending -->
+    <plurals name="csv_import_cancelled">
+        <item quantity="one">Importación cancelada tras %1$d fila. Los gastos ya importados se conservaron.</item>
+        <item quantity="many">Importación cancelada tras %1$d filas. Los gastos ya importados se conservaron.</item>
+        <item quantity="other">Importación cancelada tras %1$d filas. Los gastos ya importados se conservaron.</item>
+    </plurals>
+</resources>

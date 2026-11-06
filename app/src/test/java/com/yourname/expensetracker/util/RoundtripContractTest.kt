@@ -130,8 +130,8 @@ class RoundtripContractTest {
         assertEquals(0, result.imported)
         assertEquals(1, result.errors)
         assertEquals(
-            ImportContractErrorCodes.UNKNOWN_TRANSACTION_TYPE,
-            (result.perRowResults.single() as CsvExpenseImporter.RowResult.Failed).error
+            CsvImportFailureCode.UNKNOWN_TRANSACTION_TYPE,
+            (result.perRowResults.single() as CsvExpenseImporter.RowResult.Failed).code
         )
         coVerify(exactly = 0) { coordinator.createExpense(any()) }
     }

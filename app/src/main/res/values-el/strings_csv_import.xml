@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- J-12-2 CSV import UI (all 32 keys below are DRAFT: owner native sign-off pending) -->
+    <!-- csv_import_card_title: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_card_title">Εισαγωγή CSV</string>
+    <!-- csv_import_card_description: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_card_description">Επαναφέρετε έξοδα από αρχείο CSV που εξήχθη από αυτή την εφαρμογή. Θα δείτε προεπισκόπηση πριν αποθηκευτεί οτιδήποτε.</string>
+    <!-- csv_import_choose_file: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_choose_file">Επιλογή αρχείου CSV</string>
+    <!-- csv_import_choose_file_cd: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_choose_file_cd">Επιλογή αρχείου CSV για εισαγωγή</string>
+    <!-- csv_import_reading: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_reading">Ανάγνωση αρχείου</string>
+    <!-- csv_import_preview_title: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_preview_title">Έλεγχος εισαγωγής</string>
+    <!-- csv_import_preview_nothing: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_preview_nothing">Καμία γραμμή αυτού του αρχείου δεν μπορεί να εισαχθεί.</string>
+    <!-- csv_import_confirm: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_confirm">Εισαγωγή</string>
+    <!-- csv_import_progress_format: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_progress_format">Εισαγωγή γραμμής %1$d από %2$d</string>
+    <!-- csv_import_progress_cd_format: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_progress_cd_format">Πρόοδος εισαγωγής: %1$d από %2$d γραμμές</string>
+    <!-- csv_import_cancel_import: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_cancel_import">Ακύρωση εισαγωγής</string>
+    <!-- csv_import_result_title: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_result_title">Η εισαγωγή ολοκληρώθηκε</string>
+    <!-- csv_import_error_size_limit: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_error_size_limit">Αυτό το αρχείο είναι μεγαλύτερο από 5 MB και δεν μπορεί να εισαχθεί.</string>
+    <!-- csv_import_error_read_failed: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_error_read_failed">Δεν ήταν δυνατή η ανάγνωση του αρχείου.</string>
+    <!-- csv_import_error_format: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_error_format">Η εισαγωγή απέτυχε: %1$s.</string>
+
+    <!-- csv_import_failure_invalid_date: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_failure_invalid_date">μη έγκυρη ημερομηνία (αναμένεται yyyy-MM-dd)</string>
+    <!-- csv_import_failure_invalid_amount: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_failure_invalid_amount">μη έγκυρο ποσό</string>
+    <!-- csv_import_failure_missing_column: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_failure_missing_column">λείπει η ημερομηνία ή το κατάστημα</string>
+    <!-- csv_import_failure_invalid_header: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_failure_invalid_header">κακοσχηματισμένη γραμμή κεφαλίδας</string>
+    <!-- csv_import_failure_malformed_row: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_failure_malformed_row">κακοσχηματισμένη γραμμή (ανοιχτά εισαγωγικά)</string>
+    <!-- csv_import_failure_unknown_transaction_type: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_failure_unknown_transaction_type">μη αναγνωρισμένος τύπος συναλλαγής</string>
+    <!-- csv_import_failure_row_rejected: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_failure_row_rejected">απορρίφθηκε ως μη έγκυρη</string>
+    <!-- csv_import_failure_write_blocked: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_failure_write_blocked">οι αλλαγές είναι σε παύση κατά τη δημιουργία ή επαναφορά αντιγράφου ασφαλείας</string>
+    <!-- csv_import_failure_internal: DRAFT: owner native sign-off pending -->
+    <string name="csv_import_failure_internal">μη αναμενόμενο σφάλμα</string>
+
+    <!-- csv_import_preview_valid: DRAFT: owner native sign-off pending -->
+    <plurals name="csv_import_preview_valid">
+        <item quantity="one">Θα εισαχθεί %1$d γραμμή.</item>
+        <item quantity="other">Θα εισαχθούν %1$d γραμμές.</item>
+    </plurals>
+    <!-- csv_import_preview_invalid: DRAFT: owner native sign-off pending -->
+    <plurals name="csv_import_preview_invalid">
+        <item quantity="one">Θα παραλειφθεί %1$d γραμμή: %2$s.</item>
+        <item quantity="other">Θα παραλειφθούν %1$d γραμμές: %2$s.</item>
+    </plurals>
+    <!-- csv_import_preview_unknown_category: DRAFT: owner native sign-off pending -->
+    <plurals name="csv_import_preview_unknown_category">
+        <item quantity="one">%1$d γραμμή έχει άγνωστη κατηγορία και θα καταχωριστεί στο Χωρίς κατηγορία.</item>
+        <item quantity="other">%1$d γραμμές έχουν άγνωστη κατηγορία και θα καταχωριστούν στο Χωρίς κατηγορία.</item>
+    </plurals>
+    <!-- csv_import_preview_skipped_installments: DRAFT: owner native sign-off pending -->
+    <plurals name="csv_import_preview_skipped_installments">
+        <item quantity="one">Θα παραλειφθεί %1$d γραμμή δόσης.</item>
+        <item quantity="other">Θα παραλειφθούν %1$d γραμμές δόσεων.</item>
+    </plurals>
+    <!-- csv_import_result_imported: DRAFT: owner native sign-off pending -->
+    <plurals name="csv_import_result_imported">
+        <item quantity="one">%1$d έξοδο εισήχθη</item>
+        <item quantity="other">%1$d έξοδα εισήχθησαν</item>
+    </plurals>
+    <!-- csv_import_result_duplicates: DRAFT: owner native sign-off pending -->
+    <plurals name="csv_import_result_duplicates">
+        <item quantity="one">%1$d διπλότυπο παραλείφθηκε</item>
+        <item quantity="other">%1$d διπλότυπα παραλείφθηκαν</item>
+    </plurals>
+    <!-- csv_import_result_failed: DRAFT: owner native sign-off pending -->
+    <plurals name="csv_import_result_failed">
+        <item quantity="one">%1$d γραμμή απέτυχε</item>
+        <item quantity="other">%1$d γραμμές απέτυχαν</item>
+    </plurals>
+    <!-- csv_import_cancelled: DRAFT: owner native sign-off pending -->
+    <plurals name="csv_import_cancelled">
+        <item quantity="one">Η εισαγωγή ακυρώθηκε μετά από %1$d γραμμή. Τα έξοδα που είχαν ήδη εισαχθεί διατηρήθηκαν.</item>
+        <item quantity="other">Η εισαγωγή ακυρώθηκε μετά από %1$d γραμμές. Τα έξοδα που είχαν ήδη εισαχθεί διατηρήθηκαν.</item>
+    </plurals>
+</resources>

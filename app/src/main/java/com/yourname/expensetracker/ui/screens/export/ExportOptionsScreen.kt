@@ -325,6 +325,11 @@ fun ExportOptionsScreen(
                     }
                 }
                 
+                // J-12-2: CSV import (own ViewModel)
+                item {
+                    CsvImportCard()
+                }
+
                 // Instructions
                 item {
                     InstructionsCard()
