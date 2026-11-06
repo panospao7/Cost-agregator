@@ -176,7 +176,13 @@ class NotificationParserDashboardTotalSeamTest : AnalyticsEngineTestBase() {
                     packageName: String
                 ) = null
             },
-            timeProvider = timeProvider
+            timeProvider = timeProvider,
+            currencySettingsRepository = io.mockk.mockk<com.yourname.expensetracker.domain.currency.CurrencySettingsRepository>().also {
+                io.mockk.coEvery { it.resolveHomeCurrency() } returns
+                    com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Resolved(
+                        com.yourname.expensetracker.domain.core.money.CurrencyCode("EUR")
+                    )
+            }
         )
 
         val context = mockk<Context>(relaxed = true)

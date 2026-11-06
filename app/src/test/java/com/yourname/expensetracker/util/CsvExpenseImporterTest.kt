@@ -9,6 +9,7 @@ import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
+import com.yourname.expensetracker.domain.export.CsvCellSanitizer
 import com.yourname.expensetracker.domain.provenance.CreateExpenseSourceLinkRequirements
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
@@ -166,6 +167,52 @@ class CsvExpenseImporterTest {
         importer.importFromContent(csv)
 
         assertThat(requestSlot.captured.amount).isEqualTo(12.50)
+    }
+
+    // P-12-3: text cells go through the real CsvCellSanitizer on export; the importer must restore
+    // the original value. Header uses `notes` so both merchant and notes are covered.
+    private suspend fun importThroughSanitizer(merchants: List<String>, notes: String): List<CreateExpenseRequest> {
+        val cat = Category(id = 1, name = "Food", icon = "F", color = "#AABBCC")
+        coEvery { categoryDao.getByName(any()) } returns cat
+        val captured = mutableListOf<CreateExpenseRequest>()
+        coEvery { coordinator.createExpense(capture(captured)) } returns CreateExpenseResult.Created(1L)
+        val rows = merchants.mapIndexed { index, merchant ->
+            val day = (index + 1).toString().padStart(2, '0')
+            "2024-01-$day,1.00,${CsvCellSanitizer.sanitize(merchant)},Food,${CsvCellSanitizer.sanitize(notes)}"
+        }
+        importer.importFromContent("date,amount,merchant,category,notes\n" + rows.joinToString("\n"))
+        return captured
+    }
+
+    @Test
+    fun `P-12-3 export-sanitized formula cells round-trip to the original value`() = runTest {
+        val originals = listOf("=SUM(A1:A2)", "+44 Taxi", "@home", "-Pizza Place")
+
+        val requests = importThroughSanitizer(originals, notes = "=1+1")
+
+        // Sanity: the sanitizer really prefixed each value, so the strip is the inverse of it.
+        originals.forEach { assertThat(CsvCellSanitizer.sanitize(it)).isEqualTo("'$it") }
+        assertThat(requests.map { it.merchant }).containsExactlyElementsIn(originals).inOrder()
+        assertThat(requests.map { it.notes }.distinct()).containsExactly("=1+1")
+    }
+
+    @Test
+    fun `P-12-3 whitespace-led formula cell round-trips through the real sanitizer`() = runTest {
+        val originals = listOf("  =x")
+
+        val requests = importThroughSanitizer(originals, notes = "ok")
+
+        assertThat(CsvCellSanitizer.sanitize("  =x")).isEqualTo("'  =x")
+        assertThat(requests.map { it.merchant }).containsExactly("  =x")
+    }
+
+    @Test
+    fun `P-12-3 ordinary leading quote and plain negative number are left unchanged`() = runTest {
+        val requests = importThroughSanitizer(listOf("'abc", "-5"), notes = "'note")
+
+        // CsvCellSanitizer neither prefixes "'abc" nor the plain number "-5", so nothing is stripped.
+        assertThat(requests.map { it.merchant }).containsExactly("'abc", "-5").inOrder()
+        assertThat(requests.map { it.notes }.distinct()).containsExactly("'note")
     }
 
     @Test

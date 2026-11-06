@@ -92,6 +92,7 @@ class SharedExpenseGroupsViewModelErrorTest : ViewModelTestUtils() {
             manualExpenseRepository = mockk<ManualExpenseRepository>(relaxed = true),
             expenseRepository = mockk<ExpenseRepository>(relaxed = true),
             currencySettingsRepository = currencyRepo,
+            settlementCalculator = mockk(relaxed = true),
         )
     }
 

@@ -87,6 +87,7 @@ interface CurrencySettingsRepository {
                 )
             }
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             HomeCurrencyResolution.Failed(e.message ?: "Unknown error reading home currency")
         }
     }

@@ -7,6 +7,9 @@ import com.yourname.expensetracker.data.database.entity.SplitType
 import com.yourname.expensetracker.domain.groups.GroupSettlementBalancePolicy
 import com.yourname.expensetracker.domain.groups.SharedGroupSettlement
 import com.yourname.expensetracker.domain.logic.SplitCalculator
+import com.yourname.expensetracker.domain.groups.SettlementCalculator
+import io.mockk.mockk
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -105,34 +108,61 @@ class SharedExpenseGroupsScreenStateTest {
     // ---- AE-7 / INV-7: the suggested plan is composed only for an AVAILABLE group ----
 
     @Test
-    fun `AE-7 partial group composes no settlement plan`() {
+    fun `AE-7 partial group composes no settlement plan`() = runTest {
         val partial = displayed(
             "EUR",
             listOf(expense(1L, 1L, 30.0, "EUR"), expense(2L, 2L, 20.0, "USD"))
         )
 
         assertEquals(GroupSettlementBalancePolicy.Availability.PARTIAL, partial.availability)
-        assertNull(suggestedSettlementTransfers(partial))
+        assertNull(suggestedSettlementTransfers(partial, calculator))
     }
 
     @Test
-    fun `AE-7 unavailable group composes no settlement plan`() {
+    fun `AE-7 unavailable group composes no settlement plan`() = runTest {
         val unavailable = displayed("", listOf(expense(1L, 1L, 10.0, "")))
 
         assertEquals(GroupSettlementBalancePolicy.Availability.UNAVAILABLE, unavailable.availability)
-        assertNull(suggestedSettlementTransfers(unavailable))
+        assertNull(suggestedSettlementTransfers(unavailable, calculator))
+    }
+
+    @Test
+    fun `AE-7 available group composes the SettlementCalculator plan`() = runTest {
+        val available = displayed("EUR", listOf(expense(1L, 1L, 30.0, "EUR")))
+
+        assertEquals(GroupSettlementBalancePolicy.Availability.AVAILABLE, available.availability)
+        // Alex paid 30 split equally: Alex +15, Sam -15, so Sam pays Alex 15.00.
+        assertEquals(listOf(Triple(2L, 1L, 15.0)), suggestedSettlementTransfers(available, calculator))
     }
 
     @Test
     @Suppress("DEPRECATION")
-    fun `AE-7 available group composes the plan equal to simplifyBalances of its balances`() {
-        val available = displayed("EUR", listOf(expense(1L, 1L, 30.0, "EUR")))
+    fun `DR-10 DFS solver beats the greedy simplifyBalances on two zero-sum subgroups`() = runTest {
+        // Nets: 1:+10, 2:+9, 3:-9, 4:-6, 5:-4 (sum 0). Zero-sum subgroups: {1,4,5} and {2,3}.
+        // Greedy (debtors 9,6,4 vs creditors 10,9): 3->1 9, 4->1 1, 4->2 5, 5->2 4 = 4 transfers.
+        // Exact: 4->1 6, 5->1 4, 3->2 9 = 3 transfers (n - number of zero-sum subgroups).
+        val balances = mapOf(1L to 10.0, 2L to 9.0, 3L to -9.0, 4L to -6.0, 5L to -4.0)
+        val available = GroupSettlementBalancePolicy.DisplayedBalances(
+            availability = GroupSettlementBalancePolicy.Availability.AVAILABLE,
+            currency = "EUR",
+            includedTotal = 0.0,
+            memberBalances = balances,
+            excludedExpenseCount = 0,
+            excludedSettlementCount = 0
+        )
 
-        assertEquals(GroupSettlementBalancePolicy.Availability.AVAILABLE, available.availability)
-        val transfers = suggestedSettlementTransfers(available)
-        assertEquals(SplitCalculator.simplifyBalances(available.memberBalances), transfers)
-        assertEquals(1, transfers!!.size)
+        assertEquals(4, SplitCalculator.simplifyBalances(balances).size)
+        val plan = suggestedSettlementTransfers(available, calculator)!!
+        assertEquals(
+            listOf(Triple(3L, 2L, 9.0), Triple(4L, 1L, 6.0), Triple(5L, 1L, 4.0)),
+            plan.sortedBy { it.first }
+        )
     }
+
+    private val calculator = SettlementCalculator(
+        currencySettingsRepository = mockk(),
+        writeBarrier = mockk(relaxed = true)
+    )
 
     // ---- AE-8 / INV-8: one combined count notice with no identifying text ----
 

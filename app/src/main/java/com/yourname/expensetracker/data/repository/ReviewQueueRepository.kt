@@ -667,13 +667,13 @@ class ReviewQueueRepository @Inject constructor(
         ).joinToString(" ")
 
         val parsed = if (isRelevant) {
-            parserRegistry.parse(
+            parserRegistry.parseWithProvenance(
                 title = notification.title,
                 text = notification.text,
                 bigText = notification.bigText,
                 subText = notification.subText,
                 packageName = notification.packageName
-            )
+            ).parsed
         } else {
             null
         }

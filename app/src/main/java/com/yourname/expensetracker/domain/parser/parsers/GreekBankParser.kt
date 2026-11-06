@@ -181,12 +181,26 @@ class GreekBankParser(
  Regex("""balance\s*:?\s*[€$£]?\s*\d+([.,]\d{1,2})?""", RegexOption.IGNORE_CASE)
  )
 
+    /** Parses with the home-currency snapshot given at construction. */
     override fun parse(
         title: String?,
         text: String?,
         bigText: String?,
+        subText: String?,
+        packageName: String
+    ): ParsedTransaction? = parse(title, text, bigText, subText, packageName, homeCurrency)
+
+    /**
+     * I-03-1: parses with an explicit [homeCurrency], used as the fallback currency when the
+     * notification carries no currency token. The registry passes the freshly resolved value.
+     */
+    fun parse(
+        title: String?,
+        text: String?,
+        bigText: String?,
         @Suppress("UNUSED_PARAMETER") subText: String?,
-        @Suppress("UNUSED_PARAMETER") packageName: String
+        @Suppress("UNUSED_PARAMETER") packageName: String,
+        homeCurrency: String
     ): ParsedTransaction? {
  val fields = listOfNotNull(title, text, bigText)
 
@@ -202,7 +216,7 @@ class GreekBankParser(
             for (spec in DEPOSIT_PATTERNS) {
                 val matcher = spec.pattern.matcher(field)
                 if (matcher.find()) {
-                    val result = tryExtractDeposit(matcher, spec, field)
+                    val result = tryExtractDeposit(matcher, spec, field, homeCurrency)
                     if (result != null) return result
                 }
             }
@@ -211,7 +225,7 @@ class GreekBankParser(
             for (spec in PURCHASE_PATTERNS) {
                 val matcher = spec.pattern.matcher(field)
                 if (matcher.find()) {
-                    val result = tryExtract(matcher, spec)
+                    val result = tryExtract(matcher, spec, homeCurrency)
                     if (result != null) return result
                 }
             }
@@ -220,7 +234,7 @@ class GreekBankParser(
             for (spec in TRANSFER_PATTERNS) {
                 val matcher = spec.pattern.matcher(field)
                 if (matcher.find()) {
-                    val result = tryExtractTransfer(matcher, spec, field)
+                    val result = tryExtractTransfer(matcher, spec, field, homeCurrency)
                     if (result != null) return result
                 }
             }
@@ -229,7 +243,11 @@ class GreekBankParser(
         return null
     }
 
-    private fun tryExtract(matcher: java.util.regex.Matcher, spec: AmountPattern): ParsedTransaction? {
+    private fun tryExtract(
+        matcher: java.util.regex.Matcher,
+        spec: AmountPattern,
+        homeCurrency: String
+    ): ParsedTransaction? {
         // MONEY-02 H1: the amount comes only from the pattern's designated amount group.
         val amount = extractAmount(matcher, spec.amountGroup) ?: return null
         if (amount < 0.01 || amount > 50000) return null
@@ -238,7 +256,7 @@ class GreekBankParser(
         // pattern's lazy tail captured it. It is the currency, never the merchant.
         val rawTail = groupOrNull(matcher, spec.merchantGroup)
         val tailCurrencyToken = currencyTokenOrNull(rawTail)
-        val currency = resolveCurrency(extractCurrencyToken(matcher, spec.currencyGroup) ?: tailCurrencyToken)
+        val currency = resolveCurrency(extractCurrencyToken(matcher, spec.currencyGroup) ?: tailCurrencyToken, homeCurrency)
         var merchant = "Unknown"
         if (rawTail != null && tailCurrencyToken == null && rawTail.length > 2) {
             merchant = merchantCleaner.clean(rawTail)
@@ -256,12 +274,13 @@ class GreekBankParser(
     private fun tryExtractDeposit(
         matcher: java.util.regex.Matcher,
         spec: AmountPattern,
-        fullText: String
+        fullText: String,
+        homeCurrency: String
     ): ParsedTransaction? {
         val amount = extractAmount(matcher, spec.amountGroup) ?: return null
         if (amount < 0.01 || amount > 50000) return null
 
-        val currency = resolveCurrency(extractCurrencyToken(matcher, spec.currencyGroup))
+        val currency = resolveCurrency(extractCurrencyToken(matcher, spec.currencyGroup), homeCurrency)
 
         // For deposits, merchant is usually the sender (bank/employer)
         val merchant = extractDepositSource(fullText)
@@ -312,7 +331,8 @@ class GreekBankParser(
     private fun tryExtractTransfer(
         matcher: java.util.regex.Matcher,
         spec: AmountPattern,
-        fullText: String
+        fullText: String,
+        homeCurrency: String
     ): ParsedTransaction? {
         // MONEY-02 H1: amount only from the designated group; the single-letter bank code
         // group (Χ/Π) is direction metadata and is never read as merchant or amount.
@@ -323,7 +343,7 @@ class GreekBankParser(
         // currency, never the destination name.
         val tail = groupOrNull(matcher, spec.merchantGroup)?.trim()
         val tailCurrencyToken = currencyTokenOrNull(tail)
-        val currency = resolveCurrency(extractCurrencyToken(matcher, spec.currencyGroup) ?: tailCurrencyToken)
+        val currency = resolveCurrency(extractCurrencyToken(matcher, spec.currencyGroup) ?: tailCurrencyToken, homeCurrency)
         var merchant = "Transfer"
         if (tail != null && tailCurrencyToken == null && tail.length > 2) {
             merchant = merchantCleaner.clean(tail)
@@ -384,7 +404,7 @@ class GreekBankParser(
         currencyTokenOrNull(groupOrNull(matcher, group))
 
     /** Normalises a recognised currency token, or falls back to the home currency. */
-    private fun resolveCurrency(token: String?): String =
+    private fun resolveCurrency(token: String?, homeCurrency: String): String =
         token?.let { currencyNormalizer.normalizeOrNull(it) } ?: homeCurrency
 
     private companion object {

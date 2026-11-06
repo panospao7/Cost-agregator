@@ -13,6 +13,7 @@ import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.parser.AppParserRegistry
+import com.yourname.expensetracker.domain.parser.ParseOutcome
 import com.yourname.expensetracker.domain.privacy.PrivacySettings
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.domain.privacy.RawStorageMode
@@ -901,8 +902,8 @@ class ReviewQueueRepositoryTest {
         coEvery { rawNotificationDao.getById(notificationId) } returns notification
         // Parser returns null → forces the fallback PendingReview creation path
         coEvery {
-            parserRegistry.parse(any(), any(), any(), any(), any())
-        } returns null
+            parserRegistry.parseWithProvenance(any(), any(), any(), any(), any())
+        } returns ParseOutcome.NoParse(mockk(relaxed = true))
 
         repository.markAsRelevant(notificationId, isRelevant = true)
 
@@ -1237,7 +1238,9 @@ class ReviewQueueRepositoryTest {
 
     private suspend fun markRelevantAndCapture(isRelevant: Boolean): UserCorrection {
         coEvery { rawNotificationDao.getById(900L) } returns markRelevantNotification
-        every { parserRegistry.parse(any(), any(), any(), any(), any()) } returns null
+        coEvery {
+            parserRegistry.parseWithProvenance(any(), any(), any(), any(), any())
+        } returns ParseOutcome.NoParse(mockk(relaxed = true))
         repository.markAsRelevant(900L, isRelevant)
         val slot = slot<UserCorrection>()
         coVerify(exactly = 1) { userCorrectionDao.insert(capture(slot)) }
@@ -1369,7 +1372,9 @@ class ReviewQueueRepositoryTest {
     @Test
     fun `P-08-1 markAsRelevant rethrows cancelled settings read and writes nothing`() = runTest {
         coEvery { rawNotificationDao.getById(900L) } returns markRelevantNotification
-        every { parserRegistry.parse(any(), any(), any(), any(), any()) } returns null
+        coEvery {
+            parserRegistry.parseWithProvenance(any(), any(), any(), any(), any())
+        } returns ParseOutcome.NoParse(mockk(relaxed = true))
         stubReadCancelled()
         try {
             repository.markAsRelevant(900L, isRelevant = false)
@@ -1406,7 +1411,9 @@ class ReviewQueueRepositoryTest {
 
         events.clear()
         coEvery { rawNotificationDao.getById(900L) } returns markRelevantNotification
-        every { parserRegistry.parse(any(), any(), any(), any(), any()) } returns null
+        coEvery {
+            parserRegistry.parseWithProvenance(any(), any(), any(), any(), any())
+        } returns ParseOutcome.NoParse(mockk(relaxed = true))
         repository.markAsRelevant(900L, isRelevant = false)
         assertEquals(listOf("settings", "write"), events.toList())
     }

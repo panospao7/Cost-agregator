@@ -30,8 +30,17 @@ class AppParserRegistryTest {
         googleWalletParser = GoogleWalletParser(currencyNormalizer, merchantCleaner),
         genericParser = GenericTransactionParser(currencyNormalizer, merchantCleaner, directionDetector, timeProvider = io.mockk.mockk()),
         aiFallbackParser = io.mockk.mockk(),
-        timeProvider = io.mockk.mockk()
+        timeProvider = io.mockk.mockk(),
+        currencySettingsRepository = homeCurrencyRepo("EUR")
     )
+
+    private fun homeCurrencyRepo(code: String) =
+        io.mockk.mockk<com.yourname.expensetracker.domain.currency.CurrencySettingsRepository>().also {
+            io.mockk.coEvery { it.resolveHomeCurrency() } returns
+                com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Resolved(
+                    com.yourname.expensetracker.domain.core.money.CurrencyCode(code)
+                )
+        }
 
     @Test
     fun `test Revolut parsing`() {
@@ -148,4 +157,81 @@ class AppParserRegistryTest {
         // Confidence should be from SmsParser (0.85), not generic parser
         assertEquals(0.85f, result.confidence, 0.01f)
     }
+
+    // ---- I-03-1: the Greek bank fallback currency is resolved per call, not frozen at construction ----
+
+    private fun registryWithRepo(
+        repo: com.yourname.expensetracker.domain.currency.CurrencySettingsRepository,
+        snapshotHomeCurrency: String = "GBP"
+    ) = AppParserRegistry(
+        greekBankParser = GreekBankParser(currencyNormalizer, merchantCleaner, homeCurrency = snapshotHomeCurrency),
+        revolutParser = RevolutParser(currencyNormalizer, merchantCleaner),
+        smsParser = SmsParser(currencyNormalizer, merchantCleaner),
+        googleWalletParser = GoogleWalletParser(currencyNormalizer, merchantCleaner),
+        genericParser = GenericTransactionParser(currencyNormalizer, merchantCleaner, directionDetector, timeProvider = io.mockk.mockk()),
+        aiFallbackParser = io.mockk.mockk(),
+        timeProvider = io.mockk.mockk(),
+        currencySettingsRepository = repo
+    )
+
+    // No currency token in the text, so the currency is the home-currency fallback.
+    private suspend fun AppParserRegistry.parseBareGreekAmount() = parseWithProvenance(
+        title = "Ειδοποίηση",
+        text = "12,50 στο SHOP 24",
+        bigText = null,
+        subText = null,
+        packageName = "gr.nbg.mobilebanking"
+    )
+
+    @Test
+    fun `I-03-1 home currency changing between calls changes the Greek bank fallback currency`() =
+        kotlinx.coroutines.runBlocking {
+            val repo = io.mockk.mockk<com.yourname.expensetracker.domain.currency.CurrencySettingsRepository>()
+            io.mockk.coEvery { repo.resolveHomeCurrency() } returnsMany listOf(
+                com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Resolved(
+                    com.yourname.expensetracker.domain.core.money.CurrencyCode("EUR")
+                ),
+                com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Resolved(
+                    com.yourname.expensetracker.domain.core.money.CurrencyCode("USD")
+                )
+            )
+            // The construction snapshot is GBP, so neither assertion can pass from the snapshot.
+            val registry = registryWithRepo(repo, snapshotHomeCurrency = "GBP")
+
+            val first = registry.parseBareGreekAmount().parsed!!
+            val second = registry.parseBareGreekAmount().parsed!!
+
+            assertEquals(12.50, first.amount, 0.001)
+            assertEquals("EUR", first.currency)
+            assertEquals(false, first.isAmountAmbiguous)
+            assertEquals("USD", second.currency)
+            assertEquals(false, second.isAmountAmbiguous)
+        }
+
+    @Test
+    fun `I-03-1 failed home currency resolution flags the Greek bank result ambiguous`() =
+        kotlinx.coroutines.runBlocking {
+            val repo = io.mockk.mockk<com.yourname.expensetracker.domain.currency.CurrencySettingsRepository>()
+            io.mockk.coEvery { repo.resolveHomeCurrency() } returns
+                com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Failed("read error")
+
+            val parsed = registryWithRepo(repo, snapshotHomeCurrency = "GBP").parseBareGreekAmount().parsed!!
+
+            // Amount is unchanged; the assumed (snapshot) currency is only usable through review.
+            assertEquals(12.50, parsed.amount, 0.001)
+            assertEquals("GBP", parsed.currency)
+            assertEquals(true, parsed.isAmountAmbiguous)
+        }
+
+    @Test
+    fun `I-03-1 cancellation during home currency resolution propagates`() =
+        kotlinx.coroutines.runBlocking {
+            val repo = io.mockk.mockk<com.yourname.expensetracker.domain.currency.CurrencySettingsRepository>()
+            io.mockk.coEvery { repo.resolveHomeCurrency() } throws
+                kotlinx.coroutines.CancellationException("cancelled")
+
+            val thrown = runCatching { registryWithRepo(repo).parseBareGreekAmount() }.exceptionOrNull()
+
+            assertEquals(true, thrown is kotlinx.coroutines.CancellationException)
+        }
 }
