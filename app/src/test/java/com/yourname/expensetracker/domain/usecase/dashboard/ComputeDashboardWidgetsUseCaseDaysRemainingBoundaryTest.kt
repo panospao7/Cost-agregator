@@ -31,9 +31,13 @@ import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
+import com.yourname.expensetracker.domain.model.dashboard.DashboardTransactionType
+import com.yourname.expensetracker.domain.util.PinnedTimeZoneRule
 import java.time.LocalDateTime
 import java.time.ZoneId
+import java.time.ZonedDateTime
 
 /**
  * Direct boundary tests for [ComputeDashboardWidgetsUseCase] SafeToSpend
@@ -162,6 +166,80 @@ class ComputeDashboardWidgetsUseCaseDaysRemainingBoundaryTest {
         val safeToSpend = result.allWidgets.filterIsInstance<DashboardWidget.SafeToSpend>().single()
 
         assertEquals("Mar 31 2024 (31-day month last day) must have 0 days remaining", 0, safeToSpend.daysRemaining)
+    }
+
+    // ── fix-1.0.4 (owner-approved revalidation fix, item 143): no-spend streak is DST-safe ──
+    // Europe/Athens 2024: spring forward 31 Mar (23h day), fall back 27 Oct (25h day). The streak walks
+    // calendar days backward, so a 23h/25h day must count as exactly one day (never skipped/duplicated).
+
+    /** Pins the JVM default zone to Europe/Athens per test (global lock held, restored after). */
+    @get:Rule
+    val athensZone = PinnedTimeZoneRule("Europe/Athens")
+
+    private fun athens(year: Int, month: Int, day: Int, hour: Int): Long =
+        ZonedDateTime.of(year, month, day, hour, 0, 0, 0, ZoneId.of("Europe/Athens"))
+            .toInstant().toEpochMilli()
+
+    private fun streakPurchase(date: Long) = DashboardExpense(
+        id = date, amount = 10.0, effectiveAmount = 10.0, merchant = "Synthetic",
+        transactionType = DashboardTransactionType.PURCHASE, date = date,
+        categoryId = null, isNotMine = false, isManualEntry = false
+    )
+
+    private suspend fun streakFor(now: Long, vararg purchaseDates: Long): DashboardWidget.NoSpendStreak {
+        fixedNowMs = now
+        val result = computeUseCase.compute(createProcessedData(purchaseDates.map { streakPurchase(it) }))
+        return result.allWidgets.filterIsInstance<DashboardWidget.NoSpendStreak>().single()
+    }
+
+    @Test
+    fun `no-spend streak counts calendar days across spring forward`() = runTest {
+        val now = athens(2024, 4, 2, 12)
+        // Last purchase 29 Mar; no-spend days: 30 Mar, 31 Mar (23h), 1 Apr, 2 Apr = 4.
+        val streak = streakFor(now, athens(2024, 3, 29, 12))
+
+        assertEquals(4, streak.currentStreak)
+        assertEquals(4, streak.personalBest)
+        assertEquals(2, streak.daysWithoutSpendingThisMonth)
+    }
+
+    @Test
+    fun `no-spend streak counts calendar days across fall back`() = runTest {
+        val now = athens(2024, 10, 29, 12)
+        // Last purchase 25 Oct; no-spend days: 26, 27 (25h), 28, 29 Oct = 4.
+        val streak = streakFor(now, athens(2024, 10, 25, 12))
+
+        assertEquals(4, streak.currentStreak)
+        assertEquals(4, streak.personalBest)
+        assertEquals(28, streak.daysWithoutSpendingThisMonth)
+    }
+
+    @Test
+    fun `no-spend streak stops at a purchase made on the spring forward day`() = runTest {
+        val now = athens(2024, 4, 2, 12)
+        // Purchase on 31 Mar (23h day): no-spend days are only 1 Apr and 2 Apr.
+        val streak = streakFor(now, athens(2024, 3, 31, 10))
+
+        assertEquals(2, streak.currentStreak)
+    }
+
+    @Test
+    fun `no-spend streak stops at a purchase made on the fall back day`() = runTest {
+        val now = athens(2024, 10, 29, 12)
+        // Purchase on 27 Oct (25h day): no-spend days are only 28 and 29 Oct.
+        val streak = streakFor(now, athens(2024, 10, 27, 23))
+
+        assertEquals(2, streak.currentStreak)
+    }
+
+    @Test
+    fun `boundary spending today gives zero streak and personal best from the DST gap`() = runTest {
+        val now = athens(2024, 4, 2, 12)
+        // Purchases 29 Mar and today: the gap between them (30 Mar, 31 Mar, 1 Apr) is 3 days.
+        val streak = streakFor(now, athens(2024, 3, 29, 12), athens(2024, 4, 2, 9))
+
+        assertEquals(0, streak.currentStreak)
+        assertEquals(3, streak.personalBest)
     }
 
     private fun createProcessedData(expenses: List<DashboardExpense>): ProcessedDashboardData {

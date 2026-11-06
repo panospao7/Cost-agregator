@@ -134,7 +134,65 @@ class SettlementCalculatorTest {
         assertFalse(calculator.getSettlementSummary(empty, "€").isBlank())
     }
 
-    private fun memberBalance(id: Long, name: String, net: Double): MemberBalance {
+    // ── fix-1.0.4 (owner-approved revalidation fix, item 143): settlement uses the currency's minor units ──
+
+    @Test
+    fun `JPY settlement amounts and total are whole units`() = runTest {
+        val balances = mapOf(
+            1L to memberBalance(1L, "A", 1000.0, "JPY"),
+            2L to memberBalance(2L, "B", -667.0, "JPY"),
+            3L to memberBalance(3L, "C", -333.0, "JPY")
+        )
+
+        val settlements = calculator.calculateSettlements(balances)
+
+        assertEquals(listOf(667.0, 333.0), settlements.sortedBy { it.fromMemberId }.map { it.amount })
+        assertTrue(settlements.all { it.currency == "JPY" })
+        assertEquals(1000.0, calculator.getTotalSettlementAmount(settlements), 0.0)
+    }
+
+    @Test
+    fun `JPY fractional balances are rounded to whole units and conserve the total`() = runTest {
+        // 100.4 -> 100 and -100.6 -> -101: the 1 yen imbalance is absorbed by the largest debtor.
+        val balances = mapOf(
+            1L to memberBalance(1L, "A", 100.4, "JPY"),
+            2L to memberBalance(2L, "B", -100.6, "JPY")
+        )
+
+        val settlements = calculator.calculateSettlements(balances)
+
+        assertEquals(1, settlements.size)
+        assertEquals(100.0, settlements.single().amount, 0.0)
+        assertEquals(100.0, calculator.getTotalSettlementAmount(settlements), 0.0)
+    }
+
+    @Test
+    fun `EUR settlement keeps two decimals`() = runTest {
+        val balances = mapOf(
+            1L to memberBalance(1L, "A", 10.01, "EUR"),
+            2L to memberBalance(2L, "B", -6.67, "EUR"),
+            3L to memberBalance(3L, "C", -3.34, "EUR")
+        )
+
+        val settlements = calculator.calculateSettlements(balances)
+
+        assertEquals(listOf(6.67, 3.34), settlements.sortedBy { it.fromMemberId }.map { it.amount })
+        assertEquals(10.01, calculator.getTotalSettlementAmount(settlements), 0.0)
+    }
+
+    @Test
+    fun `unknown currency settlement keeps two decimals`() = runTest {
+        val balances = mapOf(
+            1L to memberBalance(1L, "A", 10.01, "ZZZ"),
+            2L to memberBalance(2L, "B", -10.01, "ZZZ")
+        )
+
+        val settlements = calculator.calculateSettlements(balances)
+
+        assertEquals(10.01, settlements.single().amount, 0.0)
+    }
+
+    private fun memberBalance(id: Long, name: String, net: Double, currency: String = "EUR"): MemberBalance {
         val paid = if (net > 0) net else 0.0
         val shouldPay = if (net < 0) -net else 0.0
         return MemberBalance(
@@ -143,7 +201,7 @@ class SettlementCalculatorTest {
             paid = paid,
             shouldPay = shouldPay,
             netBalance = net,
-            currency = "EUR"
+            currency = currency
         )
     }
 }
