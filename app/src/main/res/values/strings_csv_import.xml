@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- J-12-2 CSV import UI on the Export screen -->
+    <string name="csv_import_card_title">Import CSV</string>
+    <string name="csv_import_card_description">Restore expenses from a CSV file exported by this app. You will see a preview before anything is saved.</string>
+    <string name="csv_import_choose_file">Choose CSV file</string>
+    <string name="csv_import_choose_file_cd">Choose a CSV file to import</string>
+    <string name="csv_import_reading">Reading file</string>
+    <string name="csv_import_preview_title">Review import</string>
+    <string name="csv_import_preview_nothing">No rows in this file can be imported.</string>
+    <string name="csv_import_confirm">Import</string>
+    <string name="csv_import_progress_format">Importing row %1$d of %2$d</string>
+    <string name="csv_import_progress_cd_format">Import progress: %1$d of %2$d rows</string>
+    <string name="csv_import_cancel_import">Cancel import</string>
+    <string name="csv_import_result_title">Import finished</string>
+    <string name="csv_import_error_size_limit">This file is larger than 5 MB and cannot be imported.</string>
+    <string name="csv_import_error_read_failed">The file could not be read.</string>
+    <string name="csv_import_error_format">Import failed: %1$s.</string>
+
+    <!-- One reason per CsvImportFailureCode (noun phrases, used for row counts and file-level errors) -->
+    <string name="csv_import_failure_invalid_date">invalid date (expected yyyy-MM-dd)</string>
+    <string name="csv_import_failure_invalid_amount">invalid amount</string>
+    <string name="csv_import_failure_missing_column">missing date or merchant</string>
+    <string name="csv_import_failure_invalid_header">malformed header row</string>
+    <string name="csv_import_failure_malformed_row">malformed row (unclosed quote)</string>
+    <string name="csv_import_failure_unknown_transaction_type">unrecognized transaction type</string>
+    <string name="csv_import_failure_row_rejected">rejected as invalid</string>
+    <string name="csv_import_failure_write_blocked">changes are paused during a backup or restore</string>
+    <string name="csv_import_failure_internal">unexpected error</string>
+
+    <plurals name="csv_import_preview_valid">
+        <item quantity="one">%1$d row will be imported.</item>
+        <item quantity="other">%1$d rows will be imported.</item>
+    </plurals>
+    <plurals name="csv_import_preview_invalid">
+        <item quantity="one">%1$d row will be skipped: %2$s.</item>
+        <item quantity="other">%1$d rows will be skipped: %2$s.</item>
+    </plurals>
+    <plurals name="csv_import_preview_unknown_category">
+        <item quantity="one">%1$d row has an unknown category and will be filed under Uncategorized.</item>
+        <item quantity="other">%1$d rows have an unknown category and will be filed under Uncategorized.</item>
+    </plurals>
+    <plurals name="csv_import_preview_skipped_installments">
+        <item quantity="one">%1$d installment row will be skipped.</item>
+        <item quantity="other">%1$d installment rows will be skipped.</item>
+    </plurals>
+    <plurals name="csv_import_result_imported">
+        <item quantity="one">%1$d expense imported</item>
+        <item quantity="other">%1$d expenses imported</item>
+    </plurals>
+    <plurals name="csv_import_result_duplicates">
+        <item quantity="one">%1$d duplicate skipped</item>
+        <item quantity="other">%1$d duplicates skipped</item>
+    </plurals>
+    <plurals name="csv_import_result_failed">
+        <item quantity="one">%1$d row failed</item>
+        <item quantity="other">%1$d rows failed</item>
+    </plurals>
+    <plurals name="csv_import_cancelled">
+        <item quantity="one">Import cancelled after %1$d row. Expenses already imported were kept.</item>
+        <item quantity="other">Import cancelled after %1$d rows. Expenses already imported were kept.</item>
+    </plurals>
+</resources>
