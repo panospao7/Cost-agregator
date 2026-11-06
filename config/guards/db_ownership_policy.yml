@@ -1006,6 +1006,24 @@ entries:
     one transaction; barrier via checkWritesAllowed helper plus runWrite'
   owner: '@panospao7'
   linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.CategoryRepository
+  kind: function
+  method: renameCategory
+  receiver: null
+  parameterTypes:
+  - Long
+  - String
+  daoAccessor: categoryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.CategoryDao
+  operation: updateDenormalizedCategoryNames
+  barrierMode: helper
+  reason: 'Item 144 category rename: keeps denormalized category-name columns (budget
+    adjustment recommendations, receipt item categorizations) in sync with the new name
+    in the same transaction as updateNameById; barrier via checkWritesAllowed helper
+    plus runWrite'
+  owner: '@panospao7'
+  linkedIssue: MIT-003
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.DatabaseBackupRepositoryImpl
   kind: function

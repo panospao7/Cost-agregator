@@ -166,7 +166,9 @@ class CategoryRepository @Inject constructor(
      */
     suspend fun mergeCategories(sourceCategoryId: Long, targetCategoryId: Long): Int {
         writeBarrier.checkWritesAllowed("CategoryRepository.mergeCategories")
-        val expensesMoved = reassignAndDeleteCategory(sourceCategoryId, targetCategoryId, "mergeCategories")
+        val expensesMoved = withContext(Dispatchers.IO) {
+            reassignAndDeleteCategory(sourceCategoryId, targetCategoryId, "mergeCategories")
+        }
         Timber.i("Merged category %d into %d: %d expenses reassigned", sourceCategoryId, targetCategoryId, expensesMoved)
         return expensesMoved
     }
@@ -236,6 +238,7 @@ class CategoryRepository @Inject constructor(
                                 RenameCategoryResult.Duplicate
                             } else {
                                 categoryDao.updateNameById(categoryId, displayName)
+                                categoryDao.updateDenormalizedCategoryNames(categoryId, displayName)
                                 RenameCategoryResult.Renamed
                             }
                         }

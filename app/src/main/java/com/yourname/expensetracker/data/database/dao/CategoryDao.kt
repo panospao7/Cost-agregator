@@ -128,6 +128,29 @@ interface CategoryDao {
     @Query("UPDATE categories SET name = :name WHERE id = :id")
     suspend fun updateNameById(id: Long, name: String): Int
 
+    @Query("UPDATE budget_adjustment_recommendations SET categoryName = :name WHERE categoryId = :categoryId")
+    suspend fun updateBudgetAdjustmentCategoryNames(categoryId: Long, name: String): Int
+
+    @Query("UPDATE receipt_item_categorizations SET suggestedCategoryName = :name WHERE suggestedCategoryId = :categoryId")
+    suspend fun updateReceiptItemSuggestedCategoryNames(categoryId: Long, name: String): Int
+
+    @Query("UPDATE receipt_item_categorizations SET userCorrectedCategoryName = :name WHERE userCorrectedCategoryId = :categoryId")
+    suspend fun updateReceiptItemUserCorrectedCategoryNames(categoryId: Long, name: String): Int
+
+    /**
+     * Rewrites every denormalized category-name column that belongs to rows
+     * referencing [categoryId] (budget_adjustment_recommendations.categoryName,
+     * receipt_item_categorizations.suggestedCategoryName / userCorrectedCategoryName)
+     * to [name]. Used by rename (own name) and by delete/merge (target name, run
+     * before the ids are re-pointed). Runs in one transaction (joins an outer one).
+     */
+    @Transaction
+    suspend fun updateDenormalizedCategoryNames(categoryId: Long, name: String) {
+        updateBudgetAdjustmentCategoryNames(categoryId, name)
+        updateReceiptItemSuggestedCategoryNames(categoryId, name)
+        updateReceiptItemUserCorrectedCategoryNames(categoryId, name)
+    }
+
     /**
      * Read-only count of expenses currently assigned to [categoryId], used to
      * tell the user how many expenses a delete will move. Never a write path:
@@ -227,9 +250,13 @@ interface CategoryDao {
         require(getById(sourceCategoryId) != null) {
             "Source category not found: id=$sourceCategoryId"
         }
-        require(getById(targetCategoryId) != null) {
+        val target = requireNotNull(getById(targetCategoryId)) {
             "Target category not found: id=$targetCategoryId"
         }
+
+        // Denormalized name columns follow the moved rows: set to the TARGET name while the
+        // rows still reference the source id (before the id re-points below).
+        updateDenormalizedCategoryNames(sourceCategoryId, target.name)
 
         // Budgets: deactivate conflicting source budgets first, then move the rest.
         deactivateConflictingBudgets(sourceCategoryId, targetCategoryId)
