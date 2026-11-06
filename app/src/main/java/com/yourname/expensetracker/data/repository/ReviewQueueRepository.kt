@@ -15,6 +15,7 @@ import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.parser.AppParserRegistry
+import com.yourname.expensetracker.domain.parser.provenance.ParserSource
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.domain.privacy.RawStorageMode
 import com.yourname.expensetracker.domain.model.Result
@@ -667,13 +668,20 @@ class ReviewQueueRepository @Inject constructor(
         ).joinToString(" ")
 
         val parsed = if (isRelevant) {
-            parserRegistry.parseWithProvenance(
+            val parseOutcome = parserRegistry.parseWithProvenance(
                 title = notification.title,
                 text = notification.text,
                 bigText = notification.bigText,
                 subText = notification.subText,
                 packageName = notification.packageName
-            ).parsed
+            )
+            // AI fallback output is advisory only (NotificationFallbackParser contract:
+            // must pass through ConfidenceRouter), and an ambiguous amount (e.g. failed
+            // home-currency lookup, multiple amounts) is never safe to auto-create.
+            // Both cases are treated as "no parse" so the placeholder review path runs.
+            parseOutcome.parsed?.takeUnless {
+                parseOutcome.provenance.source == ParserSource.AI_FALLBACK || it.isAmountAmbiguous
+            }
         } else {
             null
         }
