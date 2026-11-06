@@ -11,6 +11,7 @@ import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import io.mockk.coEvery
@@ -215,6 +216,134 @@ class AutomatedSavingsRuleEngineTest {
 
         assertFalse(mayWeeklyOnlyExecutions.isEmpty())
         assertEquals(10.0, mayWeeklyOnlyExecutions.first().amount, 0.0001)
+    }
+
+    @Test
+    fun `round up rule still rounds 3 40 to the default 5 increment`() = runTest {
+        val executions = engine.evaluateRules(purchase(amount = 3.40), listOf(roundUpRule(roundUpTo = null)))
+
+        assertEquals(1, executions.size)
+        assertEquals(1.60, executions.first().amount, 0.0001)
+    }
+
+    @Test
+    fun `spare change saves the difference up to the next whole unit`() = runTest {
+        val cases = listOf(3.40 to 0.60, 0.01 to 0.99, 9.99 to 0.01, 12.50 to 0.50, 0.10 to 0.90, 100.01 to 0.99)
+
+        for ((amount, expectedSaved) in cases) {
+            val executions = engine.evaluateRules(purchase(amount = amount), listOf(spareChangeRule()))
+
+            assertEquals("amount=$amount", 1, executions.size)
+            assertEquals("amount=$amount", expectedSaved, executions.first().amount, 0.0001)
+        }
+    }
+
+    @Test
+    fun `spare change is not capped at ten`() = runTest {
+        val executions = engine.evaluateRules(purchase(amount = 12.50), listOf(spareChangeRule()))
+
+        assertEquals(1, executions.size)
+        assertEquals(0.50, executions.first().amount, 0.0001)
+    }
+
+    @Test
+    fun `spare change skips whole unit amounts`() = runTest {
+        for (amount in listOf(3.00, 1.00, 10.00, 25.0)) {
+            val executions = engine.evaluateRules(purchase(amount = amount), listOf(spareChangeRule()))
+
+            assertTrue("amount=$amount", executions.isEmpty())
+        }
+    }
+
+    @Test
+    fun `spare change skips zero negative and non finite amounts`() = runTest {
+        for (amount in listOf(0.0, -3.40, Double.NaN, Double.POSITIVE_INFINITY)) {
+            val executions = engine.evaluateRules(purchase(amount = amount), listOf(spareChangeRule()))
+
+            assertTrue("amount=$amount", executions.isEmpty())
+        }
+    }
+
+    @Test
+    fun `spare change ignores non purchase transactions`() = runTest {
+        val executions = engine.evaluateRules(deposit(amount = 3.40), listOf(spareChangeRule()))
+
+        assertTrue(executions.isEmpty())
+    }
+
+    @Test
+    fun `spare change skips not mine expenses`() = runTest {
+        val executions = engine.evaluateRules(
+            purchase(amount = 3.40).copy(isNotMine = true),
+            listOf(spareChangeRule())
+        )
+
+        assertTrue(executions.isEmpty())
+    }
+
+    @Test
+    fun `spare change uses the shared effective share amount`() = runTest {
+        val sharedPercentage = purchase(amount = 10.00).copy(
+            isSharedExpense = true,
+            mySharePercentage = 34
+        )
+        val sharedAmount = purchase(amount = 20.00).copy(
+            isSharedExpense = true,
+            myShareAmount = 3.40
+        )
+
+        val percentageExecutions = engine.evaluateRules(sharedPercentage, listOf(spareChangeRule()))
+        val amountExecutions = engine.evaluateRules(sharedAmount, listOf(spareChangeRule()))
+
+        assertEquals(1, percentageExecutions.size)
+        assertEquals(0.60, percentageExecutions.first().amount, 0.0001)
+        assertEquals(1, amountExecutions.size)
+        assertEquals(0.60, amountExecutions.first().amount, 0.0001)
+    }
+
+    @Test
+    fun `spare change reason formats the saved amount not the purchase`() = runTest {
+        val executions = engine.evaluateRules(purchase(amount = 3.40), listOf(spareChangeRule()))
+
+        val reason = executions.single().reason
+        assertTrue(reason.contains("Store"))
+        assertTrue(reason.contains(CurrencyFormatter.formatMoney(0.60, "EUR")))
+        assertFalse(reason.contains(CurrencyFormatter.formatMoney(3.40, "EUR")))
+    }
+
+    @Test
+    fun `spare change respects the monthly cap`() = runTest {
+        val rule = spareChangeRule(maximumPerMonth = 1.0)
+
+        val first = engine.evaluateRules(purchase(amount = 3.40), listOf(rule))
+        val second = engine.evaluateRules(purchase(amount = 5.30).copy(id = 2L), listOf(rule))
+        val third = engine.evaluateRules(purchase(amount = 7.10), listOf(rule))
+
+        assertEquals(0.60, first.single().amount, 0.0001)
+        assertEquals(0.40, second.single().amount, 0.0001)
+        assertTrue(second.single().reason.endsWith("(monthly cap applied)"))
+        assertTrue(third.isEmpty())
+    }
+
+    @Test
+    fun `spare change skips inactive rules`() = runTest {
+        val executions = engine.evaluateRules(
+            purchase(amount = 3.40),
+            listOf(spareChangeRule().copy(isActive = false))
+        )
+
+        assertTrue(executions.isEmpty())
+    }
+
+    private fun spareChangeRule(maximumPerMonth: Double? = null): AutomatedSavingsRule {
+        return AutomatedSavingsRule(
+            id = 4L,
+            name = "Spare change",
+            ruleType = SavingsRuleType.SPARE_CHANGE,
+            targetGoalId = 42L,
+            maximumPerMonth = maximumPerMonth,
+            isActive = true
+        )
     }
 
     private fun roundUpRule(roundUpTo: Double?): AutomatedSavingsRule {

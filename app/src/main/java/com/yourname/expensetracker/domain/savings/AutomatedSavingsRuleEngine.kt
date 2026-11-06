@@ -12,6 +12,8 @@ import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.first
+import java.math.BigDecimal
+import java.math.RoundingMode
 import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -32,7 +34,7 @@ data class AutomatedSavingsRule(
 enum class SavingsRuleType {
     PERCENTAGE_OF_INCOME,    // Save X% of every deposit
     ROUND_UP,               // Round up purchases to nearest €X
-    SPARE_CHANGE,          // Save purchases under €10
+    SPARE_CHANGE,          // Save the spare change: round each purchase up to the next whole unit (3.40 -> save 0.60)
     WEEKLY_NO_SPEND,        // Save €X on weeks with no discretionary spending
     CUSTOM
 }
@@ -56,6 +58,8 @@ class AutomatedSavingsRuleEngine @Inject constructor(
     companion object {
         // Default nearest-neighbor round-up in home currency
         private const val DEFAULT_ROUND_UP_PRECISION = 5.0
+        // SPARE_CHANGE rounds each purchase up to the next whole unit
+        private const val SPARE_CHANGE_UNIT = 1.0
         // No-spend week thresholds and reward in home currency
         private const val NO_SPEND_THRESHOLD = 5.0
         private const val NO_SPEND_REWARD = 10.0
@@ -158,58 +162,67 @@ class AutomatedSavingsRuleEngine @Inject constructor(
             return null
         }
 
-        val remainder = candidateAmount % roundUpTo
-        if (!remainder.isFinite()) {
-            Timber.tag("AutomatedSavingsRuleEngine").w(
-                "Skipping ROUND_UP rule %s due to non-finite remainder for amount=%.2f roundUpTo=%s",
+        val roundUp = computeRoundUp(candidateAmount, roundUpTo)
+        if (roundUp == null) {
+            Timber.tag("AutomatedSavingsRuleEngine").d(
+                "ROUND_UP rule %s produced no round-up for roundUpTo=%s",
                 rule.id,
-                candidateAmount,
                 roundUpTo
             )
             return null
         }
-        
-        if (remainder > 0) {
-            val roundUpAmount = roundUpTo - remainder
-            if (!roundUpAmount.isFinite() || roundUpAmount <= 0.0) {
-                Timber.tag("AutomatedSavingsRuleEngine").w(
-                    "Skipping ROUND_UP rule %s due to invalid roundUpAmount=%s (amount=%.2f roundUpTo=%s)",
-                    rule.id,
-                    roundUpAmount,
-                    candidateAmount,
-                    roundUpTo
-                )
-                return null
-            }
 
-            val roundedTarget = kotlin.math.ceil(candidateAmount / roundUpTo) * roundUpTo
-            if (!roundedTarget.isFinite()) {
-                Timber.tag("AutomatedSavingsRuleEngine").w(
-                    "Skipping ROUND_UP rule %s due to non-finite rounded target (amount=%.2f roundUpTo=%s)",
-                    rule.id,
-                    candidateAmount,
-                    roundUpTo
-                )
-                return null
-            }
-            
-            return RuleExecution(
-                rule = rule,
-                amount = roundUpAmount,
-                reason = "Round up ${CurrencyFormatter.formatMoney(candidateAmount, displayCurrency)} to ${CurrencyFormatter.formatMoney(roundedTarget, displayCurrency)}",
-                timestamp = timeProvider.now()
-            )
-        }
-        
-        return null
+        return RuleExecution(
+            rule = rule,
+            amount = roundUp.savedAmount,
+            reason = "Round up ${CurrencyFormatter.formatMoney(candidateAmount, displayCurrency)} to ${CurrencyFormatter.formatMoney(roundUp.roundedTarget, displayCurrency)}",
+            timestamp = timeProvider.now()
+        )
     }
-    
+
+    /** Result of rounding an amount up to the next multiple of an increment. */
+    private data class RoundUpComputation(val savedAmount: Double, val roundedTarget: Double)
+
+    /**
+     * Shared round-up computation for ROUND_UP and SPARE_CHANGE.
+     *
+     * Works in the amount's own currency (no conversion). The amount is first
+     * normalised to cents (HALF_UP, 2 dp) and the remainder is computed with
+     * [BigDecimal] so binary-float artefacts (for example 3.40 % 1.0) cannot leak
+     * into the saved amount. The saved amount is `roundedTarget - amount`,
+     * rounded HALF_UP to 2 dp. Returns null when [amount] or [increment] is not a
+     * positive finite number, when the amount already sits on the increment, or
+     * when the saved amount rounds to zero.
+     */
+    private fun computeRoundUp(amount: Double, increment: Double): RoundUpComputation? {
+        if (!amount.isFinite() || amount <= 0.0 || !increment.isFinite() || increment <= 0.0) {
+            return null
+        }
+        val amountCents = BigDecimal.valueOf(amount).setScale(2, RoundingMode.HALF_UP)
+        val incrementDecimal = BigDecimal.valueOf(increment)
+        if (amountCents.signum() <= 0 || incrementDecimal.signum() <= 0) {
+            return null
+        }
+        val remainder = amountCents.remainder(incrementDecimal)
+        if (remainder.signum() == 0) {
+            return null
+        }
+        val saved = incrementDecimal.subtract(remainder).setScale(2, RoundingMode.HALF_UP)
+        if (saved.signum() <= 0) {
+            return null
+        }
+        val target = amountCents.add(incrementDecimal.subtract(remainder)).setScale(2, RoundingMode.HALF_UP)
+        return RoundUpComputation(savedAmount = saved.toDouble(), roundedTarget = target.toDouble())
+    }
+
+
     private fun evaluateSpareChangeRule(
         expense: Expense,
         rule: AutomatedSavingsRule,
         displayCurrency: String
     ): RuleExecution? {
-        // Save small purchases (coffee, snacks, etc.)
+        // Save the spare change: the difference up to the next whole unit
+        // (3.40 -> 0.60), in the expense's own currency.
         if (expense.transactionType.toDomain() != DomainTransactionType.PURCHASE) {
             return null
         }
@@ -223,15 +236,13 @@ class AutomatedSavingsRuleEngine @Inject constructor(
             return null
         }
 
-        if (candidateAmount in 1.0..10.0) {
-            return RuleExecution(
-                rule = rule,
-                amount = candidateAmount,
-                reason = "Spare change: ${expense.merchant} ${CurrencyFormatter.formatMoney(candidateAmount, displayCurrency)}",
-                timestamp = timeProvider.now()
-            )
-        }
-        return null
+        val roundUp = computeRoundUp(candidateAmount, SPARE_CHANGE_UNIT) ?: return null
+        return RuleExecution(
+            rule = rule,
+            amount = roundUp.savedAmount,
+            reason = "Spare change: ${expense.merchant} ${CurrencyFormatter.formatMoney(roundUp.savedAmount, displayCurrency)}",
+            timestamp = timeProvider.now()
+        )
     }
     
     private suspend fun evaluateWeeklyNoSpendRule(
