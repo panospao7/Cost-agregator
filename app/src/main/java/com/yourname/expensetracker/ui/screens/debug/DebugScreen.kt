@@ -1468,7 +1468,7 @@ private fun DatabaseManagementSection(viewModel: DebugViewModel) {
                             is com.yourname.expensetracker.util.CsvExpenseImporter.ImportResult.Error -> {
                                 android.widget.Toast.makeText(
                                     context,
-                                    context.getString(R.string.debug_import_failed_format, result.message),
+                                    context.getString(R.string.debug_import_failed_format, result.code.name),
                                     android.widget.Toast.LENGTH_LONG
                                 ).show()
                             }

@@ -8057,24 +8057,6 @@ entries:
     to SCHEDULED so a worker that crashed mid-send retries instead of being stuck'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08M
-- path: app/src/main/java/com/yourname/expensetracker/util/CsvExpenseImporter.kt
-  ownerFqcn: com.yourname.expensetracker.util.CsvExpenseImporter
-  kind: function
-  method: getOrCreateCategory
-  receiver: null
-  parameterTypes:
-  - String
-  daoAccessor: categoryDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.CategoryDao
-  operation: insert
-  barrierMode: helper
-  reason: 'GR-08p2 EXACT_POLICY: CSV import get-or-create category convenience --
-    getByName first, default icon + hash-derived color insert only when the named
-    category does not exist; ALL expense mutations of the import route through TransactionLifecycleCoordinator.createExpense
-    (the authoritative expense path) -- the exact GR-08p1 JsonExpenseImporter parseV1Row/parseV2Row
-    pattern'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08P2
 - path: app/src/main/java/com/yourname/expensetracker/util/JsonExpenseImporter.kt
   ownerFqcn: com.yourname.expensetracker.util.JsonExpenseImporter
   kind: function

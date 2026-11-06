@@ -5648,7 +5648,9 @@ def test_checked_in_structural_only_manifest_contract_via_production_apis():
     # (MerchantNormalizationRepository.repointAliases / dao.reassignAliases), yielding 461.
     # 1.0.4 Batch 3 P-04-1 (owner item 143): +2 exact releaseClaimedReminderDelivery identities
     # (reminderDeliveryDao.releaseClaimedDelivery, lifecycleEventDao.insert), yielding 463.
-    assert len(entries) == 463
+    # 1.0.4 J-12-2 (owner item 144): -1 dead CsvExpenseImporter.getOrCreateCategory /
+    # categoryDao.insert identity (unknown CSV categories now map to Uncategorized), yielding 462.
+    assert len(entries) == 462
     sweep_path = (
         "app/src/main/java/com/yourname/expensetracker/data/repository/"
         "SavingsSweepAcceptanceCoordinator.kt"
@@ -6145,8 +6147,9 @@ def test_current_db_gate_activated_policy_real_config_pipeline(tmp_path, monkeyp
     # (MerchantNormalizationRepository.repointAliases / dao.reassignAliases), yielding 461.
     # 1.0.4 Batch 3 P-04-1 (owner item 143): +2 exact releaseClaimedReminderDelivery identities
     # (reminderDeliveryDao.releaseClaimedDelivery, lifecycleEventDao.insert), yielding 463.
+    # 1.0.4 J-12-2 (owner item 144): -1 dead CsvExpenseImporter.getOrCreateCategory identity, yielding 462.
     # Re-derived per the checked-in-manifest contract pin above.
-    assert len(entries) == 463
+    assert len(entries) == 462
 
     # The structural gate really ran (post-activation it is no longer
     # short-circuited by a loader block) and stayed clean.

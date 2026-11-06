@@ -77,8 +77,8 @@ class CsvExpenseImporterTest {
         )
 
         assertThat(result).isInstanceOf(CsvExpenseImporter.ImportResult.Error::class.java)
-        assertThat((result as CsvExpenseImporter.ImportResult.Error).message)
-            .isEqualTo("Import blocked: database maintenance in progress")
+        assertThat((result as CsvExpenseImporter.ImportResult.Error).code)
+            .isEqualTo(CsvImportFailureCode.WRITE_BLOCKED)
         coVerify(exactly = 0) { categoryDao.getByName(any()) }
         coVerify(exactly = 0) { categoryDao.insert(any()) }
         coVerify(exactly = 0) { coordinator.createExpense(any()) }
@@ -123,15 +123,18 @@ class CsvExpenseImporterTest {
     }
 
     @Test
-    fun `creates category when not found`() = runTest {
+    fun `unknown category falls back to Uncategorized and never inserts`() = runTest {
+        val uncategorized = Category(id = 5, name = "Uncategorized", icon = "?", color = "#BDBDBD")
         coEvery { categoryDao.getByName("NewCat") } returns null
-        coEvery { categoryDao.insert(any()) } returns 99L
-        coEvery { coordinator.createExpense(any()) } returns CreateExpenseResult.Created(1L)
+        coEvery { categoryDao.getByName("Uncategorized") } returns uncategorized
+        val requestSlot = slot<CreateExpenseRequest>()
+        coEvery { coordinator.createExpense(capture(requestSlot)) } returns CreateExpenseResult.Created(1L)
 
         val csv = "date,amount,merchant,category,description\n2024-02-01,5.00,Shop,NewCat,Stuff"
         importer.importFromContent(csv)
 
-        coVerify { categoryDao.insert(any()) }
+        assertThat(requestSlot.captured.categoryId).isEqualTo(5L)
+        coVerify(exactly = 0) { categoryDao.insert(any()) }
     }
 
     @Test

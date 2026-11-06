@@ -30,8 +30,8 @@ class ImportCoordinator @Inject constructor(
      * were dropped, leaving callers with a bare error count). Error strings
      * use the same `Row <n>: <reason>` convention as the JSON leg, where
      * `<n>` is the 0-based data-row index (header/comment/blank rows
-     * excluded). Reasons are controlled constants or lifecycle messages —
-     * never file paths or raw user payloads.
+     * excluded). CSV reasons are bounded [CsvImportFailureCode] names —
+     * never file paths, exception messages or raw user payloads.
      */
     suspend fun importFromContent(content: String, fileImportRunId: Long? = null): ImportResult {
         val format = detectFormat(content)
@@ -41,7 +41,7 @@ class ImportCoordinator @Inject constructor(
                     is CsvExpenseImporter.ImportResult.Success -> {
                         val errors = r.perRowResults.mapIndexedNotNull { index, row ->
                             when (row) {
-                                is CsvExpenseImporter.RowResult.Failed -> "Row $index: ${row.error}"
+                                is CsvExpenseImporter.RowResult.Failed -> "Row $index: ${row.code.name}"
                                 else -> null
                             }
                         }
@@ -58,7 +58,7 @@ class ImportCoordinator @Inject constructor(
                         )
                     }
                     is CsvExpenseImporter.ImportResult.Error ->
-                        ImportResult(false, 0, 0, 1, listOf(r.message), emptyList())
+                        ImportResult(false, 0, 0, 1, listOf(r.code.name), emptyList())
                 }
             }
             ImportFormat.JSON_V1, ImportFormat.JSON_V2 -> jsonImporter.importFromContent(content, fileImportRunId)

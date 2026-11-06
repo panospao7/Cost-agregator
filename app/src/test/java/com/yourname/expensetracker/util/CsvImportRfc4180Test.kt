@@ -62,7 +62,7 @@ class CsvImportRfc4180Test {
     fun malformedHeaderIsAnErrorNotAnEmptyImport() = runTest {
         val result = importer.importFromContent("\"date,amount,merchant")
         assertThat(result).isEqualTo(
-            CsvExpenseImporter.ImportResult.Error("Invalid CSV header: unclosed quote")
+            CsvExpenseImporter.ImportResult.Error(CsvImportFailureCode.INVALID_HEADER)
         )
         coVerify(exactly = 0) { coordinator.createExpense(any()) }
     }
@@ -71,7 +71,7 @@ class CsvImportRfc4180Test {
     fun malformedHeaderAfterCommentsIsStillAnError() = runTest {
         val result = importer.importFromContent("# export\n\n\"date,amount,merchant")
         assertThat(result).isEqualTo(
-            CsvExpenseImporter.ImportResult.Error("Invalid CSV header: unclosed quote")
+            CsvExpenseImporter.ImportResult.Error(CsvImportFailureCode.INVALID_HEADER)
         )
         coVerify(exactly = 0) { coordinator.createExpense(any()) }
     }
