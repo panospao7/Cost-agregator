@@ -37,10 +37,10 @@ class FinancialArithmeticPrecisionTest : AnalyticsEngineTestBase() {
         )
 
         settlementAmountToCentsMethod = SettlementCalculator::class.java
-            .getDeclaredMethod("amountToCents", java.lang.Double.TYPE)
+            .getDeclaredMethod("amountToCents", java.lang.Double.TYPE, Integer.TYPE)
             .apply { isAccessible = true }
         settlementCentsToAmountMethod = SettlementCalculator::class.java
-            .getDeclaredMethod("centsToAmount", java.lang.Long.TYPE)
+            .getDeclaredMethod("centsToAmount", java.lang.Long.TYPE, Integer.TYPE)
             .apply { isAccessible = true }
 
         sharedToCentsMethod = SharedExpenseManager::class.java
@@ -118,12 +118,13 @@ class FinancialArithmeticPrecisionTest : AnalyticsEngineTestBase() {
         assertEquals(expectedOneCentAboveCents, sharedToCents(oneCentAbove))
     }
 
+    // The settlement helpers take currency fraction digits (N-08-10); these tests are about EUR, so digits = 2.
     private fun settlementAmountToCents(amount: Double): Long {
-        return settlementAmountToCentsMethod.invoke(settlementCalculator, amount) as Long
+        return settlementAmountToCentsMethod.invoke(settlementCalculator, amount, 2) as Long
     }
 
     private fun settlementCentsToAmount(cents: Long): Double {
-        return settlementCentsToAmountMethod.invoke(settlementCalculator, cents) as Double
+        return settlementCentsToAmountMethod.invoke(settlementCalculator, cents, 2) as Double
     }
 
     private fun sharedToCents(amount: Double): Long {
