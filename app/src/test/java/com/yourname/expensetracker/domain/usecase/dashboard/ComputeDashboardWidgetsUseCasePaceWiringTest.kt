@@ -286,6 +286,125 @@ class ComputeDashboardWidgetsUseCasePaceWiringTest {
         coVerify(exactly = 0) { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) }
     }
 
+    /** P-05-5 MINOR-2: a future-dated purchase (later this month) is not spent-to-date. */
+    @Test
+    fun `Monte Carlo spent to date excludes a future dated expense in the same month`() = runTest {
+        fixedNowMs = toEpochMs(2026, 6, 15, 12, 0)
+        val forecast = monteCarloResult("EUR")
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns forecast
+        val expenses = listOf(
+            purchase(1L, 100.0, toEpochMs(2026, 6, 2)),
+            purchase(2L, 400.0, toEpochMs(2026, 6, 20)) // after "now"
+        )
+
+        val result = computeUseCase.compute(createProcessedData(expenses))
+        val widget = result.allWidgets.filterIsInstance<DashboardWidget.MonteCarloForecast>().single()
+
+        coVerify(exactly = 1) {
+            monteCarloSimulator.simulate(
+                spentToDate = 100.0, knownUpcoming = 0.0, budgetAmount = null,
+                displayCurrency = "EUR", estimatedWeeklyRecurring = 0.0
+            )
+        }
+        assertSame(forecast, widget.result)
+    }
+
+    /** P-05-5 MINOR-2: a neutralised (spending-excluded) purchase adds nothing to spent-to-date. */
+    @Test
+    fun `Monte Carlo spent to date excludes a neutralised expense`() = runTest {
+        fixedNowMs = toEpochMs(2026, 6, 15, 12, 0)
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns monteCarloResult("EUR")
+        val expenses = listOf(
+            purchase(1L, 100.0, toEpochMs(2026, 6, 2)),
+            purchase(2L, 900.0, toEpochMs(2026, 6, 3)).copy(spendingExclusionReason = "TEST_NEUTRALISED")
+        )
+
+        val result = computeUseCase.compute(createProcessedData(expenses))
+
+        assertEquals(1, result.allWidgets.filterIsInstance<DashboardWidget.MonteCarloForecast>().size)
+        coVerify(exactly = 1) {
+            monteCarloSimulator.simulate(
+                spentToDate = 100.0, knownUpcoming = 0.0, budgetAmount = null,
+                displayCurrency = "EUR", estimatedWeeklyRecurring = 0.0
+            )
+        }
+    }
+
+    /**
+     * P-05-5 MINOR-2: a neutralised foreign row whose currency cannot be converted is dropped before
+     * normalization, so it neither adds spend nor makes the card partial/unavailable.
+     */
+    @Test
+    fun `Monte Carlo neutralised unconvertible foreign row neither adds spend nor degrades the card`() = runTest {
+        fixedNowMs = toEpochMs(2026, 6, 15, 12, 0)
+        coEvery { currencyConverter.convertOutcome(any(), "XYZ", "EUR", any(), any(), any()) } answers {
+            com.yourname.expensetracker.domain.core.money.ConversionOutcome.Failed(
+                firstArg(), "XYZ", "EUR", arg(3),
+                com.yourname.expensetracker.domain.core.money.ConversionFailureType.INVALID_SOURCE_CURRENCY,
+                "TEST_INVALID_SOURCE"
+            )
+        }
+        val forecast = monteCarloResult("EUR")
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns forecast
+        val expenses = listOf(
+            purchase(1L, 100.0, toEpochMs(2026, 6, 2)),
+            purchase(2L, 900.0, toEpochMs(2026, 6, 3))
+                .copy(currency = "XYZ", spendingExclusionReason = "TEST_NEUTRALISED")
+        )
+
+        val result = computeUseCase.compute(createProcessedData(expenses))
+        val input = (result.normalizedInput as DashboardNormalizedInputResult.Available).input
+        val widget = result.allWidgets.filterIsInstance<DashboardWidget.MonteCarloForecast>().single()
+
+        assertTrue(!input.dataQuality.isPartial)
+        assertEquals(ConversionQuality.COMPLETE, input.dataQuality.conversionQuality)
+        coVerify(exactly = 1) {
+            monteCarloSimulator.simulate(
+                spentToDate = 100.0, knownUpcoming = 0.0, budgetAmount = null,
+                displayCurrency = "EUR", estimatedWeeklyRecurring = 0.0
+            )
+        }
+        assertSame(forecast, widget.result)
+    }
+
+    /** P-05-5 MINOR-2: a non-neutralised foreign row is converted into the home currency. */
+    @Test
+    fun `Monte Carlo spent to date converts a non neutralised foreign row into home currency`() = runTest {
+        fixedNowMs = toEpochMs(2026, 6, 15, 12, 0)
+        coEvery { currencyConverter.convertOutcome(any(), "USD", "EUR", any(), any(), any()) } answers {
+            val amount = firstArg<Double>()
+            com.yourname.expensetracker.domain.core.money.ConversionOutcome.Converted(
+                originalAmount = amount,
+                originalCurrency = CurrencyCode("USD"),
+                convertedAmount = amount * 0.5,
+                targetCurrency = CurrencyCode("EUR"),
+                rateUsed = 0.5,
+                rateBasis = arg<com.yourname.expensetracker.domain.core.money.RateBasis>(3),
+                rateValidDate = null,
+                rateLastUpdated = null,
+                rateSource = null,
+                conversionPath = com.yourname.expensetracker.domain.core.money.ConversionPath.DIRECT
+            )
+        }
+        val forecast = monteCarloResult("EUR")
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns forecast
+        val expenses = listOf(
+            purchase(1L, 100.0, toEpochMs(2026, 6, 2)),
+            purchase(2L, 50.0, toEpochMs(2026, 6, 3)).copy(currency = "USD")
+        )
+
+        val result = computeUseCase.compute(createProcessedData(expenses))
+        val input = (result.normalizedInput as DashboardNormalizedInputResult.Available).input
+
+        assertTrue(!input.dataQuality.isPartial)
+        coVerify(exactly = 1) {
+            monteCarloSimulator.simulate(
+                spentToDate = 125.0, knownUpcoming = 0.0, budgetAmount = null,
+                displayCurrency = "EUR", estimatedWeeklyRecurring = 0.0
+            )
+        }
+    }
+
     @Test
     fun `Monte Carlo incomplete future obligation is unavailable despite complete actual input`() = runTest {
         fixedNowMs = toEpochMs(2026, 6, 15, 12, 0)
