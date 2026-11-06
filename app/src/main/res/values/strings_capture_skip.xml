@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- P-01-3: notification capture skip list ("Apps to skip") -->
+    <string name="capture_skip_entry_title">Apps to skip</string>
+    <string name="capture_skip_entry_summary">Choose apps whose notifications are never captured</string>
+    <string name="capture_skip_title">Apps to skip</string>
+    <string name="capture_skip_intro">Notifications from skipped apps are never captured. Notifications from them that are still waiting to be processed are discarded.</string>
+    <string name="capture_skip_section_skipped">Skipped apps</string>
+    <string name="capture_skip_section_candidates">Apps seen in captured notifications</string>
+    <string name="capture_skip_empty_skipped">No apps are skipped.</string>
+    <string name="capture_skip_empty_candidates">No other apps have sent captured notifications yet.</string>
+    <string name="capture_skip_action_skip">Skip</string>
+    <string name="capture_skip_action_resume">Capture again</string>
+    <string name="capture_skip_cd_skip_format">Skip notifications from %1$s</string>
+    <string name="capture_skip_cd_resume_format">Capture notifications from %1$s again</string>
+    <string name="capture_skip_error_generic">Could not update the list. Please try again.</string>
+    <string name="capture_skip_load_failed">Could not load the list of apps.</string>
+</resources>

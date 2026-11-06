@@ -828,7 +828,13 @@ fun MainScreen(
                 is NavigationDestination.PrivacySettings -> {
                     com.yourname.expensetracker.ui.screens.privacysettings.PrivacySettingsScreen(
                         onDismiss = { navigation.navigateBack() },
-                        onOpenAppPinSettings = { navigation.navigateTo(NavigationDestination.AppPinSettings) }
+                        onOpenAppPinSettings = { navigation.navigateTo(NavigationDestination.AppPinSettings) },
+                        onOpenAppsToSkip = { navigation.navigateTo(NavigationDestination.AppsToSkip) }
+                    )
+                }
+                is NavigationDestination.AppsToSkip -> {
+                    com.yourname.expensetracker.ui.screens.captureskip.AppsToSkipScreen(
+                        onNavigateBack = { navigation.navigateBack() }
                     )
                 }
                 is NavigationDestination.AppPinSettings -> {
