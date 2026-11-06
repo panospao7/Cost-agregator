@@ -27,9 +27,9 @@ import org.robolectric.annotation.Config
 class PrivacyRuntimeWorkerPolicyTest {
 
     @Test
-    fun `cloud AI disable cancels ai_daily_briefing only`() {
+    fun `cloud AI disable cancels ai_daily_briefing and its on-enable run only`() {
         assertEquals(
-            setOf("ai_daily_briefing"),
+            setOf("ai_daily_briefing", "ai_daily_briefing_on_enable"),
             PrivacyRuntimeWorkerPolicy.workersToCancel(setOf(PrivacyToggle.CLOUD_AI))
         )
     }

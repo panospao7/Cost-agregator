@@ -149,8 +149,9 @@ class DailyBriefingWorkerTest {
         unmockkAll()
     }
 
-    private fun buildWorker(): DailyBriefingWorker {
+    private fun buildWorker(inputData: androidx.work.Data = androidx.work.Data.EMPTY): DailyBriefingWorker {
         return TestListenableWorkerBuilder<DailyBriefingWorker>(context)
+            .setInputData(inputData)
             .setWorkerFactory(object : WorkerFactory() {
                 override fun createWorker(
                     appContext: Context,
@@ -447,9 +448,7 @@ class DailyBriefingWorkerTest {
     }
 
     @Test
-    fun `failure still reschedules next run`() = runTest {
-        // enqueueBriefingNow() uses REPLACE, cancelling the pending midnight request;
-        // a terminal Failed must re-arm the chain or it stays broken until app start.
+    fun `failure does not reschedule next run`() = runTest {
         coEvery {
             executionGuard.runGuardedWithContext(
                 any<WorkerGuardRequest>(),
@@ -460,7 +459,41 @@ class DailyBriefingWorkerTest {
         val result = buildWorker().doWork()
 
         assertEquals(Result.failure(), result)
-        verify(atLeast = 1) {
+        verify(exactly = 0) {
+            workManager.enqueueUniqueWork(any(), any(), any<androidx.work.OneTimeWorkRequest>())
+        }
+    }
+
+    @Test
+    fun `on-enable run with KEY_NO_REARM does not re-arm midnight on success`() = runTest {
+        coEvery { dashboardDataProvider.getProcessedDataFlow(analyticsRepository) } returns flowOf(sampleProcessedData())
+
+        val result = buildWorker(
+            androidx.work.workDataOf(DailyBriefingWorker.KEY_NO_REARM to true)
+        ).doWork()
+
+        assertEquals(Result.success(), result)
+        coVerify(exactly = 1) { generateDashboardBriefingUseCase(any(), any()) }
+        verify(exactly = 0) {
+            workManager.enqueueUniqueWork(any(), any(), any<androidx.work.OneTimeWorkRequest>())
+        }
+    }
+
+    @Test
+    fun `on-enable run with KEY_NO_REARM does not re-arm midnight on skip`() = runTest {
+        coEvery {
+            executionGuard.runGuardedWithContext(
+                any<WorkerGuardRequest>(),
+                any<suspend (WorkerRunContext) -> Unit>()
+            )
+        } returns WorkerGuardResult.Skipped("privacy denied")
+
+        val result = buildWorker(
+            androidx.work.workDataOf(DailyBriefingWorker.KEY_NO_REARM to true)
+        ).doWork()
+
+        assertEquals(Result.success(), result)
+        verify(exactly = 0) {
             workManager.enqueueUniqueWork(any(), any(), any<androidx.work.OneTimeWorkRequest>())
         }
     }

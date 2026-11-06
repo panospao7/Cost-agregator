@@ -54,11 +54,11 @@ class AiWorkSchedulerImplTest {
     }
 
     @Test
-    fun `enqueueBriefingNow uses the daily briefing unique name with REPLACE`() {
-        val nameSlot = slot<String>()
+    fun `enqueueBriefingNow uses its own on-enable unique name with REPLACE and never the midnight name`() {
+        val names = mutableListOf<String>()
         val policySlot = slot<ExistingWorkPolicy>()
         every {
-            workManager.enqueueUniqueWork(capture(nameSlot), capture(policySlot), any<OneTimeWorkRequest>())
+            workManager.enqueueUniqueWork(capture(names), capture(policySlot), any<OneTimeWorkRequest>())
         } returns mockk(relaxed = true)
 
         scheduler.enqueueBriefingNow()
@@ -66,22 +66,44 @@ class AiWorkSchedulerImplTest {
         verify(exactly = 1) {
             workManager.enqueueUniqueWork(any<String>(), any(), any<OneTimeWorkRequest>())
         }
-        assertEquals("ai_daily_briefing", nameSlot.captured)
+        assertEquals(listOf("ai_daily_briefing_on_enable"), names)
         assertEquals(ExistingWorkPolicy.REPLACE, policySlot.captured)
+        verify(exactly = 0) {
+            workManager.enqueueUniqueWork("ai_daily_briefing", any(), any<OneTimeWorkRequest>())
+        }
     }
 
     @Test
-    fun `enqueueBriefingNow REPLACE wins even when the persisted spec version is current`() {
-        val policies = mutableListOf<ExistingWorkPolicy>()
+    fun `enqueueBriefingNow sets KEY_NO_REARM so the run never re-arms midnight`() {
+        val requestSlot = slot<OneTimeWorkRequest>()
         every {
-            workManager.enqueueUniqueWork(any<String>(), capture(policies), any<OneTimeWorkRequest>())
+            workManager.enqueueUniqueWork(any<String>(), any(), capture(requestSlot))
         } returns mockk(relaxed = true)
 
         scheduler.enqueueBriefingNow()
-        // Second call: version is now persisted, so the spec's KEEP would apply without the override.
-        scheduler.enqueueBriefingNow()
 
-        assertEquals(listOf(ExistingWorkPolicy.REPLACE, ExistingWorkPolicy.REPLACE), policies)
+        val input = requestSlot.captured.workSpec.input
+        assertTrue(input.getBoolean(DailyBriefingWorker.KEY_NO_REARM, false))
+    }
+
+    @Test
+    fun `scheduleDailyBriefing still arms the midnight chain under the daily name`() {
+        val names = mutableListOf<String>()
+        every {
+            workManager.enqueueUniqueWork(capture(names), any(), any<OneTimeWorkRequest>())
+        } returns mockk(relaxed = true)
+
+        scheduler.scheduleDailyBriefing()
+
+        assertEquals(listOf("ai_daily_briefing"), names)
+    }
+
+    @Test
+    fun `cancelDailyBriefing cancels both the midnight chain and the on-enable run`() {
+        scheduler.cancelDailyBriefing()
+
+        verify(exactly = 1) { workManager.cancelUniqueWork("ai_daily_briefing") }
+        verify(exactly = 1) { workManager.cancelUniqueWork("ai_daily_briefing_on_enable") }
     }
 
     @Test
@@ -105,7 +127,7 @@ class AiWorkSchedulerImplTest {
     }
 
     @Test
-    fun `enqueueBriefingNow does not cancel the unique work`() {
+    fun `enqueueBriefingNow does not cancel any unique work`() {
         every {
             workManager.enqueueUniqueWork(any<String>(), any(), any<OneTimeWorkRequest>())
         } returns mockk(relaxed = true)

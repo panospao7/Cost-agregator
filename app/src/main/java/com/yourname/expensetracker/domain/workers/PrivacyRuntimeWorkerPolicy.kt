@@ -65,6 +65,16 @@ object PrivacyRuntimeWorkerPolicy {
     )
 
     /**
+     * On-demand one-shot unique work gated by a toggle that is cancelled when the toggle
+     * is disabled but never rescheduled here (it is not a [WorkerSpec.DEFAULTS] worker and
+     * is enqueued only by an explicit user action). Kept separate from [gatedWorkers] so the
+     * "every gated name exists in DEFAULTS" fail-fast check stays unchanged.
+     */
+    private val cancelOnlyWorkers: Map<PrivacyToggle, Set<String>> = mapOf(
+        PrivacyToggle.CLOUD_AI to setOf("ai_daily_briefing_on_enable")
+    )
+
+    /**
      * Workers that must never be cancelled by a privacy toggle.
      *
      * `data_retention` purges already-collected raw data; cancelling it would
@@ -91,7 +101,9 @@ object PrivacyRuntimeWorkerPolicy {
      * [cancelExemptWorkers] is always excluded — `data_retention` keeps running.
      */
     fun workersToCancel(disabledToggles: Set<PrivacyToggle>): Set<String> =
-        disabledToggles.flatMap { gatedWorkers[it].orEmpty() }.toSet() - cancelExemptWorkers
+        disabledToggles
+            .flatMap { gatedWorkers[it].orEmpty() + cancelOnlyWorkers[it].orEmpty() }
+            .toSet() - cancelExemptWorkers
 
     /**
      * The workers to reschedule for the given set of toggles that flipped `false -> true`.

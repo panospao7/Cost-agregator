@@ -136,6 +136,17 @@ class PrivacySettingsRepositoryImplWorkerGatingTest {
     }
 
     @Test
+    fun `disabling cloud AI cancels the midnight chain and the on-enable briefing run`() {
+        val old = PrivacySettings(cloudAiEnabled = true)
+        val persisted = old.copy(cloudAiEnabled = false)
+
+        repository.applyPrivacyChange(old, persisted)
+
+        verify(exactly = 1) { workManager.cancelUniqueWork("ai_daily_briefing") }
+        verify(exactly = 1) { workManager.cancelUniqueWork("ai_daily_briefing_on_enable") }
+    }
+
+    @Test
     fun `no transition leaves workers untouched`() {
         val settings = PrivacySettings()
 

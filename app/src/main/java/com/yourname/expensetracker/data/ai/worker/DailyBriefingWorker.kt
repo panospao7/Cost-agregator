@@ -141,7 +141,10 @@ class DailyBriefingWorker @AssistedInject constructor(
             Timber.d("DailyBriefingWorker: completed successfully.")
         }
 
-        if (shouldRescheduleNextMidnight(guardResult)) {
+        // The on-enable run (own unique name, KEY_NO_REARM) never touches the midnight chain:
+        // midnight is armed separately by scheduleDailyBriefing.
+        val noRearm = inputData.getBoolean(KEY_NO_REARM, false)
+        if (!noRearm && shouldRescheduleNextMidnight(guardResult)) {
             val result = WorkerSpecScheduler.scheduleAtMidnight(
                 applicationContext,
                 AppConfig.Ai.WORK_NAME_DAILY_BRIEFING,
@@ -195,9 +198,9 @@ class DailyBriefingWorker @AssistedInject constructor(
      * (re)arming if the worker is re-enabled — re-arming here would fight that.
      *
      * Retry/BlockedRetry are not rescheduled here: WorkManager owns retry backoff.
-     * [WorkerGuardResult.Failed] IS rescheduled: [AiWorkScheduler.enqueueBriefingNow]
-     * enqueues with REPLACE, which cancels the pending midnight request, and a terminal
-     * Failed result would otherwise leave no midnight chain until the next app-start seed.
+     * [WorkerGuardResult.Failed] is not rescheduled: a request appended from inside a running
+     * chain link becomes its child and is failed with it. [AiWorkScheduler.enqueueBriefingNow]
+     * runs under its own unique name with [KEY_NO_REARM], so it never disturbs the chain.
      * Cancellation never reaches this point: the guard rethrows CancellationException.
      *
      * Privacy-denied still reschedules because there is no tight loop to fear: the
@@ -210,11 +213,17 @@ class DailyBriefingWorker @AssistedInject constructor(
         is WorkerGuardResult.Skipped -> result.reason != DISABLED_BY_SPEC_REASON
         is WorkerGuardResult.BlockedRetry -> false
         is WorkerGuardResult.Retry -> false
-        is WorkerGuardResult.Failed -> true
+        is WorkerGuardResult.Failed -> false
     }
 
     companion object {
         const val TAG = "DailyBriefingWorker"
+
+        /**
+         * Input-data flag set by [AiWorkScheduler.enqueueBriefingNow]: this run is the one-shot
+         * on-enable briefing and must not re-arm the midnight chain.
+         */
+        const val KEY_NO_REARM = "no_rearm"
         private const val BRIEFING_PIPELINE_TIMEOUT_MS =
             AppConfig.Ai.DASHBOARD_BRIEFING_TIMEOUT_SECONDS * 1000L
 
