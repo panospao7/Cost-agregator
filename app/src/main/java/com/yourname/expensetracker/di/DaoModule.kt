@@ -344,4 +344,9 @@ object DaoModule {
     @Singleton
     fun provideInstallmentPlanDao(database: AppDatabase): InstallmentPlanDao =
         database.installmentPlanDao()
+
+    @Provides
+    @Singleton
+    fun provideExpenseRefundLinkDao(database: AppDatabase): ExpenseRefundLinkDao =
+        database.expenseRefundLinkDao()
 }

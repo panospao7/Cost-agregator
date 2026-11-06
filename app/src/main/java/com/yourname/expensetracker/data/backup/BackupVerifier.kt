@@ -33,6 +33,9 @@ object BackupVerifier {
     /** Loan installments (INV-30): plan and entry tables exist from schema 152. */
     private const val INSTALLMENT_TABLES_SCHEMA_VERSION = 152
 
+    /** Refund netting (INV-20): the expense_refund_links table exists from schema 153. */
+    private const val REFUND_LINKS_SCHEMA_VERSION = 153
+
     /**
      * P-07-1 / S0b: tables that were classified after older app builds had already
      * written manifests. Manifests produced by builds before this schema version carry
@@ -63,18 +66,18 @@ object BackupVerifier {
         "negotiation_outcomes"
     )
 
-    // ── Verification tier assignment for all 74 tables ──────────
+    // ── Verification tier assignment for all 75 tables ──────────
 
     /**
-     * All 74 tracked table names with their verification tier (one per AppDatabase
-     * entity at schema 152; room_master_table and sqlite internals are not entities).
-     * 74 = 51 exact + 10 validity + 13 optional. 51 exact = 35 in the first Tier 1
+     * All 75 tracked table names with their verification tier (one per AppDatabase
+     * entity at schema 153; room_master_table and sqlite internals are not entities).
+     * 75 = 52 exact + 10 validity + 13 optional. 52 exact = 36 in the first Tier 1
      * block + 7 event/link + 9 S0b-classified (see [COVERAGE_GATED_TABLES]).
      * TABLE_TIERS is a single literal mapOf (no merged maps/sets).
      */
     private val TABLE_TIERS: Map<String, VerificationTier> = mapOf(
-        // ── Tier 1: Exact row count required (51 total) ──
-        // 35 listed here + 7 event/link tables grouped under the Tier 2 comment
+        // ── Tier 1: Exact row count required (52 total) ──
+        // 36 listed here + 7 event/link tables grouped under the Tier 2 comment
         // below (transaction_events, receipt_events, receipt_expense_links,
         // recurring_occurrences, recurring_reminder_deliveries,
         // recurring_lifecycle_events, warranty_reminder_deliveries) which are also
@@ -99,7 +102,10 @@ object BackupVerifier {
         // and entries survive backup/restore. Gated by databaseVersion below.
         "installment_plans"              to VerificationTier.TIER_1_EXACT,
         "installment_entries"            to VerificationTier.TIER_1_EXACT,
-        "warranties"                     to VerificationTier.TIER_1_EXACT,
+        // Refund netting (INV-20, schema 153): exact-count verified so links survive
+        // backup/restore. Gated by REFUND_LINKS_SCHEMA_VERSION below.
+        "expense_refund_links"           to VerificationTier.TIER_1_EXACT,
+        "warranties"                    to VerificationTier.TIER_1_EXACT,
         "return_windows"                 to VerificationTier.TIER_1_EXACT,
         "mileage_tracking"               to VerificationTier.TIER_1_EXACT,
         "expense_groups"                 to VerificationTier.TIER_1_EXACT,
@@ -278,6 +284,8 @@ object BackupVerifier {
                     databaseVersion >= SAVINGS_SWEEP_MONTH_SCHEMA_VERSION
                 "installment_plans", "installment_entries" -> databaseVersion == null ||
                     databaseVersion >= INSTALLMENT_TABLES_SCHEMA_VERSION
+                "expense_refund_links" -> databaseVersion == null ||
+                    databaseVersion >= REFUND_LINKS_SCHEMA_VERSION
                 in COVERAGE_GATED_TABLES -> databaseVersion == null ||
                     (databaseVersion >= FULL_TABLE_COVERAGE_SCHEMA_VERSION && semanticMarker)
                 else -> true
@@ -333,6 +341,12 @@ object BackupVerifier {
         if (sourceDatabaseVersion != null && sourceDatabaseVersion < INSTALLMENT_TABLES_SCHEMA_VERSION) {
             if ("installment_plans" !in expectedCounts) migrated["installment_plans"] = 0
             if ("installment_entries" !in expectedCounts) migrated["installment_entries"] = 0
+        }
+        // Pre-153 restores create expense_refund_links empty (additive migration, INV-20).
+        if (sourceDatabaseVersion != null && sourceDatabaseVersion < REFUND_LINKS_SCHEMA_VERSION &&
+            "expense_refund_links" !in expectedCounts
+        ) {
+            migrated["expense_refund_links"] = 0
         }
         // Pre-146 restores create negotiation_outcomes empty (additive migration).
         if (sourceDatabaseVersion != null && sourceDatabaseVersion < NEGOTIATION_OUTCOMES_SCHEMA_VERSION &&

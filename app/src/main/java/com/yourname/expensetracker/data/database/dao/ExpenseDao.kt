@@ -421,6 +421,15 @@ suspend fun updateDedupeKey(expenseId: Long, dedupeKey: String)
     suspend fun updateSpendingExclusionReason(expenseId: Long, reason: String?)
 
     /**
+     * Sets the denormalised refund-netting amount (refund-netting INV-1): the BigDecimal sum of the
+     * link rows on this row's side, computed by the caller. The only legal caller is
+     * TransactionLifecycleCoordinator (linkRefund, unlinkRefund and the delete cleanup).
+     */
+    @RestrictedExpenseDaoMutation
+    @Query("UPDATE expenses SET refundNettedAmount = :amount WHERE id = :expenseId")
+    suspend fun updateRefundNettedAmount(expenseId: Long, amount: Double)
+
+    /**
      * Read-only scan of every expense that carries a spending-exclusion flag (id and stored flag
      * name only). Used by the installment reconcile to find orphan installment flags (R1, R3).
      * No write, no payload text.

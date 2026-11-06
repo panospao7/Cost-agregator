@@ -158,7 +158,17 @@ data class Expense(
      * value makes [effectiveAmount] and [normalizedEffectiveAmount] return 0.0 and
      * [countsAsSpending] false (the SQL projection is SpendingInclusionSql).
      */
-    @ColumnInfo(defaultValue = "NULL") val spendingExclusionReason: String? = null
+    @ColumnInfo(defaultValue = "NULL") val spendingExclusionReason: String? = null,
+
+    /**
+     * Refund netting (schema 153): sum of `appliedAmount` over the `expense_refund_links` rows on
+     * this row's side, in this row's currency. 0.0 means no link. On a PURCHASE it is the refunds
+     * received; on a DEPOSIT it is the part applied to purchases. Denormalised: the link table is
+     * the source of truth (refund-netting INV-1). Intentionally NOT indexed. Written only by
+     * TransactionLifecycleCoordinator (through ExpenseDao.updateRefundNettedAmount). It does not
+     * yet affect [effectiveAmount] (the formula switch is a later slice).
+     */
+    @ColumnInfo(defaultValue = "0.0") val refundNettedAmount: Double = 0.0
 ) {
     /**
      * The amount that should be counted toward the user's own spending.
