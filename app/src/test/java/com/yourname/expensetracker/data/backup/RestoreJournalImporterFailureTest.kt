@@ -674,6 +674,12 @@ class RestoreJournalImporterFailureTest {
         assertSame(cancellation, runCatching { cancellingImporter.importLastFailureJournalIfPresent() }.exceptionOrNull())
         assertFalse(journal.isFailureJournalImported(failureCid))
 
+        // Failure journal, event insert site (run row already present).
+        coEvery { operationRunDao.getByCorrelationId(failureCid) } returns existingRun(failureCid)
+        coEvery { operationRunEventDao.getByRunId(9L) } returns emptyList()
+        assertSame(cancellation, runCatching { cancellingImporter.importLastFailureJournalIfPresent() }.exceptionOrNull())
+        assertFalse(journal.isFailureJournalImported(failureCid))
+
         coVerify(exactly = 0) { operationRunDao.insert(any()) }
         coVerify(exactly = 0) { operationRunEventDao.insert(any()) }
     }

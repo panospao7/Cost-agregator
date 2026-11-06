@@ -27,10 +27,14 @@ class RestoreJournalImporter @Inject constructor(
         // GR-14u45b: canonical write-barrier admission BEFORE any write —
         // the startup journal import is a real write path (OperationRun /
         // OperationRunEvent inserts) and was previously ungated.  The
-        // check precedes the outer try/catch so DatabaseAccessBlockedException
-        // is never swallowed into a generic import failure;
-        // CancellationException propagates and every other failure logs a
-        // CONTROLLED CONSTANT (never e.message — repo privacy rule).
+        // check precedes the outer try/catch, so a block at admission returns
+        // early with a maintenance-skip log.  A write rejected later inside
+        // runWrite (DatabaseAccessBlockedException) is caught by the import
+        // catch paths, logged as the bounded WRITE_BLOCKED constant (distinct
+        // from UNKNOWN_ERROR) and leaves the journal unmarked for retry on the
+        // next startup.  CancellationException always propagates first and
+        // every log uses a CONTROLLED CONSTANT (never e.message — repo
+        // privacy rule).
         try {
             writeBarrier.checkWritesAllowed(
                 "RestoreJournalImporter.importLastSuccessJournalIfPresent"
@@ -77,7 +81,7 @@ class RestoreJournalImporter @Inject constructor(
                 Timber.i("RestoreJournalImporter: legacy zero-event journal marked imported for $correlationId")
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
-                Timber.w("RestoreJournalImporter: UNKNOWN_ERROR stage=legacy_empty class=%s", e::class.java.simpleName)
+                Timber.w("RestoreJournalImporter: %s stage=legacy_empty class=%s", failureCode(e), e::class.java.simpleName)
             }
             return
         }
@@ -135,7 +139,7 @@ class RestoreJournalImporter @Inject constructor(
                     }
                 }.onFailure {
                     if (it is CancellationException) throw it
-                    Timber.w("RestoreJournalImporter: UNKNOWN_ERROR stage=success_event_insert class=%s", it::class.java.simpleName)
+                    Timber.w("RestoreJournalImporter: %s stage=success_event_insert class=%s", failureCode(it), it::class.java.simpleName)
                     allSucceeded = false
                 }
             }
@@ -149,7 +153,7 @@ class RestoreJournalImporter @Inject constructor(
             }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
-            Timber.w("RestoreJournalImporter: UNKNOWN_ERROR stage=success_import class=%s", e::class.java.simpleName)
+            Timber.w("RestoreJournalImporter: %s stage=success_import class=%s", failureCode(e), e::class.java.simpleName)
         }
     }
 
@@ -251,7 +255,7 @@ class RestoreJournalImporter @Inject constructor(
                     }
                 }.onFailure {
                     if (it is CancellationException) throw it
-                    Timber.w("RestoreJournalImporter: UNKNOWN_ERROR stage=failure_event_insert class=%s", it::class.java.simpleName)
+                    Timber.w("RestoreJournalImporter: %s stage=failure_event_insert class=%s", failureCode(it), it::class.java.simpleName)
                     allSucceeded = false
                 }
             }
@@ -264,7 +268,16 @@ class RestoreJournalImporter @Inject constructor(
             }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
-            Timber.w("RestoreJournalImporter: UNKNOWN_ERROR stage=failure_import class=%s", e::class.java.simpleName)
+            Timber.w("RestoreJournalImporter: %s stage=failure_import class=%s", failureCode(e), e::class.java.simpleName)
         }
+    }
+
+    /** Bounded reason code for a failed import write; never derived from exception text. */
+    private fun failureCode(t: Throwable): String =
+        if (t is DatabaseAccessBlockedException) WRITE_BLOCKED else UNKNOWN_ERROR
+
+    private companion object {
+        const val WRITE_BLOCKED = "WRITE_BLOCKED"
+        const val UNKNOWN_ERROR = "UNKNOWN_ERROR"
     }
 }

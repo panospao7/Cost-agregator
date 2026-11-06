@@ -33,7 +33,8 @@ entries:
     insert with the same eventId dedup and retry-on-partial contract; each insert runs
     under writeBarrier.runWrite inside the importer (a blocked write fails that event and
     the journal is retried on the next startup); eventType/stage carry controlled
-    constants, exceptionMessage is the pre-sanitized exceptionMessageSafe'
+    constants, exceptionMessage is always written as null (DIAG-03; the class column
+    carries the type)'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08M
 - path: app/src/main/java/com/yourname/expensetracker/data/backup/RestoreJournalImporter.kt
@@ -69,7 +70,8 @@ entries:
     with eventId dedup (getByRunId + importedIds set blocks cross-startup AND in-journal
     duplicates, DDL-F876-13); each insert runs under writeBarrier.runWrite inside the
     importer; per-event failures (including a blocked write) keep the journal for retry on the
-    next startup; exceptionMessage comes from event.exceptionMessageSafe (pre-sanitized)'
+    next startup; exceptionMessage is always written as null (DIAG-03; the class column
+    carries the type)'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08M
 - path: app/src/main/java/com/yourname/expensetracker/data/currency/ExchangeRateStoreAdapter.kt
