@@ -5,6 +5,7 @@ import com.yourname.expensetracker.domain.privacy.PrivacySettings
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsLoadState
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.util.ViewModelTestUtils
+import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,7 +23,7 @@ class PrivacySettingsViewModelExchangeRateTest : ViewModelTestUtils() {
 
     @Test
     fun `exchange rate download defaults off and is listed as blocked`() = runTest(testDispatcher) {
-        val viewModel = PrivacySettingsViewModel(repository)
+        val viewModel = PrivacySettingsViewModel(repository, mockk(relaxed = true))
         advanceUntilIdle()
 
         assertFalse(viewModel.uiState.value.settings.exchangeRateDownloadEnabled)
@@ -31,7 +32,7 @@ class PrivacySettingsViewModelExchangeRateTest : ViewModelTestUtils() {
 
     @Test
     fun `enabling exchange rate download persists and clears blocked entry`() = runTest(testDispatcher) {
-        val viewModel = PrivacySettingsViewModel(repository)
+        val viewModel = PrivacySettingsViewModel(repository, mockk(relaxed = true))
         advanceUntilIdle()
 
         viewModel.setExchangeRateDownloadEnabled(true)

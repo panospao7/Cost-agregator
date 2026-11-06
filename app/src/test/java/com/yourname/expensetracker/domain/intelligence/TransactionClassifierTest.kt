@@ -1147,4 +1147,66 @@ class TransactionClassifierTest {
         restarted.destroy()
         subject.destroy()
     }
+
+    // ---------------------------------------------------------------------------------------
+    // J-03-1: eager purge hook onRawStorageModeChanged(mode). The settings stub deliberately
+    // keeps reporting STORE_RAW, so only the hook (not the lazy per-call check) can purge.
+    // ---------------------------------------------------------------------------------------
+
+    @Test
+    fun `J-03-1 onRawStorageModeChanged DO_NOT_STORE deletes model file and clears memory`() = runBlocking<Unit> {
+        val dir = createTempDir("classifier_j031_hook_dns")
+        val privacy = SwitchablePrivacy() // stays STORE_RAW
+        val subject = trainedAndPersisted(dir, passthroughCrypto(), privacy)
+
+        subject.onRawStorageModeChanged(RawStorageMode.DO_NOT_STORE)
+
+        assertPurged("hook/DO_NOT_STORE", subject, dir)
+        subject.destroy()
+    }
+
+    @Test
+    fun `J-03-1 onRawStorageModeChanged purges for every non-STORE_RAW mode`() = runBlocking<Unit> {
+        for (mode in nonRawModes) {
+            val dir = createTempDir("classifier_j031_hook_non_raw")
+            val privacy = SwitchablePrivacy() // stays STORE_RAW
+            val subject = trainedAndPersisted(dir, passthroughCrypto(), privacy)
+
+            subject.onRawStorageModeChanged(mode)
+
+            assertPurged("hook/$mode", subject, dir)
+            subject.destroy()
+            assertFalse("$mode: destroy save must not recreate the file", modelFileIn(dir).exists())
+        }
+    }
+
+    @Test
+    fun `J-03-1 onRawStorageModeChanged STORE_RAW keeps the model in memory and on disk`() = runBlocking<Unit> {
+        val dir = createTempDir("classifier_j031_hook_raw")
+        val privacy = SwitchablePrivacy()
+        val subject = trainedAndPersisted(dir, passthroughCrypto(), privacy)
+        val fileBefore = modelFileIn(dir).readBytes()
+
+        subject.onRawStorageModeChanged(RawStorageMode.STORE_RAW)
+
+        assertEquals(15, subject.getStats().totalPositive)
+        assertEquals(15, subject.getStats().totalNegative)
+        assertTrue("model file kept", modelFileIn(dir).exists())
+        assertArrayEquals("model file untouched", fileBefore, modelFileIn(dir).readBytes())
+        assertTrue("model still scores above neutral", subject.predict(probes[0]) > 0.5f)
+        subject.destroy()
+    }
+
+    @Test
+    fun `J-03-1 onRawStorageModeChanged purge is idempotent`() = runBlocking<Unit> {
+        val dir = createTempDir("classifier_j031_hook_idem")
+        val privacy = SwitchablePrivacy()
+        val subject = trainedAndPersisted(dir, passthroughCrypto(), privacy)
+
+        subject.onRawStorageModeChanged(RawStorageMode.DO_NOT_STORE)
+        subject.onRawStorageModeChanged(RawStorageMode.STORE_METADATA_ONLY)
+
+        assertPurged("hook twice", subject, dir)
+        subject.destroy()
+    }
 }

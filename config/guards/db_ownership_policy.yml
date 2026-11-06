@@ -1449,6 +1449,23 @@ entries:
   reason: 'GR-08l1 EXACT_POLICY: barrier-checked full alias row update'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08L
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantNormalizationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.MerchantNormalizationRepository
+  kind: function
+  method: repointAliases
+  receiver: null
+  parameterTypes:
+  - Long
+  - Long
+  - Long
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.MerchantNormalizationDao
+  operation: reassignAliases
+  barrierMode: helper
+  reason: 'GR-08l1 EXACT_POLICY: barrier-checked single-statement alias repoint (E-03-6);
+    replaces the per-row updateAlias loop in learnMerchantAlias'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.NotificationProcessingPipeline
   kind: function

@@ -88,6 +88,11 @@ class MerchantNormalizationRepository @Inject constructor(
         dao.updateAlias(alias)
     }
 
+    suspend fun repointAliases(oldCanonicalId: Long, newCanonicalId: Long, now: Long): Int {
+        writeBarrier.checkWritesAllowed("MerchantNormalizationRepository.repointAliases")
+        return dao.reassignAliases(oldCanonicalId, newCanonicalId, now)
+    }
+
     suspend fun getAliasById(id: Long): MerchantAlias? =
         dao.getAliasById(id)
 

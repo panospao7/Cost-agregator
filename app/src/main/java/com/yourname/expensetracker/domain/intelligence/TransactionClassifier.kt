@@ -288,6 +288,18 @@ open class TransactionClassifier @Inject constructor(
         Timber.d("Classifier model purged: reason=raw_storage_not_store_raw")
     }
 
+    /**
+     * J-03-1: eager purge hook, called after the notification raw-storage mode was saved
+     * successfully. Any mode other than [RawStorageMode.STORE_RAW] purges the learned model
+     * now instead of waiting for the next lazy check; STORE_RAW is a no-op. Cancellation
+     * propagates (purge is a plain suspend call that never catches it).
+     */
+    suspend fun onRawStorageModeChanged(mode: RawStorageMode) {
+        if (mode != RawStorageMode.STORE_RAW) {
+            purgeModelState()
+        }
+    }
+
     suspend fun train(text: String, isTransaction: Boolean) {
         val mode = readRawStorageMode() ?: return
         if (mode != RawStorageMode.STORE_RAW) {

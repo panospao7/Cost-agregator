@@ -128,6 +128,10 @@ class EffectiveCloudAiPolicyResolver @Inject constructor(
         val reason: String?
 
         when {
+            !ai.aiEnabled -> {
+                cloudAllowed = false
+                reason = PrivacyGateReasonCodes.CLOUD_AI_DISABLED
+            }
             !privacy.cloudAiEnabled -> {
                 cloudAllowed = false
                 reason = "Privacy settings: cloud AI disabled"

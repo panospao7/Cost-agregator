@@ -4,6 +4,7 @@ import com.yourname.expensetracker.domain.privacy.PrivacySettings
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsLoadState
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.util.ViewModelTestUtils
+import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,7 +25,7 @@ class PrivacySettingsViewModelCorruptionWarningTest : ViewModelTestUtils() {
 
     @Test
     fun `corrupted load state shows the warning`() = runTest(testDispatcher) {
-        val viewModel = PrivacySettingsViewModel(repository)
+        val viewModel = PrivacySettingsViewModel(repository, mockk(relaxed = true))
         advanceUntilIdle()
 
         assertTrue(viewModel.uiState.value.showCorruptionWarning)
@@ -32,7 +33,7 @@ class PrivacySettingsViewModelCorruptionWarningTest : ViewModelTestUtils() {
 
     @Test
     fun `dismissCorruptionWarning clears the flag and writes nothing to settings`() = runTest(testDispatcher) {
-        val viewModel = PrivacySettingsViewModel(repository)
+        val viewModel = PrivacySettingsViewModel(repository, mockk(relaxed = true))
         advanceUntilIdle()
         val settingsBefore = viewModel.uiState.value.settings
         assertTrue(viewModel.uiState.value.showCorruptionWarning)
