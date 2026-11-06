@@ -182,16 +182,26 @@ class ExportAnonymizerTransientPayloadTest {
     }
 
     @Test
-    fun `partial schema with only the ciphertext column nulls it without error`() {
+    fun `older schema with the ciphertext column but no nonce or version nulls what exists without error`() {
         val file = createDb(
             "partial_schema.db",
-            "CREATE TABLE notification_intake (id INTEGER PRIMARY KEY, title TEXT, transientPayloadCiphertext BLOB)",
-            "INSERT INTO notification_intake(id, title, transientPayloadCiphertext) VALUES (1, 'SECRET_TITLE', x'DEADBEEF')"
+            "CREATE TABLE notification_intake (id INTEGER PRIMARY KEY, title TEXT, text TEXT, bigText TEXT, " +
+                "subText TEXT, extrasJson TEXT, dedupeFingerprint TEXT, contentHash TEXT, " +
+                "transientPayloadCiphertext BLOB)",
+            "INSERT INTO notification_intake(id, title, text, bigText, subText, extrasJson, dedupeFingerprint, " +
+                "contentHash, transientPayloadCiphertext) " +
+                "VALUES (1, 'SECRET_TITLE', 'SECRET_TEXT', 'SECRET_BIG', 'SECRET_SUB', 'SECRET_EXTRAS', " +
+                "'KEEP_FP', 'KEEP_HASH', x'DEADBEEF')"
         )
 
         anonymizer.sanitizeExport(file)
 
         assertEquals(null, queryString(file, "SELECT title FROM notification_intake WHERE id=1"))
+        assertEquals(null, queryString(file, "SELECT text FROM notification_intake WHERE id=1"))
+        assertEquals(null, queryString(file, "SELECT bigText FROM notification_intake WHERE id=1"))
+        assertEquals(null, queryString(file, "SELECT subText FROM notification_intake WHERE id=1"))
+        assertEquals(null, queryString(file, "SELECT extrasJson FROM notification_intake WHERE id=1"))
+        assertEquals("KEEP_FP", queryString(file, "SELECT dedupeFingerprint FROM notification_intake WHERE id=1"))
         assertEquals(
             0L,
             queryLong(file, "SELECT COUNT(*) FROM notification_intake WHERE transientPayloadCiphertext IS NOT NULL")
