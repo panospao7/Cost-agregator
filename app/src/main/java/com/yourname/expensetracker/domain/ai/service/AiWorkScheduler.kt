@@ -16,6 +16,14 @@ interface AiWorkScheduler {
      */
     fun scheduleDailyBriefing()
 
+    /**
+     * Enqueue one immediate (no initial delay) briefing run, using the daily briefing's
+     * constraints, under the same unique work name as the daily chain with REPLACE so the
+     * pending midnight request is superseded. The worker re-arms the midnight chain when the
+     * run completes, and still passes through the worker execution guard and consent gates.
+     */
+    fun enqueueBriefingNow()
+
     /** Cancel any pending or running daily briefing jobs. */
     fun cancelDailyBriefing()
 }

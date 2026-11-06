@@ -194,8 +194,11 @@ class DailyBriefingWorker @AssistedInject constructor(
      * cancels the unique work when the spec is disabled, and the disable path owns
      * (re)arming if the worker is re-enabled — re-arming here would fight that.
      *
-     * Retry/Failure are not rescheduled here: WorkManager owns retry backoff, and
-     * the next midnight is re-seeded on the following terminal Success/Skip.
+     * Retry/BlockedRetry are not rescheduled here: WorkManager owns retry backoff.
+     * [WorkerGuardResult.Failed] IS rescheduled: [AiWorkScheduler.enqueueBriefingNow]
+     * enqueues with REPLACE, which cancels the pending midnight request, and a terminal
+     * Failed result would otherwise leave no midnight chain until the next app-start seed.
+     * Cancellation never reaches this point: the guard rethrows CancellationException.
      *
      * Privacy-denied still reschedules because there is no tight loop to fear: the
      * next run is bounded by the midnight initial delay, and if the capability is
@@ -207,7 +210,7 @@ class DailyBriefingWorker @AssistedInject constructor(
         is WorkerGuardResult.Skipped -> result.reason != DISABLED_BY_SPEC_REASON
         is WorkerGuardResult.BlockedRetry -> false
         is WorkerGuardResult.Retry -> false
-        is WorkerGuardResult.Failed -> false
+        is WorkerGuardResult.Failed -> true
     }
 
     companion object {

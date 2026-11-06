@@ -167,6 +167,63 @@ class AiSettingsViewModelTest : ViewModelTestUtils() {
         coVerify(exactly = 0) { syncProactiveBriefingWorkUseCase(any()) }
     }
 
+    // J-09-1: off to on passes the pre-change settings so the use case can enqueue one run.
+    @Test
+    fun `setDashboardBriefingEnabled true from off passes previous settings to the sync use case`() = runTest(testDispatcher) {
+        val before = AiSettings(aiEnabled = true, dashboardBriefingEnabled = false)
+        settingsFlow.value = before
+        advanceUntilIdle()
+
+        viewModel.setDashboardBriefingEnabled(true)
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) {
+            syncProactiveBriefingWorkUseCase(
+                match { it.dashboardBriefingEnabled },
+                match { !it.dashboardBriefingEnabled }
+            )
+        }
+    }
+
+    @Test
+    fun `setDashboardBriefingEnabled true when already on keeps the one argument call`() = runTest(testDispatcher) {
+        settingsFlow.value = AiSettings(aiEnabled = true, dashboardBriefingEnabled = true)
+        advanceUntilIdle()
+
+        viewModel.setDashboardBriefingEnabled(true)
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) {
+            syncProactiveBriefingWorkUseCase(match { it.dashboardBriefingEnabled }, isNull())
+        }
+    }
+
+    @Test
+    fun `setDashboardBriefingEnabled false keeps the one argument call`() = runTest(testDispatcher) {
+        settingsFlow.value = AiSettings(aiEnabled = true, dashboardBriefingEnabled = true)
+        advanceUntilIdle()
+
+        viewModel.setDashboardBriefingEnabled(false)
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) {
+            syncProactiveBriefingWorkUseCase(match { !it.dashboardBriefingEnabled }, isNull())
+        }
+    }
+
+    @Test
+    fun `setProactiveBriefingsEnabled and setAllowCloudAi never pass previous settings`() = runTest(testDispatcher) {
+        settingsFlow.value = AiSettings(aiEnabled = true, dashboardBriefingEnabled = false)
+        advanceUntilIdle()
+
+        viewModel.setProactiveBriefingsEnabled(true)
+        viewModel.setAllowCloudAi(true)
+        advanceUntilIdle()
+
+        coVerify(exactly = 2) { syncProactiveBriefingWorkUseCase(any(), isNull()) }
+        coVerify(exactly = 0) { syncProactiveBriefingWorkUseCase(any(), isNull(inverse = true)) }
+    }
+
     @Test
     fun `refreshRuntimeStatus updates runtime summary`() = runTest(testDispatcher) {
         val summary = AiRuntimeStatusSummary(

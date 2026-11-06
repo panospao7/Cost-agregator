@@ -325,7 +325,7 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
     "lint_baseline_policy": {
         "script": "scripts/verify_lint_baseline_policy.py",
         "sourceScope": "repository-config",
-        "tests": None,  # No dedicated test file
+        "tests": "scripts/test_verify_lint_baseline_policy.py",
         "mode": "blocking",
         "baseline": None,
         "allowlist": None,
@@ -340,7 +340,7 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
             "requiredInputs": (),
             "timeoutProfile": "standard",
             "outputContract": "stdout-human;exit:0=pass,1=violation,2=infra",
-            "testManifest": "none",
+            "testManifest": ("scripts/test_verify_lint_baseline_policy.py",),
             "documentationAnchor": "docs/ci/guard-policy.md",
         },
     },
