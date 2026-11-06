@@ -130,7 +130,9 @@ internal fun statementTextForAi(fullText: String): String {
     val headEndsOnBoundary = collapsed.length <= STATEMENT_AI_TEXT_SLICE ||
         collapsed[STATEMENT_AI_TEXT_SLICE] == ' '
     val scrubbed = CounterpartyLabel.scrubLongDigitRuns(
-        CounterpartyLabel.maskIbans(collapsed.substring(0, minOf(collapsed.length, STATEMENT_AI_TEXT_SLICE)))
+        CounterpartyLabel.scrubLetterAdjacentDigitRuns(
+            CounterpartyLabel.maskIbans(collapsed.substring(0, minOf(collapsed.length, STATEMENT_AI_TEXT_SLICE)))
+        )
     )
     val window: String
     val endsOnBoundary: Boolean
@@ -1496,7 +1498,9 @@ class BankStatementLifecycleProcessor @Inject constructor(
 
     /** Boundary scrub for any statement-derived text that is stored: IBANs, then long digit runs. */
     private fun scrubStatementText(text: String): String =
-        CounterpartyLabel.scrubLongDigitRuns(CounterpartyLabel.maskIbans(text))
+        CounterpartyLabel.scrubLongDigitRuns(
+            CounterpartyLabel.scrubLetterAdjacentDigitRuns(CounterpartyLabel.maskIbans(text))
+        )
 
     /** Bounded ledger/summary code for a layout skip reason; exhaustive so a new reason cannot be dropped. */
     private fun skipReasonCode(reason: StatementSkipReason): String = when (reason) {

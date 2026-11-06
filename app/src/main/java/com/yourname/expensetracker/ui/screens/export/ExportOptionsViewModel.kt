@@ -108,6 +108,9 @@ class ExportOptionsViewModel @Inject constructor(
     private var exportJob: Job? = null
     private var exportGeneration: Long = 0L
 
+    /** J-12-1: path of the export file the share sheet was launched for (kept on dismiss). */
+    private var sharedExportFilePath: String? = null
+
     /** G-TIME-01: the screen's single TimeProvider-backed "now" source. */
     fun referenceNowMillis(): Long = timeProvider.now()
 
@@ -128,6 +131,18 @@ class ExportOptionsViewModel @Inject constructor(
                 throw e
             } catch (e: Exception) {
                 Timber.w("Export file sweep failed class=%s", e::class.java.simpleName)
+            }
+        }
+    }
+
+    private fun deleteUnsharedExportFileBestEffort(path: String) {
+        viewModelScope.launch(ioDispatcher) {
+            try {
+                exportDataRepository.deleteExportFile(path)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.w("Export file delete failed class=%s", e::class.java.simpleName)
             }
         }
     }
@@ -1072,7 +1087,25 @@ class ExportOptionsViewModel @Inject constructor(
             "null"
         }
 
+    /**
+     * J-12-1: the screen calls this once the share sheet has been launched for the current
+     * export file. A shared file is kept (the receiver reads it later; the 1-hour sweep removes
+     * it), so [clearExport] must not delete it.
+     */
+    fun markExportShared() {
+        sharedExportFilePath = _uiState.value.exportFilePath
+    }
+
+    /**
+     * J-12-1: dismiss/cancel. Deletes the export file (off-main, best effort) unless it was
+     * shared; the file is only ever deleted through [ExportDataRepository.deleteExportFile],
+     * which refuses any path outside the app export directory.
+     */
     fun clearExport() {
+        val path = _uiState.value.exportFilePath
+        val wasShared = path != null && path == sharedExportFilePath
+        sharedExportFilePath = null
+        if (path != null && !wasShared) deleteUnsharedExportFileBestEffort(path)
         _uiState.value = _uiState.value.copy(
             exportPreview = null,
             exportPreviewTruncated = false,

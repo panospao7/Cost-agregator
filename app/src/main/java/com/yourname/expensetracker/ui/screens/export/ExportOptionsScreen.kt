@@ -226,6 +226,8 @@ fun ExportOptionsScreen(
                                 }
                             },
                             onSave = {
+                                // Protect the source from a Dismiss during the async SAF copy.
+                                viewModel.markExportShared()
                                 pendingExportFilePath = uiState.exportFilePath
                                 val ext = when (uiState.selectedFormat) {
                                     "quickbooks" -> "iif"
@@ -247,6 +249,10 @@ fun ExportOptionsScreen(
                                             "json" -> "json"
                                             else -> "csv"
                                         }
+                                        // Mark before the IO hop and launch so a concurrent Dismiss
+                                        // cannot delete the file being shared. A failed launch keeps
+                                        // the file until the 1-hour sweep (fail-safe).
+                                        viewModel.markExportShared()
                                         val file = withContext(Dispatchers.IO) {
                                             val path = uiState.exportFilePath ?: error("Export file path unavailable")
                                             File(path).also {
@@ -269,10 +275,10 @@ fun ExportOptionsScreen(
                                         }
                                         context.startActivity(Intent.createChooser(sendIntent, context.getString(R.string.action_share)))
                                         snackbarHostState.showSnackbar(context.getString(R.string.export_share_success))
+                                    } catch (e: kotlinx.coroutines.CancellationException) {
+                                        throw e
                                     } catch (t: Throwable) {
-                                        snackbarHostState.showSnackbar(
-                                            context.getString(R.string.export_save_failed, t.message ?: "unknown error")
-                                        )
+                                        snackbarHostState.showSnackbar(context.getString(R.string.error_generic))
                                     }
                                 }
                             },
