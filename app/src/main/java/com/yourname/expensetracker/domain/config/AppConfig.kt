@@ -262,5 +262,9 @@ object AppConfig {
 
         // Worker tags
         const val WORK_NAME_DAILY_BRIEFING = "ai_daily_briefing"
+
+        // Separate unique name for the one-shot "generate on enable" run, so it can never
+        // replace, cancel or parent-link the midnight chain stored under WORK_NAME_DAILY_BRIEFING.
+        const val WORK_NAME_DAILY_BRIEFING_ON_ENABLE = "ai_daily_briefing_on_enable"
     }
 }

@@ -5,7 +5,9 @@ import android.util.Log
 import androidx.work.Constraints
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequest
 import androidx.work.WorkManager
+import androidx.work.workDataOf
 import com.yourname.expensetracker.domain.ai.service.AiWorkScheduler
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -40,29 +42,35 @@ class AiWorkSchedulerImpl @Inject constructor(
     }
 
     override fun enqueueBriefingNow() {
-        // Unique one-time work, no delay. Same unique name as the daily chain with REPLACE: the
-        // superseded midnight request is re-armed by the worker on completion
-        // (DailyBriefingWorker.shouldRescheduleNextMidnight), so the chain never doubles.
+        // Unique one-time work, no delay, under its OWN unique name. The midnight chain stored
+        // under WORK_NAME_DAILY_BRIEFING is never touched (REPLACE there would cancel the pending
+        // midnight request, and a request appended from inside a failing run is failed with it).
+        // KEY_NO_REARM makes this run skip the worker's midnight re-arm; midnight is armed
+        // separately by scheduleDailyBriefing (SyncProactiveBriefingWorkUseCase).
         // Constraints are the daily spec's minus requiresCharging, so "generate on enable" is not
         // deferred until the phone charges; the network-type and battery-not-low protections stay.
-        // The daily midnight spec itself is unchanged.
+        // The daily midnight spec itself is unchanged. Not a WorkerSpec.DEFAULTS entry: it is
+        // on-demand only and must not be seeded at startup or by WorkerRegistry.
         val specConstraints = WorkerSpec.DEFAULTS[AppConfig.Ai.WORK_NAME_DAILY_BRIEFING]?.constraints
         val onEnableConstraints = Constraints.Builder()
             .setRequiredNetworkType(specConstraints?.requiredNetworkType ?: NetworkType.UNMETERED)
             .setRequiresBatteryNotLow(specConstraints?.requiresBatteryNotLow() ?: true)
             .build()
-        WorkerSpecScheduler.scheduleFromSpec(
-            context,
-            AppConfig.Ai.WORK_NAME_DAILY_BRIEFING,
-            DailyBriefingWorker::class.java,
-            customConstraints = onEnableConstraints,
-            oneShotPolicyOverride = ExistingWorkPolicy.REPLACE
+        val request = OneTimeWorkRequest.Builder(DailyBriefingWorker::class.java)
+            .setConstraints(onEnableConstraints)
+            .setInputData(workDataOf(DailyBriefingWorker.KEY_NO_REARM to true))
+            .build()
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            AppConfig.Ai.WORK_NAME_DAILY_BRIEFING_ON_ENABLE,
+            ExistingWorkPolicy.REPLACE,
+            request
         )
     }
 
     override fun cancelDailyBriefing() {
-        WorkManager.getInstance(context)
-            .cancelUniqueWork(AppConfig.Ai.WORK_NAME_DAILY_BRIEFING)
+        val workManager = WorkManager.getInstance(context)
+        workManager.cancelUniqueWork(AppConfig.Ai.WORK_NAME_DAILY_BRIEFING)
+        workManager.cancelUniqueWork(AppConfig.Ai.WORK_NAME_DAILY_BRIEFING_ON_ENABLE)
         Log.d(TAG, "Daily briefing worker cancelled")
     }
 
