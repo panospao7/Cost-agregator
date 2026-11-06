@@ -1785,7 +1785,7 @@ class DbGuardPolicyFixtureTest {
     fun `ownership — CategoryRepository entries are exactly enumerated incl adjudicated seeding and merge`() {
         val entries = parseEntries(ownershipPolicyFile)
         val matching = entries.filter { it.className == "CategoryRepository" }
-        assertEquals("Should be exactly 8 CategoryRepository entries", 8, matching.size)
+        assertEquals("Should be exactly 9 CategoryRepository entries", 9, matching.size)
 
         val addEntry = findEntry(entries, "CategoryRepository", methodName = "addCategory")
         assertNotNull("CategoryRepository.addCategory entry not found in ownership policy", addEntry)
@@ -1808,7 +1808,14 @@ class DbGuardPolicyFixtureTest {
         assertNotNull("CategoryRepository.renameCategory entry not found in ownership policy", renameEntry)
         assertEquals("CategoryRepository.renameCategory operation", "updateNameById", renameEntry!!.operation)
         assertEquals("CategoryRepository.renameCategory DAOs", setOf("categoryDao"), renameEntry.daos.toSet())
-        for (entry in sharedEntries + renameEntry) {
+        val renameEntries = matching.filter { it.method == "renameCategory" }
+        assertEquals("renameCategory must have exactly 2 entries", 2, renameEntries.size)
+        assertEquals(
+            "renameCategory rows must be the exact enumerated (DAO, operation) set",
+            setOf("categoryDao" to "updateNameById", "categoryDao" to "updateDenormalizedCategoryNames"),
+            renameEntries.map { it.daos.single() to it.operation }.toSet()
+        )
+        for (entry in sharedEntries + renameEntries) {
             assertEquals("CategoryRepository.${entry.method} (${entry.operation}) linked_issue",
                 "MIT-003", entry.linkedIssue)
         }
@@ -1847,8 +1854,8 @@ class DbGuardPolicyFixtureTest {
             )
         }
 
-        // No drift: the 8 rows are fully accounted for by the exact blocks above
-        // (1 add + 4 ensure + 2 shared delete/merge path + 1 rename == 8), so any
+        // No drift: the 9 rows are fully accounted for by the exact blocks above
+        // (1 add + 4 ensure + 2 shared delete/merge path + 2 rename == 9), so any
         // unexpected row would have failed a count pin.
     }
 

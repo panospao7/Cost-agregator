@@ -7,11 +7,15 @@ import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.entity.Budget
+import com.yourname.expensetracker.data.database.entity.BudgetAdjustmentRecommendation
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
+import com.yourname.expensetracker.data.database.entity.BudgetTrend
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.MerchantCategory
 import com.yourname.expensetracker.data.database.entity.PlannedExpense
+import com.yourname.expensetracker.data.database.entity.ReceiptItemCategorization
+import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.categorization.CategorizationEngine
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
@@ -841,6 +845,169 @@ class CategoryRepositoryTest {
         assertEquals(RenameCategoryResult.NotFound, result)
         assertEquals(0, db.categoryDao().getCount())
         assertNoCacheInvalidation()
+    }
+
+    // ── denormalized category names stay in sync (1.0.4) ─────────────────────
+
+    private class DenormRows(val recommendationId: Long, val itemId: Long)
+
+    private fun scalarString(sql: String, vararg args: Any): String? =
+        db.openHelper.readableDatabase.query(sql, arrayOf<Any?>(*args)).use { cursor ->
+            if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getString(0) else null
+        }
+
+    /** Seeds one recommendation and one receipt item (suggested + user-corrected) all naming [name]. */
+    private suspend fun seedDenormalizedRows(categoryId: Long, name: String): DenormRows {
+        val budgetId = insertBudget(categoryId, active = false)
+        val recommendationId = db.budgetAdjustmentDao().insertRecommendation(
+            BudgetAdjustmentRecommendation(
+                budgetId = budgetId,
+                categoryId = categoryId,
+                categoryName = name,
+                currentBudget = 100.0,
+                recommendedBudget = 120.0,
+                delta = 20.0,
+                deltaPercentage = 20.0,
+                reason = "synthetic",
+                confidence = 0.8,
+                trend = BudgetTrend.STABLE,
+                generatedAt = now
+            )
+        )
+        assertTrue("fixture: recommendation insert failed", recommendationId > 0L)
+        val receiptId = db.scannedReceiptDao().insert(
+            ScannedReceipt(
+                imagePath = null,
+                rawOcrText = "synthetic",
+                parsedTotal = 12.0,
+                parsedMerchant = "Synthetic Merchant",
+                parsedDate = now,
+                parsedItems = "[]",
+                parsedTaxAmount = null,
+                confidence = 0.9f,
+                createdAt = now,
+                updatedAt = now,
+                sourceType = "CAMERA",
+                documentType = "RETAIL_RECEIPT"
+            )
+        )
+        assertTrue("fixture: receipt insert failed", receiptId > 0L)
+        val itemId = db.receiptItemCategorizationDao().insert(
+            ReceiptItemCategorization(
+                receiptId = receiptId,
+                itemDescription = "synthetic item",
+                itemAmount = 1.0,
+                suggestedCategoryId = categoryId,
+                suggestedCategoryName = name,
+                confidence = 0.5f,
+                aiRationale = null,
+                alternativeCategoriesJson = null,
+                userCorrectedCategoryId = categoryId,
+                userCorrectedCategoryName = name,
+                userCorrectedAt = now,
+                taxAmount = null,
+                createdAt = now,
+                updatedAt = now
+            )
+        )
+        assertTrue("fixture: receipt item insert failed", itemId > 0L)
+        return DenormRows(recommendationId, itemId)
+    }
+
+    private fun assertDenormNames(rows: DenormRows, expected: String, label: String) {
+        assertEquals(
+            "$label recommendation categoryName",
+            expected,
+            scalarString("SELECT categoryName FROM budget_adjustment_recommendations WHERE id = ?", rows.recommendationId)
+        )
+        assertEquals(
+            "$label suggestedCategoryName",
+            expected,
+            scalarString("SELECT suggestedCategoryName FROM receipt_item_categorizations WHERE id = ?", rows.itemId)
+        )
+        assertEquals(
+            "$label userCorrectedCategoryName",
+            expected,
+            scalarString("SELECT userCorrectedCategoryName FROM receipt_item_categorizations WHERE id = ?", rows.itemId)
+        )
+    }
+
+    @Test
+    fun `renameCategory rewrites denormalized names of its rows and leaves other categories rows unchanged`() = runTest {
+        val id = insertCategory("Old Name")
+        val other = insertCategory("Other")
+        val mine = seedDenormalizedRows(id, "Old Name")
+        val theirs = seedDenormalizedRows(other, "Other")
+        assertDenormNames(mine, "Old Name", "control before rename")
+
+        val result = repository.renameCategory(id, "  New Name ")
+
+        assertEquals(RenameCategoryResult.Renamed, result)
+        assertDenormNames(mine, "New Name", "renamed category")
+        assertDenormNames(theirs, "Other", "other category")
+    }
+
+    @Test
+    fun `deleteCategory moved rows carry the replacement name`() = runTest {
+        val source = insertCategory("Source")
+        val replacement = insertCategory("Replacement")
+        val bystander = insertCategory("Bystander")
+        val moved = seedDenormalizedRows(source, "Source")
+        val untouched = seedDenormalizedRows(bystander, "Bystander")
+
+        val result = repository.deleteCategory(source, replacement)
+
+        assertEquals(DeleteCategoryResult.Deleted, result)
+        assertDenormNames(moved, "Replacement", "moved rows")
+        assertEquals(
+            replacement,
+            scalarLong("SELECT categoryId FROM budget_adjustment_recommendations WHERE id = ?", moved.recommendationId)
+        )
+        assertEquals(
+            replacement,
+            scalarLong("SELECT suggestedCategoryId FROM receipt_item_categorizations WHERE id = ?", moved.itemId)
+        )
+        assertEquals(
+            replacement,
+            scalarLong("SELECT userCorrectedCategoryId FROM receipt_item_categorizations WHERE id = ?", moved.itemId)
+        )
+        assertDenormNames(untouched, "Bystander", "bystander rows")
+    }
+
+    @Test
+    fun `mergeCategories moved rows carry the target name`() = runTest {
+        val source = insertCategory("Source")
+        val target = insertCategory("Target")
+        val moved = seedDenormalizedRows(source, "Source")
+        val existing = seedDenormalizedRows(target, "Target")
+
+        repository.mergeCategories(source, target)
+
+        assertDenormNames(moved, "Target", "moved rows")
+        assertDenormNames(existing, "Target", "target's own rows")
+    }
+
+    @Test
+    fun `a Duplicate rename refusal changes no denormalized name`() = runTest {
+        insertCategory("Travel")
+        val id = insertCategory("Mine")
+        val rows = seedDenormalizedRows(id, "Mine")
+
+        assertEquals(RenameCategoryResult.Duplicate, repository.renameCategory(id, "TRAVEL"))
+
+        assertDenormNames(rows, "Mine", "refused rename")
+        assertEquals("Mine", db.categoryDao().getById(id)!!.name)
+    }
+
+    @Test
+    fun `a CannotRenameDefault refusal changes no denormalized name`() = runTest {
+        val defaultId = insertCategory("Groceries", isDefault = true)
+        val rows = seedDenormalizedRows(defaultId, "Groceries")
+
+        assertEquals(RenameCategoryResult.CannotRenameDefault, repository.renameCategory(defaultId, "Food Shopping"))
+
+        assertDenormNames(rows, "Groceries", "refused default rename")
+        assertEquals("Groceries", db.categoryDao().getById(defaultId)!!.name)
     }
 
     // ── countExpensesForCategory ─────────────────────────────────────────────

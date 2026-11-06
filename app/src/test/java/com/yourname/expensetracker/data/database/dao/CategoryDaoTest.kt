@@ -710,6 +710,109 @@ class CategoryDaoTest {
         assertEquals("Other", categoryDao.getById(other)!!.name)
     }
 
+    private fun scalarString(sql: String, vararg args: Any): String? =
+        database.openHelper.readableDatabase.query(sql, arrayOf<Any?>(*args)).use { cursor ->
+            if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getString(0) else null
+        }
+
+    /** Seeds a recommendation and a receipt item (suggested + user-corrected) naming [name]; returns (recommendationId, itemId). */
+    private suspend fun seedNamedRows(categoryId: Long, name: String): Pair<Long, Long> {
+        val budgetId = insertBudget(categoryId, active = false)
+        val recommendationId = positive(
+            "recommendation",
+            database.budgetAdjustmentDao().insertRecommendation(
+                BudgetAdjustmentRecommendation(
+                    budgetId = budgetId,
+                    categoryId = categoryId,
+                    categoryName = name,
+                    currentBudget = 100.0,
+                    recommendedBudget = 120.0,
+                    delta = 20.0,
+                    deltaPercentage = 20.0,
+                    reason = "synthetic",
+                    confidence = 0.8,
+                    trend = BudgetTrend.STABLE,
+                    generatedAt = now
+                )
+            )
+        )
+        val receiptId = positive(
+            "scanned receipt",
+            database.scannedReceiptDao().insert(
+                ScannedReceipt(
+                    imagePath = null,
+                    rawOcrText = "synthetic",
+                    parsedTotal = 12.0,
+                    parsedMerchant = "Synthetic Merchant",
+                    parsedDate = now,
+                    parsedItems = "[]",
+                    parsedTaxAmount = null,
+                    confidence = 0.9f,
+                    createdAt = now,
+                    updatedAt = now,
+                    sourceType = "CAMERA",
+                    documentType = "RETAIL_RECEIPT"
+                )
+            )
+        )
+        val itemId = positive(
+            "receipt item",
+            database.receiptItemCategorizationDao().insert(
+                ReceiptItemCategorization(
+                    receiptId = receiptId,
+                    itemDescription = "synthetic item",
+                    itemAmount = 1.0,
+                    suggestedCategoryId = categoryId,
+                    suggestedCategoryName = name,
+                    confidence = 0.5f,
+                    aiRationale = null,
+                    alternativeCategoriesJson = null,
+                    userCorrectedCategoryId = categoryId,
+                    userCorrectedCategoryName = name,
+                    userCorrectedAt = now,
+                    taxAmount = null,
+                    createdAt = now,
+                    updatedAt = now
+                )
+            )
+        )
+        return recommendationId to itemId
+    }
+
+    private fun namesOf(rows: Pair<Long, Long>): List<String?> = listOf(
+        scalarString("SELECT categoryName FROM budget_adjustment_recommendations WHERE id = ?", rows.first),
+        scalarString("SELECT suggestedCategoryName FROM receipt_item_categorizations WHERE id = ?", rows.second),
+        scalarString("SELECT userCorrectedCategoryName FROM receipt_item_categorizations WHERE id = ?", rows.second)
+    )
+
+    @Test
+    fun updateDenormalizedCategoryNames_rewrites_all_three_name_columns_of_that_category_only() = runTest {
+        val id = insertCategory("Old")
+        val other = insertCategory("Other")
+        val mine = seedNamedRows(id, "Old")
+        val theirs = seedNamedRows(other, "Other")
+        assertEquals("control", listOf<String?>("Old", "Old", "Old"), namesOf(mine))
+
+        categoryDao.updateDenormalizedCategoryNames(id, "New")
+
+        assertEquals(listOf<String?>("New", "New", "New"), namesOf(mine))
+        assertEquals(listOf<String?>("Other", "Other", "Other"), namesOf(theirs))
+    }
+
+    @Test
+    fun reassignAllReferencesExceptExpenses_sets_moved_rows_to_the_target_name_and_spares_bystanders() = runTest {
+        val source = insertCategory("Source")
+        val target = insertCategory("Target")
+        val bystander = insertCategory("Bystander")
+        val moved = seedNamedRows(source, "Source")
+        val untouched = seedNamedRows(bystander, "Bystander")
+
+        categoryDao.reassignAllReferencesExceptExpenses(source, target)
+
+        assertEquals(listOf<String?>("Target", "Target", "Target"), namesOf(moved))
+        assertEquals(listOf<String?>("Bystander", "Bystander", "Bystander"), namesOf(untouched))
+    }
+
     @Test
     fun updateNameById_for_a_missing_id_updates_nothing() = runTest {
         val id = categoryDao.insert(makeCategory("Bills", "B", "#546E7A"))
