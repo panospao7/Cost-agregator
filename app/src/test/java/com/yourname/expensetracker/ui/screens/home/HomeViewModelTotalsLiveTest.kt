@@ -39,6 +39,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
@@ -306,6 +307,112 @@ class HomeViewModelTotalsLiveTest {
 
         assertEquals(PeriodType.WEEK, vm.totalsDrillDownState.value.currentLevel)
         assertEquals(listOf("2025-W45"), vm.totalsDrillDownState.value.periodTotals.map { it.periodKey })
+    }
+
+    @Test
+    fun `a failed YEAR tap then retry repeats the tap and clears the error`() {
+        val vm = checkNotNull(viewModel)
+        var fail = true
+        every { engine.getMonthlyTotals(2025) } returns flow {
+            if (fail) throw IllegalStateException("boom")
+            emit(listOf(month(2025, 11, 4.0)))
+        }
+
+        vm.drillDownToPeriod(year(2025))
+        assertNotNull(vm.totalsDrillDownState.value.error)
+        assertFalse(vm.totalsDrillDownState.value.isLoading)
+
+        fail = false
+        vm.reloadCurrentTotalsLevel()
+
+        assertEquals(PeriodType.MONTH, vm.totalsDrillDownState.value.currentLevel)
+        assertEquals(listOf("2025-11"), vm.totalsDrillDownState.value.periodTotals.map { it.periodKey })
+        assertNull(vm.totalsDrillDownState.value.error)
+        verify(exactly = 1) { engine.getMonthlyTotals(1970) } // init load only; Retry targeted the tapped year
+    }
+
+    @Test
+    fun `a failed week drill then retry repeats the drill and clears the error`() {
+        val vm = checkNotNull(viewModel)
+        var fail = true
+        every { engine.getWeeklyTotals(2025, 11) } returns flow {
+            if (fail) throw IllegalStateException("boom")
+            emit(listOf(week("2025-W45", 7.0)))
+        }
+
+        vm.drillDownToPeriod(month(2025, 11, 0.0))
+        assertNotNull(vm.totalsDrillDownState.value.error)
+        assertEquals(PeriodType.MONTH, vm.totalsDrillDownState.value.currentLevel)
+
+        fail = false
+        vm.reloadCurrentTotalsLevel()
+
+        assertEquals(PeriodType.WEEK, vm.totalsDrillDownState.value.currentLevel)
+        assertEquals(listOf("2025-W45"), vm.totalsDrillDownState.value.periodTotals.map { it.periodKey })
+        assertNull(vm.totalsDrillDownState.value.error)
+        verify(exactly = 2) { engine.getWeeklyTotals(2025, 11) }
+        verify(exactly = 1) { engine.getMonthlyTotals(1970) }
+    }
+
+    @Test
+    fun `a failed day drill then retry repeats the drill and clears the error`() {
+        val vm = checkNotNull(viewModel)
+        var fail = true
+        every { engine.getDailyTotalsForRange(any(), any()) } returns flow {
+            if (fail) throw IllegalStateException("boom")
+            emit(listOf(day("2025-11-03", 3.0)))
+        }
+
+        vm.drillDownToPeriod(week("2025-W45", 7.0))
+        assertNotNull(vm.totalsDrillDownState.value.error)
+        assertEquals(PeriodType.MONTH, vm.totalsDrillDownState.value.currentLevel)
+
+        fail = false
+        vm.reloadCurrentTotalsLevel()
+
+        assertEquals(PeriodType.DAY, vm.totalsDrillDownState.value.currentLevel)
+        assertEquals(listOf("2025-11-03"), vm.totalsDrillDownState.value.periodTotals.map { it.periodKey })
+        assertNull(vm.totalsDrillDownState.value.error)
+        verify(exactly = 2) { engine.getDailyTotalsForRange(any(), any()) }
+    }
+
+    @Test
+    fun `a successful retry clears the remembered action so a later retry reloads the year`() {
+        val vm = checkNotNull(viewModel)
+        var fail = true
+        every { engine.getWeeklyTotals(2025, 11) } returns flow {
+            if (fail) throw IllegalStateException("boom")
+            emit(listOf(week("2025-W45", 7.0)))
+        }
+        vm.drillDownToPeriod(month(2025, 11, 0.0))
+        fail = false
+        vm.reloadCurrentTotalsLevel()
+        assertNull(vm.totalsDrillDownState.value.error)
+
+        vm.reloadCurrentTotalsLevel()
+
+        verify(exactly = 2) { engine.getWeeklyTotals(2025, 11) } // the drill was not repeated again
+        verify(exactly = 2) { engine.getMonthlyTotals(1970) } // fell back to the year reload
+    }
+
+    @Test
+    fun `a thrown year totals failure then retry restarts the collection`() {
+        val vm = checkNotNull(viewModel)
+        var fail = true
+        every { engine.getMonthlyTotals(2024) } returns flow {
+            if (fail) throw IllegalStateException("boom")
+            emit(listOf(month(2024, 11, 8.0)))
+        }
+        vm.loadTotalsForYear(2024)
+        assertNotNull(vm.totalsDrillDownState.value.error)
+
+        fail = false
+        vm.reloadCurrentTotalsLevel()
+
+        assertEquals(listOf("2024-11"), vm.totalsDrillDownState.value.periodTotals.map { it.periodKey })
+        assertNull(vm.totalsDrillDownState.value.error)
+        verify(exactly = 2) { engine.getMonthlyTotals(2024) }
+        verify(exactly = 1) { engine.getMonthlyTotals(1970) }
     }
 
     private companion object {

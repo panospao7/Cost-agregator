@@ -701,7 +701,26 @@ class HomeViewModel @Inject constructor(
     // Year last handed to startYearTotalsCollection; Retry must restart this year, not the current one.
     private var collectedTotalsYear: Int? = null
 
+    /** Last totals load that failed; Retry repeats exactly this action. Cleared on success. */
+    private sealed interface FailedTotalsAction {
+        data class YearTotals(val year: Int) : FailedTotalsAction
+        data class Drill(val target: PeriodTotal) : FailedTotalsAction
+    }
+
+    private var failedTotalsAction: FailedTotalsAction? = null
+
     fun reloadCurrentTotalsLevel() {
+        when (val failed = failedTotalsAction) {
+            is FailedTotalsAction.Drill -> {
+                drillDownToPeriod(failed.target)
+                return
+            }
+            is FailedTotalsAction.YearTotals -> {
+                loadTotalsForYear(failed.year)
+                return
+            }
+            null -> Unit
+        }
         val year = collectedTotalsYear
             ?: com.yourname.expensetracker.ui.util.UiTimeUtils.getYear(timeProvider.now())
         loadTotalsForYear(year)
@@ -726,6 +745,7 @@ class HomeViewModel @Inject constructor(
                     // The engine maps a read failure to an empty list; a success always
                     // carries 12 rows. Keep the last good rows and surface Retry.
                     if (totals.isEmpty()) {
+                        failedTotalsAction = FailedTotalsAction.YearTotals(year)
                         _totalsDrillDownState.update {
                             it.copy(
                                 isLoading = false,
@@ -744,6 +764,7 @@ class HomeViewModel @Inject constructor(
                         period.copy(status = totalsAggregationEngine.getPeriodStatus(statusAggregate(period), average))
                     }
 
+                    failedTotalsAction = null
                     _totalsDrillDownState.update { state ->
                         state.copy(
                             currentLevel = PeriodType.MONTH,
@@ -758,6 +779,7 @@ class HomeViewModel @Inject constructor(
                 throw e
             } catch (e: Exception) {
                 Timber.e(e, "Error loading totals for year $year")
+                failedTotalsAction = FailedTotalsAction.YearTotals(year)
                 _totalsDrillDownState.update { it.copy(isLoading = false, error = UiText.StringResource(R.string.home_error_unable_to_load_totals)) }
             }
         }
@@ -803,7 +825,7 @@ class HomeViewModel @Inject constructor(
                 val newLevel = whenResult[0] as PeriodType
                 val newTotals = whenResult[1] as List<PeriodTotal>
                 val categories = whenResult[2] as List<CategoryBreakdown>
-                
+
                 // P5-014 (RP-07): drill-down statuses are a comparison against
                 // completed-history — exclude the in-progress period. Only
                 // month/week comparison levels pass true per the documented
@@ -817,6 +839,7 @@ class HomeViewModel @Inject constructor(
                     p.copy(status = totalsAggregationEngine.getPeriodStatus(statusAggregate(p), average))
                 }
 
+                failedTotalsAction = null
                 _totalsDrillDownState.update { state ->
                     state.copy(
                         currentLevel = newLevel,
@@ -836,6 +859,8 @@ class HomeViewModel @Inject constructor(
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
+                // Remember the exact tapped target so Retry repeats this drill.
+                failedTotalsAction = FailedTotalsAction.Drill(period)
                 _totalsDrillDownState.update { it.copy(isLoading = false, error = UiText.StringResource(R.string.home_error_unable_to_load_breakdown)) }
             }
         }
@@ -913,6 +938,7 @@ class HomeViewModel @Inject constructor(
                     PeriodType.DAY -> Triple(emptyList(), null, null) // Should never happen
                 }
 
+                failedTotalsAction = null
                 _totalsDrillDownState.update {
                     it.copy(
                         currentLevel = newLevel,
@@ -931,6 +957,8 @@ class HomeViewModel @Inject constructor(
                 throw e
             } catch (e: Exception) {
                 Timber.e(e, "Error drilling up from ${state.currentLevel} to $newLevel")
+                // Drill-up failure keeps today's Retry (reload current year); drop any stale drill target.
+                failedTotalsAction = null
                 _totalsDrillDownState.update { it.copy(isLoading = false, error = UiText.StringResource(R.string.home_error_unable_to_go_back)) }
             }
         }
