@@ -304,7 +304,7 @@ class CsvExpenseImporter @Inject constructor(
         // Concatenated/edited files may carry a BOM after leading blank or
         // comment lines too, so the header lookup also strips a BOM prefix
         // from the first field (see headerRecordIndex below).
-        val bomStripped = csvContent.trimStart('﻿')
+        val bomStripped = csvContent.trimStart('\uFEFF')
         val allRecords = Rfc4180CsvReader.parse(bomStripped)
 
         // Comment/blank skipping now happens at RECORD level, so a `#`
@@ -319,7 +319,7 @@ class CsvExpenseImporter @Inject constructor(
         val headerRecordIndex = allRecords.indexOfFirst { record ->
             if (record.malformed) return@indexOfFirst true
             if (isSkippable(record)) return@indexOfFirst false
-            val first = record.fields.first().trimStart('﻿').trim()
+            val first = record.fields.first().trimStart('\uFEFF').trim()
             first.isNotEmpty() && !first.startsWith("#")
         }
         if (headerRecordIndex == -1) return PreparedCsv.Empty
@@ -327,7 +327,7 @@ class CsvExpenseImporter @Inject constructor(
         val headerRecord = allRecords[headerRecordIndex]
         if (headerRecord.malformed) return PreparedCsv.InvalidHeader
         val headerParts = headerRecord.fields.mapIndexed { i, col ->
-            if (i == 0) col.trimStart('﻿') else col
+            if (i == 0) col.trimStart('\uFEFF') else col
         }.map { it.trim().lowercase() }
         val columnIndex: Map<String, Int> = headerParts.withIndex().associate { (i, col) -> col to i }
 
