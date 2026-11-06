@@ -285,7 +285,7 @@ class AutomatedSavingsRuleEngineTest {
     fun `spare change uses the shared effective share amount`() = runTest {
         val sharedPercentage = purchase(amount = 10.00).copy(
             isSharedExpense = true,
-            mySharePercentage = 34.0
+            mySharePercentage = 34
         )
         val sharedAmount = purchase(amount = 20.00).copy(
             isSharedExpense = true,
