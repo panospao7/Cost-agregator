@@ -120,6 +120,7 @@ class RecurringLifecycleCoordinatorClaimedProjectionTest {
             lifecycleEventDao = mockk<RecurringLifecycleEventDao>(relaxed = true),
             restoreMaintenanceMode = restoreMaintenanceMode,
             writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true),
+            readBarrier = mockk<com.yourname.expensetracker.data.backup.DatabaseReadBarrier>(relaxed = true),
             plannedExpenseDao = mockk<PlannedExpenseDao>(relaxed = true),
             transactionRunner = object : DomainTransactionRunner {
                 override suspend fun <T> runInTransaction(

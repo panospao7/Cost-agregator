@@ -164,6 +164,7 @@ class RecurringLifecycleCoordinatorInstallmentLinkPolicyTest {
             lifecycleEventDao = eventDao,
             restoreMaintenanceMode = maintenance,
             writeBarrier = barrier,
+            readBarrier = io.mockk.mockk<com.yourname.expensetracker.data.backup.DatabaseReadBarrier>(relaxed = true),
             plannedExpenseDao = database.plannedExpenseDao(),
             transactionRunner = io.mockk.mockk(relaxed = true),
             eventWriter = eventWriter,

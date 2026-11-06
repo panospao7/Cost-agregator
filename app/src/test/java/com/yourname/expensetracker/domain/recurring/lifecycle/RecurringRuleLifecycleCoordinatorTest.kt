@@ -128,6 +128,7 @@ class RecurringRuleLifecycleCoordinatorTest {
             lifecycleEventDao = eventDao,
             restoreMaintenanceMode = maintenanceMode,
             writeBarrier = writeBarrier,
+            readBarrier = io.mockk.mockk<com.yourname.expensetracker.data.backup.DatabaseReadBarrier>(relaxed = true),
             plannedExpenseDao = plannedDao,
             transactionRunner = NoopDomainTransactionRunner,
             eventWriter = eventWriter,

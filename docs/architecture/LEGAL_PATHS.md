@@ -501,6 +501,21 @@ MARK-PAID / ALREADY-RECORDED a recurring bill (R21 S2):
   Known limitation (a): if no occurrence exists on the seen day (time-zone change after generation, or a nextDate on a day without a scheduled occurrence) even after one horizon top-up, mark-paid returns AdvancedOnly and creates no expense; the original row stays an overdue PLANNED.
   Known limitation (b): after LINK_REJECTED an unlinked RECURRING_GENERATED expense may remain and the UI shows the generic error. If automatic matching linked that expense to another same-day same-merchant rule, retries keep returning LINK_REJECTED; the user's way out is "Already recorded" (and deleting the extra expense).
 
+SUGGEST / CONFIRM / DECLINE a payment link (FC-PAID-UNLINKED):
+SUGGEST payment links:
+  → ViewModel → MarkRecurringBillPaidUseCase.findSuggestions() → RecurringLifecycleCoordinator.findPaymentLinkSuggestions(now)
+    (read-only, read barrier, Available | Unavailable(READ_BLOCKED|READ_FAILED); never read by forecast/budget/savings/Radar)
+CONFIRM a suggested link:
+  → MarkRecurringBillPaidUseCase.linkExistingPayment(ruleId, occurrenceId, expenseId) (per-rule Mutex)
+  → RecurringLifecycleCoordinator.confirmPaymentLink() → claimLinkSuppressInWrite(source=user_confirmed_match, pair re-validated in-transaction)
+  → advanceRuleAfterAutoLink() (DR-03 rule, NonCancellable, best effort)
+DECLINE a suggested link ("Not this bill"):
+  → MarkRecurringBillPaidUseCase.declinePayment(ruleId, occurrenceId, expenseId) → RecurringLifecycleCoordinator.declinePaymentLink()
+    (one LINK_SUGGESTION_DECLINED event per pair; excluded from suggestions and from auto-link)
+LINK expense to occurrence (amends the DR-11 text above): target = nearest matching occurrence of ANY status within S(P); claimed only if open, within A(P), not declined.
+RECONCILE after update (amends the reconcile text above): keep window is S(P).
+  Forbidden: a forecast, budget, savings or Radar consumer reading suggestions or declines (INV-1); any link of an expense to an occurrence outside claimLinkSuppressInWrite.
+
 COLLAPSE stale due reminder deliveries (R21 S1):
   → BillReminderWorker → RecurringLifecycleCoordinator.collapseStaleDueDeliveries(now) (single transaction, cancelOpenDueDeliveriesByIds; never touches CLAIMED/upcoming; writes one STALE_DUE_DELIVERIES_COLLAPSED summary event with bounded counts when something was cancelled; a collapse failure does not block dispatch)
 

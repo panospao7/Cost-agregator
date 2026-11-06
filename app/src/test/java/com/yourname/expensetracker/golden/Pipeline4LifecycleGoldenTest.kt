@@ -167,6 +167,7 @@ class Pipeline4LifecycleGoldenTest : GoldenTestBase() {
             lifecycleEventDao = eventDao,
             restoreMaintenanceMode = restoreMaintenanceMode,
             writeBarrier = writeBarrier,
+            readBarrier = io.mockk.mockk<com.yourname.expensetracker.data.backup.DatabaseReadBarrier>(relaxed = true),
             plannedExpenseDao = plannedDao,
             transactionRunner = RoomDomainTransactionRunner(database, timeProvider),
             eventWriter = eventWriter,
