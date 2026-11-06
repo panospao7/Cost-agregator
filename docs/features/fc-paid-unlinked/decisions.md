@@ -20,6 +20,6 @@ Constraints: no schema change and no new permissions. Cloud use is unchanged.
 
 Authority: owner item 143 (`build/release-lead-notes/owner-approvals-20261022.md`). It covers the D-3 tightening of DR-11 and the new strings, with el and es kept DRAFT. Reads are not policy rows; adding a policy row or a db_access classification entry is avoided by design.
 
-D-3 clarified (S1 guardian, 2026-11-06): CANCELLED and IGNORED occurrences are not candidates and never block. Only PAID, SKIPPED and MISSED as the nearest owner block an auto-link. An inactive rule as the nearest owner blocks, per INV-6.
+D-3 clarified (S1 guardian, 2026-11-06): CANCELLED and IGNORED occurrences are not candidates and never block. Only PAID, SKIPPED and MISSED as the nearest owner block an auto-link. An inactive rule as the nearest owner blocks only the suggestion tier, not the auto-link, per the INV-6 amendment below.
 
-INV-6 amended (S1 validation, 2026-11-06): an inactive rule does not block an auto-link (the merged R21 pin autoLinkDoesNotAdvanceAnInactiveRule stands: link, PAID, no advance).
+INV-6 amended (S1 validation, 2026-11-06): an inactive rule does not block an auto-link, but it still yields no suggestion (the merged R21 pin autoLinkDoesNotAdvanceAnInactiveRule stands: link, PAID, no advance).

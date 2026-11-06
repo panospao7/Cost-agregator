@@ -372,7 +372,9 @@ class RecurringLifecycleCoordinator @Inject constructor(
      * Links an actual expense to a planned occurrence (marking it PAID).
      *
      * Matching rules (all must hold):
-     * 1. The nearest owner N(E) is PLANNED, not yet linked, and (for a rule) the rule is active.
+     * 1. The nearest owner N(E) is PLANNED, not yet linked. An inactive rule
+     *    does not block an auto-link (R21 pin: link, PAID, no advance), but an inactive rule still
+     *    yields no suggestion.
      *    N(E) is the nearest matching occurrence of ANY status inside the suggestion window
      *    S(P) (FC-PAID-UNLINKED D-3); a PAID, SKIPPED or MISSED nearest owner blocks the link,
      *    and a pair the user declined is not a candidate. Ranking: [RecurringPaymentLinkMatcher].
