@@ -13,8 +13,10 @@ entries:
   reason: 'GR-08m1 EXACT_POLICY: post-restore/reset FAILURE journal ingestion (P7-CURRENT-016)
     -- get-or-insert of the RESTORE_OR_RESET FAILED_FINAL run row so terminal failure
     diagnostics (wrong password, verification/rollback/reset failures) become queryable
-    on the next healthy startup; same caller-enforced temporal restore barrier and
-    idempotency contract as the success path'
+    on the next healthy startup; the restore/write barrier is enforced inside the importer
+    (early checkWritesAllowed fast-fail plus the insert runs under writeBarrier.runWrite
+    as a counted in-flight write, so a restore started after the check is drained);
+    same idempotency contract as the success path'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08M
 - path: app/src/main/java/com/yourname/expensetracker/data/backup/RestoreJournalImporter.kt
@@ -28,8 +30,10 @@ entries:
   operation: insert
   barrierMode: helper
   reason: 'GR-08m1 EXACT_POLICY: post-restore/reset FAILURE journal ingestion -- per-event
-    insert with the same eventId dedup and retry-on-partial contract; eventType/stage
-    carry controlled constants, exceptionMessage is the pre-sanitized exceptionMessageSafe'
+    insert with the same eventId dedup and retry-on-partial contract; each insert runs
+    under writeBarrier.runWrite inside the importer (a blocked write fails that event and
+    the journal is retried on the next startup); eventType/stage carry controlled
+    constants, exceptionMessage is the pre-sanitized exceptionMessageSafe'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08M
 - path: app/src/main/java/com/yourname/expensetracker/data/backup/RestoreJournalImporter.kt
@@ -44,11 +48,11 @@ entries:
   barrierMode: helper
   reason: 'GR-08m1 EXACT_POLICY: post-restore ledger ingestion (P7-CURRENT-016) --
     get-or-insert of the RESTORE_COSTBACKUP run row on the next healthy startup (covers
-    BOTH call sites: the legacy zero-event branch line 39 and the get-or-insert branch
-    line 64, which share this fingerprint); the restore/write barrier is enforced
-    by the only caller AppStartupCoordinator.importRestoreJournals (runs only when
-    writes are allowed after the P7-CURRENT-005 post-swap Room ban lifts); idempotent
-    via isSuccessJournalImported + getByCorrelationId get-or-insert'
+    BOTH call sites: the legacy zero-event branch and the get-or-insert branch, which
+    share this fingerprint); the restore/write barrier is enforced inside the importer
+    (early checkWritesAllowed fast-fail plus each insert runs under writeBarrier.runWrite
+    as a counted in-flight write, so a restore started after the check is drained);
+    idempotent via isSuccessJournalImported + getByCorrelationId get-or-insert'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08M
 - path: app/src/main/java/com/yourname/expensetracker/data/backup/RestoreJournalImporter.kt
@@ -63,7 +67,8 @@ entries:
   barrierMode: helper
   reason: 'GR-08m1 EXACT_POLICY: post-restore ledger ingestion -- per-event insert
     with eventId dedup (getByRunId + importedIds set blocks cross-startup AND in-journal
-    duplicates, DDL-F876-13); per-event failures keep the journal for retry on the
+    duplicates, DDL-F876-13); each insert runs under writeBarrier.runWrite inside the
+    importer; per-event failures (including a blocked write) keep the journal for retry on the
     next startup; exceptionMessage comes from event.exceptionMessageSafe (pre-sanitized)'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08M

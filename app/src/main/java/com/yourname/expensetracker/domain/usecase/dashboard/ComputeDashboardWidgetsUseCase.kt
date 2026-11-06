@@ -1044,8 +1044,10 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
                 displayCurrency = input.homeCurrency.code
             )
 
-            // A budget exists but no limit was passed: the card must not claim "No budget set".
-            val budgetNotComparable = ctx.overallBudget != null && budgetForMC == null
+            // A budget exists but no limit was passed, or the budget could not be read: the card
+            // must not claim "No budget set".
+            val budgetNotComparable = ctx.data.data.budgetReadFailed ||
+                (ctx.overallBudget != null && budgetForMC == null)
 
             mcResult?.let {
                 DashboardWidget.MonteCarloForecast(

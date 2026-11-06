@@ -54,18 +54,24 @@ class RestoreJournalImporter @Inject constructor(
             try {
                 val existingRun = operationRunDao.getByCorrelationId(correlationId)
                 if (existingRun == null) {
-                    operationRunDao.insert(
-                        OperationRun(
-                            correlationId = correlationId,
-                            operationType = "RESTORE_COSTBACKUP",
-                            status = "SUCCESS",
-                            startedAt = entry.startedAt,
-                            finishedAt = timeProvider.now(),
-                            actor = "user",
-                            errorSummary = null,
-                            metadataJson = """{"legacyEmptyEvents":true}"""
+                    // Counted in-flight write: a restore that starts after the early check
+                    // above is drained (or this insert is rejected) instead of racing it.
+                    writeBarrier.runWrite(
+                        DatabaseAccessOperation("RestoreJournalImporter.importLastSuccessJournalIfPresent")
+                    ) {
+                        operationRunDao.insert(
+                            OperationRun(
+                                correlationId = correlationId,
+                                operationType = "RESTORE_COSTBACKUP",
+                                status = "SUCCESS",
+                                startedAt = entry.startedAt,
+                                finishedAt = timeProvider.now(),
+                                actor = "user",
+                                errorSummary = null,
+                                metadataJson = """{"legacyEmptyEvents":true}"""
+                            )
                         )
-                    )
+                    }
                 }
                 restoreJournal.markSuccessJournalImported(correlationId)
                 Timber.i("RestoreJournalImporter: legacy zero-event journal marked imported for $correlationId")
@@ -79,17 +85,21 @@ class RestoreJournalImporter @Inject constructor(
         try {
             // DDL-A8-07: get-or-insert run — don't skip if run exists (events may be missing)
             val runId = operationRunDao.getByCorrelationId(correlationId)?.id
-                ?: operationRunDao.insert(
-                    OperationRun(
-                        correlationId = correlationId,
-                        operationType = "RESTORE_COSTBACKUP",
-                        status = "SUCCESS",
-                        startedAt = entry.startedAt,
-                        finishedAt = timeProvider.now(),
-                        actor = "user",
-                        errorSummary = null
+                ?: writeBarrier.runWrite(
+                    DatabaseAccessOperation("RestoreJournalImporter.importLastSuccessJournalIfPresent")
+                ) {
+                    operationRunDao.insert(
+                        OperationRun(
+                            correlationId = correlationId,
+                            operationType = "RESTORE_COSTBACKUP",
+                            status = "SUCCESS",
+                            startedAt = entry.startedAt,
+                            finishedAt = timeProvider.now(),
+                            actor = "user",
+                            errorSummary = null
+                        )
                     )
-                )
+                }
 
             // DDL-A8-07: idempotent per event — check each eventId before inserting
             // DDL-F876-13: use mutable set so duplicate eventIds within same journal are blocked too
@@ -100,25 +110,29 @@ class RestoreJournalImporter @Inject constructor(
             for (event in events) {
                 if (!importedIds.add(event.eventId)) continue
                 runCatching {
-                    operationRunEventDao.insert(
-                        OperationRunEvent(
-                            operationRunId = runId,
-                            correlationId = event.correlationId,
-                            operationType = "RESTORE_COSTBACKUP",
-                            stage = event.stage,
-                            eventType = "RESTORE_COSTBACKUP_${event.stage}",
-                            outcome = event.outcome,
-                            severity = event.severity,
-                            reasonCode = event.reasonCode,
-                            occurredAt = event.occurredAt,
-                            exceptionClass = event.exceptionClass,
-                            // DIAG-03: journal message text (incl. legacy journals) is never
-                            // copied into the queryable ledger; the class column carries the type.
-                            exceptionMessage = null,
-                            isTerminal = event.isTerminal,
-                            eventId = event.eventId
+                    writeBarrier.runWrite(
+                        DatabaseAccessOperation("RestoreJournalImporter.importLastSuccessJournalIfPresent")
+                    ) {
+                        operationRunEventDao.insert(
+                            OperationRunEvent(
+                                operationRunId = runId,
+                                correlationId = event.correlationId,
+                                operationType = "RESTORE_COSTBACKUP",
+                                stage = event.stage,
+                                eventType = "RESTORE_COSTBACKUP_${event.stage}",
+                                outcome = event.outcome,
+                                severity = event.severity,
+                                reasonCode = event.reasonCode,
+                                occurredAt = event.occurredAt,
+                                exceptionClass = event.exceptionClass,
+                                // DIAG-03: journal message text (incl. legacy journals) is never
+                                // copied into the queryable ledger; the class column carries the type.
+                                exceptionMessage = null,
+                                isTerminal = event.isTerminal,
+                                eventId = event.eventId
+                            )
                         )
-                    )
+                    }
                 }.onFailure {
                     if (it is CancellationException) throw it
                     Timber.w("RestoreJournalImporter: UNKNOWN_ERROR stage=success_event_insert class=%s", it::class.java.simpleName)
@@ -181,17 +195,21 @@ class RestoreJournalImporter @Inject constructor(
         try {
             // Get-or-insert run — don't skip if run exists (events may be missing).
             val runId = operationRunDao.getByCorrelationId(correlationId)?.id
-                ?: operationRunDao.insert(
-                    OperationRun(
-                        correlationId = correlationId,
-                        operationType = operationType,
-                        status = "FAILED_FINAL",
-                        startedAt = entry.startedAt,
-                        finishedAt = timeProvider.now(),
-                        actor = "user",
-                        errorSummary = errorSummary
+                ?: writeBarrier.runWrite(
+                    DatabaseAccessOperation("RestoreJournalImporter.importLastFailureJournalIfPresent")
+                ) {
+                    operationRunDao.insert(
+                        OperationRun(
+                            correlationId = correlationId,
+                            operationType = operationType,
+                            status = "FAILED_FINAL",
+                            startedAt = entry.startedAt,
+                            finishedAt = timeProvider.now(),
+                            actor = "user",
+                            errorSummary = errorSummary
+                        )
                     )
-                )
+                }
 
             if (events.isEmpty()) {
                 // Legacy / zero-event failure journal: the run row is enough to make the
@@ -209,24 +227,28 @@ class RestoreJournalImporter @Inject constructor(
             for (event in events) {
                 if (!importedIds.add(event.eventId)) continue
                 runCatching {
-                    operationRunEventDao.insert(
-                        OperationRunEvent(
-                            operationRunId = runId,
-                            correlationId = event.correlationId,
-                            operationType = operationType,
-                            stage = event.stage,
-                            eventType = "RESTORE_FAILURE_${event.stage}",
-                            outcome = event.outcome,
-                            severity = event.severity,
-                            reasonCode = event.reasonCode,
-                            occurredAt = event.occurredAt,
-                            exceptionClass = event.exceptionClass,
-                            // DIAG-03: see success-journal import above.
-                            exceptionMessage = null,
-                            isTerminal = event.isTerminal,
-                            eventId = event.eventId
+                    writeBarrier.runWrite(
+                        DatabaseAccessOperation("RestoreJournalImporter.importLastFailureJournalIfPresent")
+                    ) {
+                        operationRunEventDao.insert(
+                            OperationRunEvent(
+                                operationRunId = runId,
+                                correlationId = event.correlationId,
+                                operationType = operationType,
+                                stage = event.stage,
+                                eventType = "RESTORE_FAILURE_${event.stage}",
+                                outcome = event.outcome,
+                                severity = event.severity,
+                                reasonCode = event.reasonCode,
+                                occurredAt = event.occurredAt,
+                                exceptionClass = event.exceptionClass,
+                                // DIAG-03: see success-journal import above.
+                                exceptionMessage = null,
+                                isTerminal = event.isTerminal,
+                                eventId = event.eventId
+                            )
                         )
-                    )
+                    }
                 }.onFailure {
                     if (it is CancellationException) throw it
                     Timber.w("RestoreJournalImporter: UNKNOWN_ERROR stage=failure_event_insert class=%s", it::class.java.simpleName)
