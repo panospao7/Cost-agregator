@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.backup
 
+import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import androidx.room.testing.MigrationTestHelper
 import com.yourname.expensetracker.domain.backup.SemanticNotVerifiableReason
@@ -603,6 +604,7 @@ class SemanticAggregatesTest {
     fun AE14_cancellation_is_rethrown_by_capture_and_by_verifyAgainst() {
         val expected = fixture.capture(fixtureFile("ae14-cancel"))
         val db = mockk<SQLiteDatabase>()
+        stubColumnProbePresent(db)
         every { db.rawQuery(any<String>(), isNull<Array<String>>()) } throws CancellationException("cancelled")
 
         assertThrows(CancellationException::class.java) {
@@ -614,9 +616,26 @@ class SemanticAggregatesTest {
     }
 
     @Test
+    fun AE14_cancellation_during_the_column_probe_is_rethrown_by_capture() {
+        val db = mockk<SQLiteDatabase>()
+        every { db.query("expenses", null, null, null, null, null, null, "0") } throws CancellationException("cancelled")
+
+        assertThrows(CancellationException::class.java) {
+            SemanticAggregates.capture(db, mapOf("expenses" to 6, "manual_recurring_expenses" to 2))
+        }
+    }
+
+    private fun stubColumnProbePresent(db: SQLiteDatabase) {
+        val cursor = mockk<Cursor>(relaxed = true)
+        every { cursor.getColumnIndex("refundNettedAmount") } returns 5
+        every { db.query("expenses", null, null, null, null, null, null, "0") } returns cursor
+    }
+
+    @Test
     fun AE14_a_non_cancellation_failure_is_bounded_and_never_a_pass() {
         val expected = fixture.capture(fixtureFile("ae14-boom"))
         val db = mockk<SQLiteDatabase>()
+        stubColumnProbePresent(db)
         every { db.rawQuery(any<String>(), isNull<Array<String>>()) } throws
             IllegalStateException("secret 12.5 EUR PURCHASE /data/user/0/file.db SELECT x")
 
