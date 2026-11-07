@@ -8,6 +8,11 @@ import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.ExpenseGroup
+import com.yourname.expensetracker.data.database.entity.GroupExpense
+import com.yourname.expensetracker.data.database.entity.GroupMember
+import com.yourname.expensetracker.data.database.entity.InstallmentEntry
+import com.yourname.expensetracker.data.database.entity.InstallmentPlan
 import com.yourname.expensetracker.data.database.entity.TransactionEvent
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
@@ -1011,5 +1016,268 @@ class TransactionLifecycleCoordinatorRefundLinkTest {
 
         assertEquals(120.0, db.expenseDao().getById(p1)!!.amount, 0.0)
         assertExact("0.0", netted(p1))
+    }
+
+    // ── D-19 / INV-19: installment exclusivity on real Room rows ────────────
+
+    private suspend fun insertPlan(uuid: String, purchaseExpenseId: Long?): Long =
+        db.installmentPlanDao().insertPlan(
+            InstallmentPlan(
+                planUuid = uuid,
+                kind = if (purchaseExpenseId != null) "PURCHASE_ATTACHED" else "STANDALONE",
+                purchaseExpenseId = purchaseExpenseId,
+                displayName = "Synthetic Plan",
+                currency = "EUR",
+                splitMethod = "FIXED_PAYMENT",
+                fixedPaymentAmount = 50.0,
+                installmentCount = 2,
+                frequency = "MONTHLY",
+                firstDueDate = 20_000L,
+                anchorDayOfMonth = 10,
+                residualPlacement = "FIRST",
+                paymentMethod = com.yourname.expensetracker.data.database.entity.PaymentMethod.CARD,
+                fulfilmentMode = "CONFIRM",
+                declaredOnDate = 19_990L,
+                status = "ACTIVE",
+                createdAt = base,
+                updatedAt = base
+            )
+        ).also { assertTrue("fixture: plan insert failed", it > 0L) }
+
+    private suspend fun insertEntryLinkedTo(planId: Long, expenseId: Long) {
+        db.installmentPlanDao().insertEntries(
+            listOf(
+                InstallmentEntry(
+                    planId = planId,
+                    seq = 1,
+                    kind = "REGULAR",
+                    dueDate = 20_000L,
+                    scheduledAmount = 50.0,
+                    status = "PAID",
+                    linkedExpenseId = expenseId,
+                    linkOrigin = "USER_LINKED",
+                    statusChangedAt = base
+                )
+            )
+        )
+    }
+
+    private suspend fun assertNothingWrittenByRefusedLink(
+        refundId: Long,
+        purchaseId: Long,
+        expected: RefundLinkRefusal
+    ) {
+        val flagBefore = db.expenseDao().getById(purchaseId)!!.spendingExclusionReason
+        clearMocks(planner, runner, answers = false)
+
+        val result = coordinator.linkRefund(refundId, purchaseId)
+
+        assertEquals(RefundLinkResult.Refused(expected), result)
+        assertEquals(0, linkCount())
+        assertExact("0.0", netted(purchaseId))
+        assertExact("0.0", netted(refundId))
+        assertEquals(flagBefore, db.expenseDao().getById(purchaseId)!!.spendingExclusionReason)
+        assertEquals(0, totalEvents())
+        verify(exactly = 0) { planner.planUpdated(any(), any(), any(), any()) }
+        coVerify(exactly = 0) { runner.run(any()) }
+        assertEquals(0, barrier.inFlightWriteCount())
+    }
+
+    @Test
+    fun `INV-19 D-19 a purchase that is an installment plan purchase record is refused INSTALLMENT_MANAGED`() = runTest {
+        val p = purchase(600.0)
+        val d = refund(100.0)
+        insertPlan("rl-plan-purchase", purchaseExpenseId = p)
+        assertNull(
+            "fixture: the purchase carries no exclusion flag, only the plan relation",
+            db.expenseDao().getById(p)!!.spendingExclusionReason
+        )
+
+        assertNothingWrittenByRefusedLink(d, p, RefundLinkRefusal.INSTALLMENT_MANAGED)
+    }
+
+    @Test
+    fun `INV-19 D-19 a purchase linked to an installment entry is refused INSTALLMENT_MANAGED`() = runTest {
+        val p = purchase(50.0)
+        val d = refund(20.0)
+        val planId = insertPlan("rl-plan-standalone", purchaseExpenseId = null)
+        insertEntryLinkedTo(planId, p)
+        assertNull(db.expenseDao().getById(p)!!.spendingExclusionReason)
+
+        assertNothingWrittenByRefusedLink(d, p, RefundLinkRefusal.INSTALLMENT_MANAGED)
+    }
+
+    @Test
+    fun `INV-19 D-19 a refund deposit linked to an installment entry is refused INSTALLMENT_MANAGED`() = runTest {
+        val p = purchase(100.0)
+        val d = refund(40.0)
+        val planId = insertPlan("rl-plan-refund-side", purchaseExpenseId = null)
+        insertEntryLinkedTo(planId, d)
+
+        assertNothingWrittenByRefusedLink(d, p, RefundLinkRefusal.INSTALLMENT_MANAGED)
+    }
+
+    @Test
+    fun `INV-19 D-19 control a purchase unrelated to the plan still links when another purchase has a plan`() = runTest {
+        val planned = purchase(600.0)
+        val other = purchase(100.0)
+        val d = refund(40.0)
+        insertPlan("rl-plan-other", purchaseExpenseId = planned)
+
+        linked(d, other)
+
+        assertExact("40.00", netted(other))
+        assertExact("0.0", netted(planned))
+    }
+
+    @Test
+    fun `INV-19 D-19 setSpendingExclusionDbOnly on a refund-netted row returns RefundLinked and writes nothing`() = runTest {
+        val p = purchase(100.0)
+        val d = refund(40.0)
+        linked(d, p)
+        val eventsBefore = totalEvents()
+        clearMocks(planner, runner, answers = false)
+
+        val outcome = coordinator.setSpendingExclusionDbOnly(p, SpendingExclusionReason.INSTALLMENT_PURCHASE)
+
+        assertEquals(SpendingInclusionResult.RefundLinked, outcome.value)
+        assertNull(db.expenseDao().getById(p)!!.spendingExclusionReason)
+        assertExact("40.00", netted(p))
+        assertEquals(1, linkCount())
+        assertEquals(eventsBefore, totalEvents())
+        assertTrue("no post-commit batch for a refused flag", outcome.postCommitActions.actions.isEmpty())
+        verify(exactly = 0) { planner.planUpdated(any(), any(), any(), any()) }
+        coVerify(exactly = 0) { runner.run(any()) }
+        assertEquals(0, barrier.inFlightWriteCount())
+    }
+
+    @Test
+    fun `INV-19 D-19 setSpendingExclusionDbOnly on the netted refund row is refused too`() = runTest {
+        val p = purchase(100.0)
+        val d = refund(40.0)
+        linked(d, p)
+
+        val outcome = coordinator.setSpendingExclusionDbOnly(d, SpendingExclusionReason.INSTALLMENT_PURCHASE)
+
+        assertEquals(SpendingInclusionResult.RefundLinked, outcome.value)
+        assertNull(db.expenseDao().getById(d)!!.spendingExclusionReason)
+        assertExact("40.00", netted(d))
+    }
+
+    @Test
+    fun `INV-19 D-19 control setSpendingExclusionDbOnly on an unnetted row sets the flag and writes one event`() = runTest {
+        val p = purchase(100.0)
+
+        val outcome = coordinator.setSpendingExclusionDbOnly(p, SpendingExclusionReason.INSTALLMENT_PURCHASE)
+
+        assertEquals(SpendingInclusionResult.Updated(p), outcome.value)
+        assertEquals(
+            SpendingExclusionReason.INSTALLMENT_PURCHASE.name,
+            db.expenseDao().getById(p)!!.spendingExclusionReason
+        )
+        assertEquals(1, totalEvents())
+    }
+
+    @Test
+    fun `INV-19 D-19 clearing the flag on a row with refundNettedAmount above zero still works`() = runTest {
+        val p = purchase(100.0)
+        val d = refund(40.0)
+        linked(d, p)
+        // Legacy or restored state that the link path itself would refuse: flag and netting together.
+        db.openHelper.writableDatabase.execSQL(
+            "UPDATE expenses SET spendingExclusionReason = '${SpendingExclusionReason.INSTALLMENT_PURCHASE.name}' " +
+                "WHERE id = $p"
+        )
+        assertExact("40.00", netted(p))
+
+        val outcome = coordinator.setSpendingExclusionDbOnly(p, null)
+
+        assertEquals(SpendingInclusionResult.Updated(p), outcome.value)
+        assertNull(db.expenseDao().getById(p)!!.spendingExclusionReason)
+        assertExact("40.00", netted(p))
+        assertEquals(1, linkCount())
+    }
+
+    @Test
+    fun `INV-19 D-19 after unlinkRefund the flag can be set on the former purchase`() = runTest {
+        val p = purchase(100.0)
+        val d = refund(40.0)
+        linked(d, p)
+        assertEquals(
+            SpendingInclusionResult.RefundLinked,
+            coordinator.setSpendingExclusionDbOnly(p, SpendingExclusionReason.INSTALLMENT_PURCHASE).value
+        )
+
+        coordinator.unlinkRefund(d)
+        val outcome = coordinator.setSpendingExclusionDbOnly(p, SpendingExclusionReason.INSTALLMENT_PURCHASE)
+
+        assertEquals(SpendingInclusionResult.Updated(p), outcome.value)
+        assertEquals(
+            SpendingExclusionReason.INSTALLMENT_PURCHASE.name,
+            db.expenseDao().getById(p)!!.spendingExclusionReason
+        )
+        assertExact("0.0", netted(p))
+    }
+
+    @Test
+    fun `INV-19 D-19 setting the same flag value on a netted row is NoOp not RefundLinked`() = runTest {
+        val p = purchase(100.0)
+        val d = refund(40.0)
+        linked(d, p)
+
+        // Clearing an already clear flag is the idempotent no-op; it must never be refused.
+        val outcome = coordinator.setSpendingExclusionDbOnly(p, null)
+
+        assertEquals(SpendingInclusionResult.NoOp, outcome.value)
+    }
+
+    // ── INV-19 / AE-12: group-linked refusal at coordinator level ───────────
+
+    private suspend fun putInGroup(expenseId: Long, amount: Double) {
+        val groupId = db.expenseGroupDao().insert(ExpenseGroup(name = "Synthetic Group $expenseId", createdAt = base))
+        val memberId = db.groupMemberDao().insert(
+            GroupMember(groupId = groupId, name = "Synthetic Member", isCurrentUser = true, joinedAt = base)
+        )
+        val id = db.groupExpenseDao().insert(
+            GroupExpense(
+                groupId = groupId,
+                expenseId = expenseId,
+                paidById = memberId,
+                date = base,
+                description = "synthetic split",
+                totalAmount = amount
+            )
+        )
+        assertTrue("fixture: group expense insert failed", id > 0L)
+    }
+
+    @Test
+    fun `INV-19 AE-12 a group-linked purchase is refused GROUP_LINKED and nothing is written`() = runTest {
+        val p = purchase(100.0)
+        val d = refund(40.0)
+        putInGroup(p, 100.0)
+
+        assertNothingWrittenByRefusedLink(d, p, RefundLinkRefusal.GROUP_LINKED)
+    }
+
+    @Test
+    fun `INV-19 AE-12 a group-linked refund is refused GROUP_LINKED and nothing is written`() = runTest {
+        val p = purchase(100.0)
+        val d = refund(40.0)
+        putInGroup(d, 40.0)
+
+        assertNothingWrittenByRefusedLink(d, p, RefundLinkRefusal.GROUP_LINKED)
+    }
+
+    @Test
+    fun `INV-19 AE-12 control a pair outside every group links`() = runTest {
+        val grouped = purchase(100.0)
+        val p = purchase(100.0)
+        val d = refund(40.0)
+        putInGroup(grouped, 100.0)
+
+        linked(d, p)
+
+        assertExact("40.00", netted(p))
     }
 }
