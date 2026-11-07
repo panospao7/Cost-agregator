@@ -71,7 +71,7 @@ cannot be restored bit-exact. This is a documented, deliberate lossiness:
 ## Failure contract (19-D, ImportCoordinator)
 
 - Per-row failures surface through `ImportResult.errors` as `"Row <n>: <reason>"`
-  (`n` = 0-based data-row index, header/comment/blank rows excluded — identical
+  (`n` = 1-based data-row index, equal to the CSV_IMPORT `csvRowNumber`, header/comment/blank rows excluded — identical
   convention in CSV and JSON legs).
 - Controlled codes: `UNKNOWN_TRANSACTION_TYPE` (unknown type value),
   `Unrecognized import format` (whole-content detection failure),
