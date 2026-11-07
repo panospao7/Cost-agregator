@@ -282,6 +282,62 @@ class ExportOptionsViewModelTest {
     }
 
     @Test
+    fun `refund-netting csv export writes RefundNettedAmount as trailing column with net effective amount`() = runBlocking {
+        val expenses = listOf(
+            createExpense(merchant = "Refunded", id = 1L, amount = 100.0, refundNettedAmount = 40.0),
+            createExpense(merchant = "Plain", id = 2L, amount = 12.5)
+        )
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns expenses.size
+        stubPagedExpenses(expenses)
+        val out = createTempFile(prefix = "export_csv_refund_", suffix = ".csv")
+        every { exportDataRepository.createExportFile(any(), any()) } returns out
+
+        viewModel.generateExport()
+
+        val lines = out.readLines()
+        val headerCells = lines.single { it.startsWith("ID,Date") }.split(",")
+        assertEquals("RefundNettedAmount", headerCells.last())
+        assertEquals("SourceLinks", headerCells[headerCells.size - 2])
+        val amountIdx = headerCells.indexOf("Amount")
+        val effectiveIdx = headerCells.indexOf("EffectiveAmount")
+        val refunded = lines.single { it.contains(",Refunded,") }.split(",")
+        assertEquals(headerCells.size, refunded.size)
+        assertEquals("100.0", refunded[amountIdx])
+        assertEquals("60.0", refunded[effectiveIdx])
+        assertEquals("40.0", refunded.last())
+        val plain = lines.single { it.contains(",Plain,") }.split(",")
+        assertEquals(headerCells.size, plain.size)
+        assertEquals("0.0", plain.last())
+    }
+
+    @Test
+    fun `refund-netting json export writes refundNettedAmount as trailing field`() = runBlocking {
+        val expenses = listOf(
+            createExpense(merchant = "Refunded", id = 1L, amount = 100.0, refundNettedAmount = 40.0),
+            createExpense(merchant = "Plain", id = 2L, amount = 12.5)
+        )
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns expenses.size
+        stubPagedExpenses(expenses)
+        val out = createTempFile(prefix = "export_json_refund_", suffix = ".json")
+        every { exportDataRepository.createExportFile(any(), any()) } returns out
+
+        viewModel.selectFormat("json")
+        viewModel.generateExport()
+
+        val rows = org.json.JSONObject(out.readText()).getJSONArray("rows")
+        assertEquals(2, rows.length())
+        val refunded = rows.getJSONObject(0)
+        assertEquals(100.0, refunded.getDouble("amount"), 0.0)
+        assertEquals(60.0, refunded.getDouble("effectiveAmount"), 0.0)
+        assertEquals(40.0, refunded.getDouble("refundNettedAmount"), 0.0)
+        assertEquals(0.0, rows.getJSONObject(1).getDouble("refundNettedAmount"), 0.0)
+        assertTrue(
+            "refundNettedAmount must be the last field",
+            out.readText().contains("\"refundNettedAmount\":40.0}")
+        )
+    }
+
+    @Test
     fun `generate xero export surfaces mixed currency policy failure`() = runBlocking {
         val expenses = listOf(
             createExpense(id = 1L, merchant = "Cafe", currency = "EUR"),
@@ -1455,11 +1511,14 @@ class ExportOptionsViewModelTest {
         businessPurpose: String? = null,
         businessCategory: String? = null,
         businessProject: String? = null,
-        requiresReceipt: Boolean = false
+        requiresReceipt: Boolean = false,
+        amount: Double = 12.34,
+        refundNettedAmount: Double = 0.0
     ): Expense {
         return Expense(
             id = id,
-            amount = 12.34,
+            amount = amount,
+            refundNettedAmount = refundNettedAmount,
             currency = currency,
             merchant = merchant,
             transactionType = transactionType,

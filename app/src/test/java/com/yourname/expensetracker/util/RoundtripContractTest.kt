@@ -136,6 +136,27 @@ class RoundtripContractTest {
         coVerify(exactly = 0) { coordinator.createExpense(any()) }
     }
 
+    // ── CSV: refund-netting INV-21 trailing RefundNettedAmount column is ignored ─
+
+    @Test
+    fun `csv import ignores trailing RefundNettedAmount column and restores gross amount unlinked`() = runTest {
+        // Full-width export row: Amount 100.0 gross, EffectiveAmount 60.0 net, RefundNettedAmount 40.0.
+        val csv = v2Csv(
+            "1,2024-01-15,2024-01-15,Refunded Shirt,100.0,60.0,EUR,PURCHASE,Food,note,MANUAL,CARD," +
+                "Card,EUR,100.0,EUR,,,,,false,,,,false,,40.0"
+        )
+        val slot = captureCsvRequest()
+
+        val result = csvImporter.importFromContent(csv) as CsvExpenseImporter.ImportResult.Success
+
+        assertEquals(1, result.imported)
+        assertEquals(0, result.errors)
+        // Links are not restored (L-4): the row comes back gross, never net of the exported refund.
+        assertEquals(100.0, slot.captured.amount, 0.0)
+        assertEquals(TransactionType.PURCHASE, slot.captured.transactionType)
+        coVerify(exactly = 1) { coordinator.createExpense(any()) }
+    }
+
     // ── CSV: amount-first precedence with effectiveAmount fallback ──────────
 
     @Test
@@ -235,9 +256,18 @@ class RoundtripContractTest {
                    "currency":"EUR","transactionType":"transfer","date":1705276800000}""",
                 -50.0,
                 TransactionType.TRANSFER
+            ),
+            // refund-netting INV-21: the exported refundNettedAmount field is ignored on import;
+            // the row returns gross and unlinked (L-4).
+            JsonRow(
+                "refundNettedAmount field is ignored - gross amount restored",
+                """{"merchant":"Shirt","amount":100.0,"effectiveAmount":60.0,"refundNettedAmount":40.0,
+                   "currency":"EUR","transactionType":"PURCHASE","date":1705276800000}""",
+                100.0,
+                TransactionType.PURCHASE
             )
         )
-        assertEquals("json type and amount precedence table size", 4, rows.size)
+        assertEquals("json type and amount precedence table size", 5, rows.size)
         rows.forEach { row ->
             val slot = captureJsonRequest()
             val result = jsonImporter.importFromContent("""{"schemaVersion":2,"rows":[${row.rowJson}]}""")
@@ -313,6 +343,6 @@ class RoundtripContractTest {
     /** Builds one CSV v2 data row under the full current export header. */
     private fun v2Csv(dataRow: String): String =
         "# ExpenseTracker Export v2, rowCount=1, startDate=0, endDate=0\n" +
-            "ID,Date,CreatedAt,Merchant,Amount,EffectiveAmount,Currency,TransactionType,Category,Notes,Source,PaymentMethod,SourceAccountName,OriginalCurrency,OriginalAmount,HomeCurrency,BaseAmount,BaseCurrency,ExchangeRateUsed,ConversionRateUsed,IsBusinessExpense,BusinessPurpose,BusinessCategory,BusinessProject,RequiresReceipt,SourceLinks\n" +
+            "ID,Date,CreatedAt,Merchant,Amount,EffectiveAmount,Currency,TransactionType,Category,Notes,Source,PaymentMethod,SourceAccountName,OriginalCurrency,OriginalAmount,HomeCurrency,BaseAmount,BaseCurrency,ExchangeRateUsed,ConversionRateUsed,IsBusinessExpense,BusinessPurpose,BusinessCategory,BusinessProject,RequiresReceipt,SourceLinks,RefundNettedAmount\n" +
             dataRow
 }
