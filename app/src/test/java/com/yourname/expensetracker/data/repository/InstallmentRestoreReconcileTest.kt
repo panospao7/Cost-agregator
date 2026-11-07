@@ -366,6 +366,7 @@ class InstallmentRestoreReconcileTest {
                 database = database,
                 expenseDao = database.expenseDao(),
                 transactionEventDao = database.transactionEventDao(),
+                expenseRefundLinkDao = database.expenseRefundLinkDao(),
                 timeProvider = time,
                 currencyConverter = mockk(relaxed = true),
                 sideEffectDispatcher = mockk(relaxed = true),

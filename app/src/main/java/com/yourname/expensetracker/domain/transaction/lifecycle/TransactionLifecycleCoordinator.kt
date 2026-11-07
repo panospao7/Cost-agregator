@@ -6,13 +6,16 @@ import com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException
 import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
+import com.yourname.expensetracker.data.database.dao.ExpenseRefundLinkDao
 import com.yourname.expensetracker.data.database.dao.RestrictedExpenseDaoMutation
 import com.yourname.expensetracker.data.database.dao.TransactionEventDao
 import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.ExpenseRefundLink
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.TransactionEvent
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
 import com.yourname.expensetracker.domain.core.money.SnapshotRounding
 import com.yourname.expensetracker.domain.core.money.roundSnapshot
 import com.yourname.expensetracker.domain.currency.ConversionResult
@@ -56,6 +59,11 @@ import com.yourname.expensetracker.domain.transaction.LifecycleEventType
 import com.yourname.expensetracker.domain.transaction.RateRefusal
 import com.yourname.expensetracker.domain.transaction.RateRefusalCodes
 import com.yourname.expensetracker.domain.transaction.RateRefusalReason
+import com.yourname.expensetracker.domain.transaction.RefundLinkResult
+import com.yourname.expensetracker.domain.transaction.RefundLinkSource
+import com.yourname.expensetracker.domain.transaction.RefundNettingPolicy
+import com.yourname.expensetracker.domain.transaction.RefundUnlinkResult
+import com.yourname.expensetracker.domain.transaction.RefundWriteFailure
 import com.yourname.expensetracker.domain.transaction.SideEffectMode
 import com.yourname.expensetracker.domain.transaction.SpendingExclusionReason
 import com.yourname.expensetracker.domain.transaction.UserPresentRateRequirement
@@ -94,6 +102,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
     private val database: AppDatabase,
     private val expenseDao: ExpenseDao,
     private val transactionEventDao: TransactionEventDao,
+    private val expenseRefundLinkDao: ExpenseRefundLinkDao,
     private val timeProvider: TimeProvider,
     private val currencyConverter: CurrencyConverter,
     private val sideEffectDispatcher: TransactionSideEffectDispatcher,
@@ -754,6 +763,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
             splitTemplateId = request.splitTemplateId,
             splitVisualization = request.splitVisualization,
             rawNotificationId = request.rawNotificationId,
+            // Refund-netting INV-2: a new row is never linked, whatever a copied request carries.
+            refundNettedAmount = 0.0,
             source = when (request.source) {
                 ExpenseSource.MANUAL_ENTRY -> ExpenseSource.MANUAL_ENTRY.name
                 ExpenseSource.MANUAL -> ExpenseSource.MANUAL.name
@@ -1360,6 +1371,15 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 throw InstallmentLockedExpenseException()
             }
 
+            // Refund-netting INV-12: a refund-linked row keeps its amount, currency and type.
+            // Thrown before any write or event, so nothing is persisted.
+            if (existing.amount != expense.amount ||
+                existing.currency != expense.currency ||
+                existing.transactionType != expense.transactionType
+            ) {
+                failIfRefundLinked(existing)
+            }
+
             // R18: money / ownership-share edits are blocked for a group-linked expense;
             // non-money edits (note, merchant, category, ...) stay allowed. Thrown before
             // any write or event, so nothing is persisted.
@@ -1466,8 +1486,11 @@ class TransactionLifecycleCoordinator @Inject constructor(
             // Loan-installments A10: this method writes the caller's whole row, so a stale
             // editor copy must never reset the spending-exclusion flag. The flag is owned by
             // setSpendingExclusionDbOnly; always keep the value read in this transaction.
+            // Refund-netting INV-2: the netted amount is owned by linkRefund / unlinkRefund /
+            // deleteExpense; keep the value read in this transaction as well.
             val finalExpense = convertedExpense.copy(
-                spendingExclusionReason = existing.spendingExclusionReason
+                spendingExclusionReason = existing.spendingExclusionReason,
+                refundNettedAmount = existing.refundNettedAmount
             )
 
             // Validate final expense state
@@ -2084,6 +2107,9 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 // INV-22: the type actually changes — refuse on a flagged installment row.
                 failIfInstallmentLocked(existing)
 
+                // Refund-netting INV-12: the type actually changes — refuse on a refund-linked row.
+                failIfRefundLinked(existing)
+
                 // R18: the type actually changes — block on a group-linked expense.
                 failIfGroupLinkedForEdit(expenseId)
 
@@ -2301,6 +2327,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
             if (existing.transactionType != newType) {
                 // INV-22: a type change on a flagged installment row is refused.
                 failIfInstallmentLocked(existing)
+                // Refund-netting INV-12: a type change on a refund-linked row is refused.
+                failIfRefundLinked(existing)
                 failIfGroupLinkedForEdit(expenseId)
             }
 
@@ -2736,6 +2764,304 @@ class TransactionLifecycleCoordinator @Inject constructor(
             put("spendingExclusionReason", reasonName ?: JSONObject.NULL)
         }.toString()
 
+    // ---- Refund netting (DR-05): link, unlink and the shared in-transaction helpers ----
+
+    /**
+     * Links the DEPOSIT [refundId] to the PURCHASE [purchaseId] and nets both rows by the applied
+     * amount (INV-15). One `runWrite { withTransaction { ... } }`: re-read both rows and both link
+     * lists, evaluate [RefundNettingPolicy], insert the link, recompute `refundNettedAmount` on both
+     * rows from the link rows (BigDecimal sum), and write two UPDATED events (REFUND_NETTING, reason
+     * `REFUND_LINKED`). After the commit, the planned REFUND_NETTING batches run best-effort.
+     *
+     * Typed result, never thrown for policy outcomes: `Refused` and `AlreadyLinked` write nothing
+     * and emit no event. A restore-blocked write gives `Failed(WRITE_BLOCKED)` (INV-23); any other
+     * error rolls back and gives `Failed(INTERNAL)`. Diagnostics carry ids and bounded codes only.
+     * [CancellationException] is rethrown and rolls the transaction back.
+     *
+     * Only `RefundLinkUseCase` may call this (INV-16).
+     */
+    suspend fun linkRefund(refundId: Long, purchaseId: Long): RefundLinkResult {
+        val corrId = com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId()
+        val now = timeProvider.now()
+        var result: RefundLinkResult = RefundLinkResult.Failed(RefundWriteFailure.INTERNAL)
+
+        try {
+            writeBarrier.runWrite(
+                DatabaseAccessOperation("TransactionLifecycleCoordinator.linkRefund")
+            ) {
+                database.withTransaction {
+                    val refund = expenseDao.getById(refundId)
+                    val purchase = expenseDao.getById(purchaseId)
+                    val refundLinks = expenseRefundLinkDao.getForExpense(refundId)
+                    val purchaseLinks = expenseRefundLinkDao.getForExpense(purchaseId)
+                    val refundGroupLinked =
+                        refund != null && database.groupExpenseDao().existsForExpense(refundId)
+                    val purchaseGroupLinked =
+                        purchase != null && database.groupExpenseDao().existsForExpense(purchaseId)
+
+                    when (
+                        val decision = RefundNettingPolicy.decideLink(
+                            refund = refund,
+                            purchase = purchase,
+                            refundLinks = refundLinks,
+                            purchaseLinks = purchaseLinks,
+                            refundGroupLinked = refundGroupLinked,
+                            purchaseGroupLinked = purchaseGroupLinked
+                        )
+                    ) {
+                        is RefundNettingPolicy.LinkDecision.AlreadyLinked -> {
+                            result = RefundLinkResult.AlreadyLinked(decision.linkId)
+                        }
+                        is RefundNettingPolicy.LinkDecision.Refused -> {
+                            result = RefundLinkResult.Refused(decision.code)
+                        }
+                        is RefundNettingPolicy.LinkDecision.Apply -> {
+                            val refundRow = checkNotNull(refund)
+                            val purchaseRow = checkNotNull(purchase)
+                            val currency = DuplicateDetectionPolicy.normalizeCurrency(purchaseRow.currency)
+                            val currencyCode = checkNotNull(CurrencyCode.parse(currency))
+                            val appliedAmount = decision.applied.toDouble()
+
+                            val linkId = expenseRefundLinkDao.insert(
+                                ExpenseRefundLink(
+                                    refundExpenseId = refundId,
+                                    purchaseExpenseId = purchaseId,
+                                    appliedAmount = appliedAmount,
+                                    currency = currency,
+                                    createdAt = now,
+                                    source = RefundLinkSource.USER_CONFIRMED.name
+                                )
+                            )
+                            check(linkId > 0L)
+
+                            val refundCount = recomputeRefundNettedAmount(refundId)
+                            val purchaseCount = recomputeRefundNettedAmount(purchaseId)
+                            insertRefundNettingEvent(
+                                expenseId = refundId,
+                                dedupeKey = refundRow.dedupeKey,
+                                linkCountBefore = refundCount - 1,
+                                linkCountAfter = refundCount,
+                                linkId = linkId,
+                                counterpartExpenseId = purchaseId,
+                                reason = REFUND_LINKED_REASON,
+                                source = REFUND_NETTING_SOURCE,
+                                occurredAt = now,
+                                correlationId = corrId
+                            )
+                            insertRefundNettingEvent(
+                                expenseId = purchaseId,
+                                dedupeKey = purchaseRow.dedupeKey,
+                                linkCountBefore = purchaseCount - 1,
+                                linkCountAfter = purchaseCount,
+                                linkId = linkId,
+                                counterpartExpenseId = refundId,
+                                reason = REFUND_LINKED_REASON,
+                                source = REFUND_NETTING_SOURCE,
+                                occurredAt = now,
+                                correlationId = corrId
+                            )
+                            result = RefundLinkResult.Linked(linkId, MoneyAmount(appliedAmount, currencyCode))
+                        }
+                    }
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: DatabaseAccessBlockedException) {
+            Timber.w("Refund netting: code=REFUND_LINK_FAILED reason=%s", RefundWriteFailure.WRITE_BLOCKED.name)
+            return RefundLinkResult.Failed(RefundWriteFailure.WRITE_BLOCKED)
+        } catch (e: Exception) {
+            Timber.w(
+                "Refund netting: code=REFUND_LINK_FAILED reason=%s type=%s",
+                RefundWriteFailure.INTERNAL.name,
+                e.javaClass.simpleName
+            )
+            return RefundLinkResult.Failed(RefundWriteFailure.INTERNAL)
+        }
+
+        when (val outcome = result) {
+            is RefundLinkResult.Linked -> {
+                Timber.d("Refund netting: code=REFUND_LINKED refundId=%d purchaseId=%d", refundId, purchaseId)
+                dispatchRefundNettingPostCommit(listOf(refundId, purchaseId), corrId)
+            }
+            is RefundLinkResult.Refused ->
+                Timber.d("Refund netting: code=REFUND_LINK_REFUSED reason=%s", outcome.code.name)
+            else -> Unit
+        }
+        return result
+    }
+
+    /**
+     * Removes the link of the DEPOSIT [refundId] and recomputes both rows (INV-14). One
+     * `runWrite { withTransaction { ... } }`: delete the link row(s) of the refund, recompute
+     * `refundNettedAmount` on the refund and on each purchase from the remaining link rows, and
+     * write two UPDATED events per removed link (REFUND_NETTING, reason `REFUND_UNLINKED`).
+     * A refund without a link gives `NotLinked` with no write and no event.
+     *
+     * Same failure, barrier and cancellation contract as [linkRefund]. Only `RefundLinkUseCase`
+     * may call this (INV-16).
+     */
+    suspend fun unlinkRefund(refundId: Long): RefundUnlinkResult {
+        val corrId = com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId()
+        val now = timeProvider.now()
+        var result: RefundUnlinkResult = RefundUnlinkResult.Failed(RefundWriteFailure.INTERNAL)
+        val touchedIds = ArrayList<Long>()
+
+        try {
+            writeBarrier.runWrite(
+                DatabaseAccessOperation("TransactionLifecycleCoordinator.unlinkRefund")
+            ) {
+                database.withTransaction {
+                    touchedIds.clear()
+                    val links = expenseRefundLinkDao.getByRefund(refundId)
+                    if (links.isEmpty()) {
+                        result = RefundUnlinkResult.NotLinked
+                        return@withTransaction
+                    }
+                    val refundDedupeKey = expenseDao.getById(refundId)?.dedupeKey
+                    for (link in links) {
+                        removeRefundLink(link.id)
+                    }
+                    val refundCount = recomputeRefundNettedAmount(refundId)
+                    for (link in links) {
+                        val purchaseId = link.purchaseExpenseId
+                        val purchaseDedupeKey = expenseDao.getById(purchaseId)?.dedupeKey
+                        val purchaseCount = recomputeRefundNettedAmount(purchaseId)
+                        insertRefundNettingEvent(
+                            expenseId = refundId,
+                            dedupeKey = refundDedupeKey,
+                            linkCountBefore = refundCount + links.size,
+                            linkCountAfter = refundCount,
+                            linkId = link.id,
+                            counterpartExpenseId = purchaseId,
+                            reason = REFUND_UNLINKED_REASON,
+                            source = REFUND_NETTING_SOURCE,
+                            occurredAt = now,
+                            correlationId = corrId
+                        )
+                        insertRefundNettingEvent(
+                            expenseId = purchaseId,
+                            dedupeKey = purchaseDedupeKey,
+                            linkCountBefore = purchaseCount + 1,
+                            linkCountAfter = purchaseCount,
+                            linkId = link.id,
+                            counterpartExpenseId = refundId,
+                            reason = REFUND_UNLINKED_REASON,
+                            source = REFUND_NETTING_SOURCE,
+                            occurredAt = now,
+                            correlationId = corrId
+                        )
+                        touchedIds.add(purchaseId)
+                    }
+                    touchedIds.add(refundId)
+                    result = RefundUnlinkResult.Unlinked(links.first().id)
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: DatabaseAccessBlockedException) {
+            Timber.w("Refund netting: code=REFUND_LINK_FAILED reason=%s", RefundWriteFailure.WRITE_BLOCKED.name)
+            return RefundUnlinkResult.Failed(RefundWriteFailure.WRITE_BLOCKED)
+        } catch (e: Exception) {
+            Timber.w(
+                "Refund netting: code=REFUND_LINK_FAILED reason=%s type=%s",
+                RefundWriteFailure.INTERNAL.name,
+                e.javaClass.simpleName
+            )
+            return RefundUnlinkResult.Failed(RefundWriteFailure.INTERNAL)
+        }
+
+        if (result is RefundUnlinkResult.Unlinked) {
+            Timber.d("Refund netting: code=REFUND_UNLINKED refundId=%d", refundId)
+            dispatchRefundNettingPostCommit(touchedIds.toList(), corrId)
+        }
+        return result
+    }
+
+    /**
+     * INV-12 edit lock probe. Throws [RefundLinkedExpenseException] when [existing] carries a
+     * refund link (`refundNettedAmount > 0`). Pure read of the caller's own row (no DAO access);
+     * callers run it inside the write transaction, before any write or event, and only when
+     * amount, currency or type actually change.
+     */
+    private fun failIfRefundLinked(existing: Expense) {
+        if (existing.refundNettedAmount > 0.0) {
+            throw RefundLinkedExpenseException()
+        }
+    }
+
+    /**
+     * Recomputes `expenses.refundNettedAmount` of [expenseId] from its link rows (BigDecimal sum,
+     * INV-1) and returns the number of links on that row. Runs inside the caller's transaction.
+     */
+    private suspend fun recomputeRefundNettedAmount(expenseId: Long): Int {
+        val links = expenseRefundLinkDao.getForExpense(expenseId)
+        expenseDao.updateRefundNettedAmount(expenseId, RefundNettingPolicy.nettedAmountOf(links))
+        return links.size
+    }
+
+    /** Removes one link row inside the caller's transaction. Returns affected rows. */
+    private suspend fun removeRefundLink(linkId: Long): Int {
+        return expenseRefundLinkDao.deleteById(linkId)
+    }
+
+    /**
+     * One UPDATED lifecycle event for a refund-netting change (INV-22). Snapshots, metadata and
+     * reason are bounded: ids, link counts, the update kind and a reason code. No amount, merchant
+     * or notes.
+     */
+    private suspend fun insertRefundNettingEvent(
+        expenseId: Long,
+        dedupeKey: String?,
+        linkCountBefore: Int,
+        linkCountAfter: Int,
+        linkId: Long,
+        counterpartExpenseId: Long,
+        reason: String,
+        source: String,
+        occurredAt: Long,
+        correlationId: String?
+    ) {
+        transactionEventDao.insert(
+            TransactionEvent(
+                expenseId = expenseId,
+                eventType = LifecycleEventType.UPDATED.name,
+                source = source,
+                actor = null,
+                occurredAt = occurredAt,
+                dedupeKey = dedupeKey,
+                duplicateExpenseId = null,
+                beforeSnapshot = refundLinkSnapshot(expenseId, linkCountBefore),
+                afterSnapshot = refundLinkSnapshot(expenseId, linkCountAfter),
+                metadata = JSONObject()
+                    .put("updateKind", TransactionUpdateKind.REFUND_NETTING.name)
+                    .put("linkId", linkId)
+                    .put("counterpartExpenseId", counterpartExpenseId)
+                    .toString(),
+                reason = reason,
+                correlationId = correlationId
+            )
+        )
+    }
+
+    private fun refundLinkSnapshot(id: Long, linkCount: Int): String =
+        JSONObject().apply {
+            put("id", id)
+            put("refundLinkCount", linkCount)
+        }.toString()
+
+    /** Post-commit REFUND_NETTING batches for the touched rows (best-effort; totals read the columns live). */
+    private suspend fun dispatchRefundNettingPostCommit(expenseIds: List<Long>, correlationId: String?) {
+        for (id in expenseIds.distinct()) {
+            val batch = planner.planUpdated(id, REFUND_NETTING_SOURCE, correlationId, TransactionUpdateKind.REFUND_NETTING)
+            runner.runBestEffortAfterCommit(
+                batch = batch,
+                logMessage = "Non-critical: side effects failed after refund netting change",
+                targetId = id
+            )
+        }
+    }
+
     /**
      * DB-only bulk category re-assignment (category delete / merge, owner item 144): moves every
      * expense from [fromCategoryId] to [toCategoryId] and writes ONE aggregate BULK_UPDATED
@@ -3143,10 +3469,12 @@ class TransactionLifecycleCoordinator @Inject constructor(
             // writes the DELETED event and dispatches post-commit work.
             // P2-08: Re-read inside transaction for TOCTOU-safe snapshot.
             var outcome = ExpenseDeleteOutcome.NotFound
+            val refundCounterpartIds = ArrayList<Long>()
             writeBarrier.runWrite(
                 DatabaseAccessOperation("TransactionLifecycleCoordinator.deleteExpense")
             ) {
             database.withTransaction {
+                refundCounterpartIds.clear()
                 val fresh = expenseDao.getById(expense.id)
                 if (fresh == null) {
                     outcome = ExpenseDeleteOutcome.NotFound
@@ -3173,6 +3501,37 @@ class TransactionLifecycleCoordinator @Inject constructor(
                         fresh.id
                     )
                     throw IllegalStateException("RECEIPT_UNLINK_FAILED")
+                }
+
+                // Refund-netting INV-13: remove the links of the deleted row, recompute each
+                // counterpart from its remaining links and write one UPDATED event per
+                // counterpart, all in this transaction. Any failure throws and rolls the
+                // delete back. Ids only; no amounts or text.
+                val removedRefundLinks = expenseRefundLinkDao.getForExpense(fresh.id)
+                for (link in removedRefundLinks) {
+                    removeRefundLink(link.id)
+                }
+                for (link in removedRefundLinks) {
+                    val counterpartId =
+                        if (link.refundExpenseId == fresh.id) link.purchaseExpenseId else link.refundExpenseId
+                    if (counterpartId == fresh.id || counterpartId in refundCounterpartIds) continue
+                    val counterpart = expenseDao.getById(counterpartId) ?: continue
+                    val remainingLinks = recomputeRefundNettedAmount(counterpartId)
+                    insertRefundNettingEvent(
+                        expenseId = counterpartId,
+                        dedupeKey = counterpart.dedupeKey,
+                        linkCountBefore = remainingLinks + removedRefundLinks.count {
+                            it.refundExpenseId == counterpartId || it.purchaseExpenseId == counterpartId
+                        },
+                        linkCountAfter = remainingLinks,
+                        linkId = link.id,
+                        counterpartExpenseId = fresh.id,
+                        reason = REFUND_COUNTERPART_DELETED_REASON,
+                        source = source,
+                        occurredAt = now,
+                        correlationId = correlationId
+                    )
+                    refundCounterpartIds.add(counterpartId)
                 }
 
                 transactionEventDao.insert(
@@ -3217,6 +3576,10 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 logMessage = "Non-critical: side effects failed after deleting expense",
                 targetId = expense.id
             )
+            // Refund-netting INV-13: counterparts were recomputed in the delete transaction.
+            if (refundCounterpartIds.isNotEmpty()) {
+                dispatchRefundNettingPostCommit(refundCounterpartIds.toList(), correlationId)
+            }
 
             Result.success(Unit)
         } catch (e: Exception) {
@@ -3367,6 +3730,12 @@ private const val CREATE_ATTEMPTED_REASON = "Create attempted"
 
 /** Constant, payload-free `reason` of the SPENDING_INCLUSION event when the flag is cleared. */
 private const val SPENDING_INCLUSION_CLEARED_REASON = "SPENDING_INCLUSION_CLEARED"
+
+/** Refund netting (INV-13, INV-14, INV-15): constant, payload-free event reasons and source. */
+private const val REFUND_LINKED_REASON = "REFUND_LINKED"
+private const val REFUND_UNLINKED_REASON = "REFUND_UNLINKED"
+private const val REFUND_COUNTERPART_DELETED_REASON = "REFUND_COUNTERPART_DELETED"
+private const val REFUND_NETTING_SOURCE = "USER_ACTION"
 
 /** Constant, payload-free `reason` of the BULK_UPDATED event written by a category re-assignment. */
 private const val CATEGORY_REASSIGN_REASON = "CATEGORY_REASSIGN"

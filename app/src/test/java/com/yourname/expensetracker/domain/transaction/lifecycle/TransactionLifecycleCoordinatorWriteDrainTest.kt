@@ -69,6 +69,7 @@ class TransactionLifecycleCoordinatorWriteDrainTest {
             database = database,
             expenseDao = expenseDao,
             transactionEventDao = mockk<TransactionEventDao>(relaxed = true),
+            expenseRefundLinkDao = mockk(relaxed = true),
             timeProvider = timeProvider,
             currencyConverter = mockk<CurrencyConverter>(relaxed = true),
             sideEffectDispatcher = mockk(relaxed = true),

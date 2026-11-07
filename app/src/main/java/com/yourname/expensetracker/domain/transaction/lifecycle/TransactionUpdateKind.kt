@@ -15,12 +15,15 @@ enum class TransactionUpdateKind {
     PAYMENT_CORE,
 
     /** The spending-exclusion flag changed (installment purchase / reversal); nothing else did. */
-    SPENDING_INCLUSION;
+    SPENDING_INCLUSION,
+
+    /** A refund link was created or removed (refund netting); only `refundNettedAmount` changed. */
+    REFUND_NETTING;
 
     /** Whether this update kind can affect recurring occurrence matching. */
     fun affectsRecurringMatch(): Boolean = when (this) {
         FULL, MERCHANT, TYPE, TRANSFER_DETAILS, AMOUNT, DATE, CURRENCY, OWNERSHIP, PAYMENT_CORE -> true
-        CATEGORY_ONLY, LOCATION_ONLY, BUSINESS_FLAGS_ONLY, SPENDING_INCLUSION -> false
+        CATEGORY_ONLY, LOCATION_ONLY, BUSINESS_FLAGS_ONLY, SPENDING_INCLUSION, REFUND_NETTING -> false
     }
 
     /** Whether this update kind can change the expense category. */

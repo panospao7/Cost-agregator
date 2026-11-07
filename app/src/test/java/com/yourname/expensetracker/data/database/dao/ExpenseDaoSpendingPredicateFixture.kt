@@ -125,6 +125,7 @@ class ExpenseDaoSpendingPredicateFixture private constructor(
                 database = db,
                 expenseDao = db.expenseDao(),
                 transactionEventDao = db.transactionEventDao(),
+                expenseRefundLinkDao = db.expenseRefundLinkDao(),
                 timeProvider = FakeTimeProvider.forDate(2026, 5, 1),
                 currencyConverter = mockk(relaxed = true),
                 sideEffectDispatcher = mockk(relaxed = true),

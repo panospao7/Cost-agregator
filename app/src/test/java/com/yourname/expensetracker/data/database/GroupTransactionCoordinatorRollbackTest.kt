@@ -355,6 +355,7 @@ class GroupTransactionCoordinatorRollbackTest {
             database = database,
             expenseDao = expenseDao,
             transactionEventDao = transactionEventDao,
+            expenseRefundLinkDao = database.expenseRefundLinkDao(),
             timeProvider = timeProvider,
             currencyConverter = mockk<CurrencyConverter>(relaxed = true),
             sideEffectDispatcher = mockk<TransactionSideEffectDispatcher>(relaxed = true),

@@ -5657,7 +5657,11 @@ def test_checked_in_structural_only_manifest_contract_via_production_apis():
     # (renameCategory / dao.updateDenormalizedCategoryNames), yielding 467.
     # 1.0.4 J-12-2 (owner item 144): -1 dead CsvExpenseImporter.getOrCreateCategory /
     # categoryDao.insert identity (unknown CSV categories now map to Uncategorized), yielding 466.
-    assert len(entries) == 466
+    # 1.0.4 refund-netting S3 (owner item 144): +4 exact TLC identities (linkRefund /
+    # expenseRefundLinkDao.insert, removeRefundLink / expenseRefundLinkDao.deleteById,
+    # recomputeRefundNettedAmount / expenseDao.updateRefundNettedAmount,
+    # insertRefundNettingEvent / transactionEventDao.insert), yielding 470.
+    assert len(entries) == 470
     sweep_path = (
         "app/src/main/java/com/yourname/expensetracker/data/repository/"
         "SavingsSweepAcceptanceCoordinator.kt"
@@ -6158,7 +6162,8 @@ def test_current_db_gate_activated_policy_real_config_pipeline(tmp_path, monkeyp
     # then +1 denormalized-name sync identity, yielding 467.
     # Re-derived per the checked-in-manifest contract pin above.
     # 1.0.4 J-12-2 (owner item 144): -1 dead CsvExpenseImporter.getOrCreateCategory identity, yielding 466.
-    assert len(entries) == 466
+    # 1.0.4 refund-netting S3 (owner item 144): +4 exact TLC identities, yielding 470.
+    assert len(entries) == 470
 
     # The structural gate really ran (post-activation it is no longer
     # short-circuited by a loader block) and stayed clean.
