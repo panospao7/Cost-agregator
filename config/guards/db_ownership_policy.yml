@@ -7277,6 +7277,79 @@ entries:
 - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
   ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
   kind: function
+  method: linkRefund
+  receiver: null
+  parameterTypes:
+  - Long
+  - Long
+  daoAccessor: expenseRefundLinkDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseRefundLinkDao
+  operation: insert
+  barrierMode: helper
+  reason: "Refund-netting INV-2 sole writer of expense_refund_links rows (link);\
+    \ re-entrant runWrite plus withTransaction, policy evaluated in the transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+  kind: function
+  method: removeRefundLink
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: expenseRefundLinkDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseRefundLinkDao
+  operation: deleteById
+  barrierMode: helper
+  reason: "Refund-netting INV-2 sole remover of expense_refund_links rows; private\
+    \ helper called only by unlinkRefund and the deleteExpense cleanup, inside their\
+    \ runWrite plus withTransaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+  kind: function
+  method: recomputeRefundNettedAmount
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: updateRefundNettedAmount
+  barrierMode: helper
+  reason: "Refund-netting INV-1/INV-2 sole writer of expenses.refundNettedAmount;\
+    \ private helper called only by linkRefund, unlinkRefund and the deleteExpense\
+    \ cleanup, inside their runWrite plus withTransaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+  kind: function
+  method: insertRefundNettingEvent
+  receiver: null
+  parameterTypes:
+  - Long
+  - String?
+  - Int
+  - Int
+  - Long
+  - Long
+  - String
+  - String
+  - Long
+  - String?
+  daoAccessor: transactionEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.TransactionEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "Refund-netting UPDATED lifecycle event insert (REFUND_NETTING, ids and\
+    \ counts only); private helper called inside linkRefund, unlinkRefund and the\
+    \ deleteExpense cleanup transactions"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+  kind: function
   method: reassignCategoryBulkDbOnly
   receiver: null
   parameterTypes:

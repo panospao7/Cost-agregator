@@ -110,6 +110,9 @@ class GroupTransactionCoordinator @Inject constructor(
             "Equal split is invalid for the selected date because the payer is excluded or no participant qualifies"
         const val LINKED_EXPENSE_ALREADY_ATTACHED_MESSAGE =
             "Linked system expense is already attached to a group expense"
+
+        /** Refund-netting INV-19: a refund-linked expense (netted amount > 0) cannot be group-linked. Bounded code. */
+        const val REFUND_LINKED_MESSAGE = "REFUND_LINKED"
     }
 
     /**
@@ -468,6 +471,13 @@ class GroupTransactionCoordinator @Inject constructor(
                         GroupExpenseCreationResult.Error(
                             "Expense currency '${existingExpense.currency}' does not match group currency '${group.defaultCurrency}'. Groups are single-currency."
                         ),
+                        PostCommitActionBatch.empty(correlationId)
+                    )
+                }
+
+                if (existingExpense.refundNettedAmount > 0.0) {
+                    return@withTransaction GroupMutationTxOutcome(
+                        GroupExpenseCreationResult.Error(REFUND_LINKED_MESSAGE),
                         PostCommitActionBatch.empty(correlationId)
                     )
                 }
@@ -950,6 +960,10 @@ class GroupTransactionCoordinator @Inject constructor(
                 )
             }
             groupExpense.expenseId?.let { expenseId ->
+                // Refund-netting INV-19: bounded code, no row data.
+                if ((expenseDao.getById(expenseId)?.refundNettedAmount ?: 0.0) > 0.0) {
+                    throw IllegalArgumentException(REFUND_LINKED_MESSAGE)
+                }
                 if (groupExpenseDao.getGroupExpenseForExpense(expenseId) != null) {
                     throw SQLiteConstraintException(LINKED_EXPENSE_ALREADY_ATTACHED_MESSAGE)
                 }
