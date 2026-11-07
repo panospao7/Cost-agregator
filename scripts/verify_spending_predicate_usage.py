@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Spending predicate usage guard (G-SPENDING-PREDICATE-01..04).
+Spending predicate usage guard (G-SPENDING-PREDICATE-01..05).
 
 Loan-installments slice S4d, invariants INV-1 and INV-8 (plan amendment A12.6,
 docs/features/loan-installments/domain-spec.md): once a purchase row can carry a
@@ -69,6 +69,16 @@ COUNT, MIN or MAX.
                            owners ``EFFECTIVE_AMOUNT_E_SQL`` and
                            ``COMPARABLE_HOME_VALUE_E_SQL``.  A missing or
                            malformed pin file exits 2.
+
+  G-SPENDING-PREDICATE-05  refund-netting INV-9 (tightening): no ``@Query`` may
+                           pass the INNER, non-netted constant
+                           ``ExpenseDao.EFFECTIVE_AMOUNT_SQL`` or
+                           ``EFFECTIVE_AMOUNT_E_SQL`` directly to SUM, AVG, TOTAL,
+                           MIN or MAX (optionally through COALESCE).  Totals must
+                           use the outer, netted ``SpendingInclusionSql.EFFECTIVE_AMOUNT``
+                           / ``EFFECTIVE_AMOUNT_E``.  The inner constants stay for
+                           list, ORDER BY and filter use.  No marker, allowlist or
+                           baseline exempts it.
 
 There is no allowlist and no baseline.  Adding a new aggregate over ``expenses``
 requires a conscious choice: use the predicate, or add a marker with a reason.
@@ -141,6 +151,7 @@ RULE_UNCOVERED = "G-SPENDING-PREDICATE-01"
 RULE_MARKER = "G-SPENDING-PREDICATE-02"
 RULE_DEDUPE = "G-SPENDING-PREDICATE-03"
 RULE_RAW_BUILDER = "G-SPENDING-PREDICATE-04"
+RULE_INNER_AGG = "G-SPENDING-PREDICATE-05"
 
 # Rule 04 (I-04-5): RawQuery builder pins.
 PIN_RELATIVE_PATH = "config/guards/spending_raw_query_builders.yml"
@@ -180,6 +191,7 @@ CODE_DUPLICATE = "DUPLICATE_MARKER"
 CODE_MARKER_WITH_REFERENCE = "MARKER_WITH_PREDICATE_REFERENCE"
 CODE_DEDUPE_REFERENCE = "DEDUPE_QUERY_REFERENCES_PREDICATE"
 CODE_STALE_MARKER = "STALE_MARKER"
+CODE_INNER_AGG = "AGGREGATE_OVER_INNER_EFFECTIVE_AMOUNT"
 CODE_RAWQ_UNPINNED_BUILDER = "UNPINNED_RAW_QUERY_BUILDER"
 CODE_RAWQ_UNPINNED_DAO = "UNPINNED_RAW_QUERY_DAO_METHOD"
 CODE_RAWQ_SELECT_CHANGED = "PINNED_BUILDER_SELECT_CLAUSE_CHANGED"
@@ -191,6 +203,10 @@ CODE_RAWQ_BUILDER_MISSING = "RAW_QUERY_BUILDER_FUNCTION_MISSING"
 CODE_RAWQ_BUILDER_REFERENCE = "RAW_QUERY_BUILDER_REFERENCE_MISSING"
 
 _DESCRIPTIONS = {
+    CODE_INNER_AGG: (
+        "SUM/AVG/TOTAL/MIN/MAX over the inner EFFECTIVE_AMOUNT_SQL constant; "
+        "use the netted SpendingInclusionSql.EFFECTIVE_AMOUNT (refund-netting INV-9)"
+    ),
     CODE_RAWQ_UNPINNED_BUILDER: (
         "SimpleSQLiteQuery construction site is not pinned in "
         + PIN_RELATIVE_PATH
@@ -316,6 +332,17 @@ _QUALIFIED_REF_RE = re.compile(
     + "|".join(ACCEPTED_CONSTANTS)
     + r")(?![A-Za-z0-9_])",
     _ASCII,
+)
+# Rule 05: an aggregate (optionally through COALESCE) whose argument STARTS with the
+# inner effective-amount constant, written ``${EFFECTIVE_AMOUNT_SQL}``, ``$EFFECTIVE_AMOUNT_E_SQL``,
+# by plain code reference in a concatenation, or with an ``ExpenseDao.`` / ``ExpenseDao.Companion.``
+# qualifier.  The outer constants live in ``SpendingInclusionSql`` and never match.
+_INNER_AGG_RE = re.compile(
+    r"(?<![A-Za-z0-9_])(?:SUM|AVG|TOTAL|MIN|MAX)\s*\(\s*"
+    r"(?:COALESCE\s*\(\s*)?"
+    r"(?:\$\{?\s*)?(?:ExpenseDao\s*\.\s*(?:Companion\s*\.\s*)?)?"
+    r"EFFECTIVE_AMOUNT(?:_E)?_SQL(?![A-Za-z0-9_])",
+    _ASCII | re.IGNORECASE,
 )
 _ANY_REF_RE = re.compile(r"(?<![A-Za-z0-9_])SpendingInclusionSql(?![A-Za-z0-9_])", _ASCII)
 
@@ -641,6 +668,10 @@ def scan_text(
     classified: List[Classified] = []
     for index, query in enumerate(queries):
         sql = query.sql
+        if _INNER_AGG_RE.search(sql) is not None:
+            violations.append(
+                Violation(relative_path, query.line, RULE_INNER_AGG, query.function, CODE_INNER_AGG)
+            )
         refs_any = _ANY_REF_RE.search(sql) is not None
         refs_qualified = _QUALIFIED_REF_RE.search(sql) is not None
         has_table = _TABLE_RE.search(sql) is not None
@@ -1197,7 +1228,7 @@ def format_report(outcome: ScanOutcome) -> List[str]:
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Spending predicate usage guard (G-SPENDING-PREDICATE-01..04)."
+        description="Spending predicate usage guard (G-SPENDING-PREDICATE-01..05)."
     )
     parser.add_argument(
         "--root",
@@ -1266,9 +1297,10 @@ def main(argv: Optional[List[str]] = None) -> int:
             )
         print(
             f"FAIL: {len(all_violations)} spending predicate usage violation(s) "
-            f"(G-SPENDING-PREDICATE-01..04). Aggregates over expenses must use "
+            f"(G-SPENDING-PREDICATE-01..05). Aggregates over expenses must use "
             f"SpendingInclusionSql or carry a '// spending-exempt: <REASON>' marker (INV-1, INV-8); "
-            f"RawQuery builders must be pinned in {PIN_RELATIVE_PATH} (I-04-5)."
+            f"RawQuery builders must be pinned in {PIN_RELATIVE_PATH} (I-04-5); "
+            f"SUM/AVG/TOTAL/MIN/MAX must not wrap the inner EFFECTIVE_AMOUNT_SQL (refund-netting INV-9)."
         )
         return EXIT_VIOLATION
 
@@ -1278,7 +1310,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         f"PASS: {outcome.files_scanned} DAO file(s), {outcome.queries_parsed} @Query parsed, "
         f"{predicate} predicate-referencing aggregate(s), {exempt} exempt, "
         f"{raw_outcome.builder_sites} pinned RawQuery builder(s) "
-        f"(G-SPENDING-PREDICATE-01..04)."
+        f"(G-SPENDING-PREDICATE-01..05)."
     )
     return EXIT_PASS
 

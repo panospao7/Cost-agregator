@@ -817,7 +817,7 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
         "allowlist": None,
         "policies": None,
         "description": "Spending predicate usage in DAO aggregate queries "
-                       "(G-SPENDING-PREDICATE-01..04, INV-1/INV-8) — fails closed "
+                       "(G-SPENDING-PREDICATE-01..05, INV-1/INV-8) — fails closed "
                        "when a @Query in a production data/database/dao file "
                        "aggregates (SUM/AVG/TOTAL/COUNT/MIN/MAX) over the expenses "
                        "table without a qualified SpendingInclusionSql reference "
@@ -829,7 +829,9 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
                        "method is not pinned in config/guards/"
                        "spending_raw_query_builders.yml, a pinned selectClause "
                        "literal changes, a pin is stale, or the builder count "
-                       "differs; an empty DAO surface or a missing/malformed pin "
+                       "differs; Rule 05 (refund-netting INV-9) fails when a SUM/AVG/"
+                       "TOTAL/MIN/MAX wraps the inner EFFECTIVE_AMOUNT_SQL constant; "
+                       "an empty DAO surface or a missing/malformed pin "
                        "file exits 2",
         "execution": {
             "engine": "python-direct",
@@ -839,6 +841,7 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
             "ruleIds": (
                 "G-SPENDING-PREDICATE-01", "G-SPENDING-PREDICATE-02",
                 "G-SPENDING-PREDICATE-03", "G-SPENDING-PREDICATE-04",
+                "G-SPENDING-PREDICATE-05",
             ),
             "requiredInputs": ("config/guards/spending_raw_query_builders.yml",),
             "timeoutProfile": "standard",

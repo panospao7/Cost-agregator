@@ -354,6 +354,31 @@ object SemanticAggregates {
         )
     )
 
+    /**
+     * Definition hashes written by earlier builds that stay comparable (INV-10). Refund netting changed
+     * the text of the spending value expression; a manifest written before it carries the old hash. The
+     * old and new expressions are equal on every row with `refundNettedAmount = 0.0`, which is every
+     * row of a database that was migrated up from schema 152 or below, so such a manifest is compared
+     * (not reported DEFINITION_CHANGED). The legacy value text is the frozen
+     * [SpendingInclusionSql.EFFECTIVE_AMOUNT_PRE_REFUND_NETTING]. The income aggregate keeps the inner
+     * constant and did not change.
+     */
+    private val LEGACY_DEFINITION_HASHES: Map<SemanticAggregateId, Set<String>> = mapOf(
+        SemanticAggregateId.SPENDING_EFFECTIVE_BY_CURRENCY to setOf(
+            AggregateDefinition(
+                id = SemanticAggregateId.SPENDING_EFFECTIVE_BY_CURRENCY,
+                table = "expenses",
+                keyColumns = listOf("currency"),
+                filterSql = SPENDING_TYPE_SQL,
+                valueSql = SpendingInclusionSql.EFFECTIVE_AMOUNT_PRE_REFUND_NETTING
+            ).definitionHash
+        )
+    )
+
+    /** True when [hash] is the current definition hash of [id] or one of its accepted legacy hashes. */
+    internal fun isAcceptedDefinitionHash(id: SemanticAggregateId, hash: String): Boolean =
+        hash == definitionOf(id).definitionHash || hash in (LEGACY_DEFINITION_HASHES[id] ?: emptySet())
+
     /** The current definition hash of [id]. */
     fun definitionHash(id: SemanticAggregateId): String = definitionOf(id).definitionHash
 
@@ -610,7 +635,7 @@ object SemanticAggregates {
             val id = definition.id
             val entry = expected.aggregates[id]
                 ?: return SemanticCheckResult.Failed(checkpoint, SemanticCode.SEMANTIC_MANIFEST_MALFORMED, id, 0)
-            if (id in definitionChanged || entry.definitionHash != definition.definitionHash) {
+            if (id in definitionChanged || !isAcceptedDefinitionHash(id, entry.definitionHash)) {
                 if (firstNotVerifiable == null) firstNotVerifiable = SemanticNotVerifiableReason.DEFINITION_CHANGED
                 continue
             }
