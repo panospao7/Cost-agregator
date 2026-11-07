@@ -318,7 +318,7 @@ interface ExpenseDao {
         ReplaceWith("MultiCurrencyRepository", "com.yourname.expensetracker.data.repository.MultiCurrencyRepository"),
         level = DeprecationLevel.ERROR
     )
-    @Query("SELECT SUM(${EFFECTIVE_AMOUNT_SQL}) FROM expenses WHERE ${SPENDING_TYPE_SQL} AND ${SpendingInclusionSql.SPENDING_PREDICATE}")
+    @Query("SELECT SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) FROM expenses WHERE ${SPENDING_TYPE_SQL} AND ${SpendingInclusionSql.SPENDING_PREDICATE}")
     fun getTotalSpentFlow(): Flow<Double?>
 
     /**
@@ -1354,7 +1354,7 @@ AND LENGTH(:merchantKey) >= 8
         level = DeprecationLevel.ERROR
     )
     @Query("""
-        SELECT COALESCE(SUM(${EFFECTIVE_AMOUNT_SQL}), 0.0) FROM expenses
+        SELECT COALESCE(SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT}), 0.0) FROM expenses
         WHERE ${SPENDING_TYPE_SQL}
         AND categoryId = :categoryId
         AND date >= :startMs AND date < :endMs
@@ -1366,7 +1366,7 @@ AND LENGTH(:merchantKey) >= 8
     @Deprecated("Unsafe: raw SUM across mixed currencies. Use currency-aware aggregation path instead.",
         level = DeprecationLevel.ERROR)
     @Query("""
-        SELECT COALESCE(SUM(${EFFECTIVE_AMOUNT_SQL}), 0.0) FROM expenses
+        SELECT COALESCE(SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT}), 0.0) FROM expenses
         WHERE ${SPENDING_TYPE_SQL}
         AND categoryId = :categoryId
         AND date >= :startMs AND date < :endMs
@@ -1381,7 +1381,7 @@ AND LENGTH(:merchantKey) >= 8
         level = DeprecationLevel.ERROR
     )
     @Query("""
-        SELECT categoryId, COALESCE(SUM(${EFFECTIVE_AMOUNT_SQL}), 0.0) AS total
+        SELECT categoryId, COALESCE(SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT}), 0.0) AS total
         FROM expenses
         WHERE ${SPENDING_TYPE_SQL}
           AND categoryId IN (:categoryIds)
@@ -1396,9 +1396,10 @@ AND LENGTH(:merchantKey) >= 8
     ): List<CategorySpentTotal>
 
     // === Merchant Search for Manual Entry ===
-    // avgAmount uses the effective (ownership-adjusted) amount via [EFFECTIVE_AMOUNT_SQL] so that
-    // the pre-fill suggestion reflects what the user actually paid (not the gross posted amount on shared rows).
-    // spending-exempt: SUGGESTION
+    // avgAmount uses the effective (ownership-adjusted, refund-netted) amount via
+    // [SpendingInclusionSql.EFFECTIVE_AMOUNT] so that the pre-fill suggestion reflects what the user
+    // actually paid (not the gross posted amount on shared rows). Flagged rows (no spending-exclusion
+    // zeroing for a suggestion) keep the inner ownership amount, exactly as before refund netting.
     @Query("""
         WITH filtered AS (
             SELECT *
@@ -1408,7 +1409,7 @@ AND LENGTH(:merchantKey) >= 8
         ),
         stats AS (
             SELECT merchantKey,
-                   AVG(${EFFECTIVE_AMOUNT_SQL}) AS avgAmount,
+                   AVG(CASE WHEN spendingExclusionReason IS NULL THEN ${SpendingInclusionSql.EFFECTIVE_AMOUNT} ELSE ${EFFECTIVE_AMOUNT_SQL} END) AS avgAmount,
                    COUNT(*) AS txCount,
                    MAX(date) AS latestDate
             FROM filtered
@@ -1462,10 +1463,11 @@ AND LENGTH(:merchantKey) >= 8
      * Shared-expense rows contribute myShareAmount / proportional share, not the full posted amount.
      * Sorted ascending for efficient percentile computation.
      *
-     * Uses [EFFECTIVE_AMOUNT_SQL] — the canonical ownership rule.
+     * Uses [SpendingInclusionSql.EFFECTIVE_AMOUNT] — the canonical ownership rule, net of linked
+     * refunds (refund-netting INV-9).
      */
     @Query("""
-        SELECT ${EFFECTIVE_AMOUNT_SQL}
+        SELECT ${SpendingInclusionSql.EFFECTIVE_AMOUNT}
         FROM expenses 
         WHERE ${SPENDING_TYPE_SQL} 
         AND date >= :startMs AND date < :endMs
@@ -1586,7 +1588,7 @@ AND LENGTH(:merchantKey) >= 8
         level = DeprecationLevel.ERROR
     )
     @Query("""
-        SELECT SUM(${EFFECTIVE_AMOUNT_SQL}) FROM expenses
+        SELECT SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) FROM expenses
         WHERE ${SPENDING_TYPE_SQL}
         AND date >= :startDate AND date < :endDate
         AND ${SpendingInclusionSql.SPENDING_PREDICATE}
@@ -1608,7 +1610,7 @@ AND LENGTH(:merchantKey) >= 8
     @Deprecated("Raw SUM across mixed currencies. Use MultiCurrencyRepository for currency-aware aggregation.",
         level = DeprecationLevel.ERROR)
     @Query("""
-        SELECT COALESCE(SUM(${EFFECTIVE_AMOUNT_SQL}), 0.0) FROM expenses
+        SELECT COALESCE(SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT}), 0.0) FROM expenses
         WHERE date >= :startDate AND date < :endDate
           AND ${SpendingInclusionSql.SPENDING_PREDICATE}
           AND ((:categoryId IS NULL AND categoryId IS NULL) OR categoryId = :categoryId)
@@ -1630,7 +1632,7 @@ AND LENGTH(:merchantKey) >= 8
      */
     @Query("""
         SELECT UPPER(currency) AS currency,
-               SUM(${EFFECTIVE_AMOUNT_SQL}) AS total,
+               SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) AS total,
                COUNT(*) AS txCount
         FROM expenses
         WHERE ${SPENDING_TYPE_SQL}
@@ -1649,10 +1651,9 @@ AND LENGTH(:merchantKey) >= 8
      * NEW-P5-003: Excludes shared-expense and not-mine deposits so deposit totals
      * reflect only the user's own income, not shared-expense repayments.
      */
-    // spending-exempt: NON_SPENDING_INCOME
     @Query("""
         SELECT UPPER(COALESCE(currency, 'EUR')) AS currency,
-               SUM(${EFFECTIVE_AMOUNT_SQL}) AS total,
+               SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) AS total,
                COUNT(*) AS txCount
         FROM expenses
         WHERE ${DEPOSIT_TYPE_SQL}
@@ -1682,7 +1683,7 @@ AND LENGTH(:merchantKey) >= 8
     @Query("""
         SELECT categoryId,
                UPPER(currency) AS currency,
-               SUM(${EFFECTIVE_AMOUNT_SQL}) AS total,
+               SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) AS total,
                COUNT(*) AS txCount
         FROM expenses
         WHERE ${SPENDING_TYPE_SQL}
@@ -1703,7 +1704,7 @@ AND LENGTH(:merchantKey) >= 8
     @Query("""
         SELECT MIN(merchant) AS merchant,
                UPPER(currency) AS currency,
-               SUM(${EFFECTIVE_AMOUNT_SQL}) AS total,
+               SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) AS total,
                COUNT(*) AS txCount
         FROM expenses
         WHERE ${SPENDING_TYPE_SQL}
@@ -1723,7 +1724,7 @@ AND LENGTH(:merchantKey) >= 8
     @Query("""
         SELECT strftime('%Y-%m', date/1000, 'unixepoch', 'localtime') AS monthKey,
                UPPER(currency) AS currency,
-               SUM(${EFFECTIVE_AMOUNT_SQL}) AS total,
+               SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) AS total,
                COUNT(*) AS txCount
         FROM expenses
         WHERE ${SPENDING_TYPE_SQL}
@@ -1746,7 +1747,7 @@ AND LENGTH(:merchantKey) >= 8
      */
     @Query("""
         SELECT UPPER(currency) AS currency,
-               SUM(${EFFECTIVE_AMOUNT_SQL}) AS total,
+               SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) AS total,
                COUNT(*) AS txCount
         FROM expenses
         WHERE date >= :startDate AND date < :endDate
@@ -1764,7 +1765,7 @@ AND LENGTH(:merchantKey) >= 8
     @Query("""
         SELECT categoryId,
                UPPER(currency) AS currency,
-               SUM(${EFFECTIVE_AMOUNT_SQL}) AS total,
+               SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) AS total,
                COUNT(*) AS txCount
         FROM expenses
         WHERE date >= :startDate AND date < :endDate
@@ -1785,7 +1786,7 @@ AND LENGTH(:merchantKey) >= 8
     @Query("""
         SELECT merchant AS merchant,
                UPPER(currency) AS currency,
-               SUM(${EFFECTIVE_AMOUNT_SQL}) AS total,
+               SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) AS total,
                COUNT(*) AS txCount
         FROM expenses
         WHERE date >= :startDate AND date < :endDate
@@ -1802,7 +1803,7 @@ AND LENGTH(:merchantKey) >= 8
     @Query("""
         SELECT strftime('%Y-%m', date/1000, 'unixepoch', 'localtime') AS monthKey,
                UPPER(currency) AS currency,
-               SUM(${EFFECTIVE_AMOUNT_SQL}) AS total,
+               SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) AS total,
                COUNT(*) AS txCount
         FROM expenses
         WHERE date >= :startDate AND date < :endDate
@@ -1822,7 +1823,7 @@ AND LENGTH(:merchantKey) >= 8
         level = DeprecationLevel.ERROR)
     @Query("""
         SELECT strftime('%Y-%m', date/1000, 'unixepoch', 'localtime') AS monthKey,
-               SUM(${EFFECTIVE_AMOUNT_SQL}) AS total,
+               SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) AS total,
                COUNT(*) AS txCount
         FROM expenses
         WHERE ${SPENDING_TYPE_SQL}
@@ -1842,7 +1843,7 @@ AND LENGTH(:merchantKey) >= 8
         level = DeprecationLevel.ERROR)
     @Query("""
         SELECT strftime('%Y-%m', date/1000, 'unixepoch', 'localtime') AS monthKey,
-               SUM(${EFFECTIVE_AMOUNT_SQL}) AS total,
+               SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) AS total,
                COUNT(*) AS txCount
         FROM expenses
         WHERE ${SPENDING_TYPE_SQL}
@@ -1863,7 +1864,7 @@ AND LENGTH(:merchantKey) >= 8
         level = DeprecationLevel.ERROR)
     @Query("""
         SELECT strftime('%Y-%m', date/1000, 'unixepoch', 'localtime') AS monthKey,
-               SUM(${EFFECTIVE_AMOUNT_SQL}) AS total,
+               SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) AS total,
                COUNT(*) AS txCount
         FROM expenses
         WHERE ${SPENDING_TYPE_SQL}
@@ -1880,7 +1881,7 @@ AND LENGTH(:merchantKey) >= 8
         level = DeprecationLevel.ERROR)
     @Query("""
         SELECT merchantKey as merchantKey, MIN(merchant) as merchant,
-               SUM(${EFFECTIVE_AMOUNT_SQL}) as total, COUNT(*) as cnt 
+               SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) as total, COUNT(*) as cnt 
         FROM expenses 
         WHERE ${SPENDING_TYPE_SQL}
         AND date >= :startDate AND date < :endDate
@@ -1895,7 +1896,7 @@ AND LENGTH(:merchantKey) >= 8
     @Deprecated("Raw SUM across mixed currencies. Use MultiCurrencyRepository for currency-aware aggregation.",
         level = DeprecationLevel.ERROR)
     @Query("""
-        SELECT categoryId, SUM(${EFFECTIVE_AMOUNT_SQL}) as total, COUNT(*) as txCount
+        SELECT categoryId, SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) as total, COUNT(*) as txCount
         FROM expenses 
         WHERE ${SPENDING_TYPE_SQL} 
         AND date >= :startDate AND date < :endDate
@@ -1921,7 +1922,7 @@ AND LENGTH(:merchantKey) >= 8
         SELECT CAST(strftime('%Y%m%d', date/1000, 'unixepoch', 'localtime') AS INTEGER) as dayEpoch,
                MIN(date) as startDate,
                MAX(date) as endDate,
-               SUM(${EFFECTIVE_AMOUNT_SQL}) as total,
+               SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) as total,
                COUNT(*) as txCount
         FROM expenses
         WHERE ${SPENDING_TYPE_SQL}
@@ -1943,7 +1944,7 @@ AND LENGTH(:merchantKey) >= 8
     )
     // Monthly total for a specific month range
     @Query("""
-        SELECT COALESCE(SUM(${EFFECTIVE_AMOUNT_SQL}), 0.0) FROM expenses 
+        SELECT COALESCE(SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT}), 0.0) FROM expenses 
         WHERE ${SPENDING_TYPE_SQL} 
         AND date >= :startMs AND date < :endMs
         AND ${SpendingInclusionSql.SPENDING_PREDICATE}
@@ -1966,7 +1967,7 @@ AND LENGTH(:merchantKey) >= 8
     @Deprecated("Raw SUM across mixed currencies. Use MultiCurrencyRepository for currency-aware aggregation.",
         level = DeprecationLevel.ERROR)
     @Query("""
-        SELECT categoryId, SUM(${EFFECTIVE_AMOUNT_SQL}) as total, COUNT(*) as txCount
+        SELECT categoryId, SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) as total, COUNT(*) as txCount
         FROM expenses 
         WHERE ${SPENDING_TYPE_SQL} 
         AND date >= :startMs AND date < :endMs
@@ -1979,15 +1980,15 @@ AND LENGTH(:merchantKey) >= 8
 
     // Merchant averages (merchants with 2+ transactions)
     // averageAmount, minAmount, maxAmount all use the effective (ownership-adjusted) value
-    // via [EFFECTIVE_AMOUNT_SQL].
+    // via [SpendingInclusionSql.EFFECTIVE_AMOUNT].
     @Query("""
-        SELECT merchantKey as merchantName, 
+        SELECT merchantKey as merchantName,
                MIN(merchant) as displayName,
-               SUM(${EFFECTIVE_AMOUNT_SQL}) as totalAmount,
+               SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) as totalAmount,
                COUNT(*) as transactionCount,
-               AVG(${EFFECTIVE_AMOUNT_SQL}) as averageAmount,
-               MIN(${EFFECTIVE_AMOUNT_SQL}) as minAmount,
-               MAX(${EFFECTIVE_AMOUNT_SQL}) as maxAmount,
+               AVG(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) as averageAmount,
+               MIN(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) as minAmount,
+               MAX(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) as maxAmount,
                MIN(date) as firstDate, 
                MAX(date) as lastDate
         FROM expenses 
@@ -2002,15 +2003,15 @@ AND LENGTH(:merchantKey) >= 8
 
     // All merchant stats (including single-transaction merchants)
     // averageAmount, minAmount, maxAmount all use the effective (ownership-adjusted) value
-    // via [EFFECTIVE_AMOUNT_SQL].
+    // via [SpendingInclusionSql.EFFECTIVE_AMOUNT].
     @Query("""
-        SELECT merchantKey as merchantName, 
+        SELECT merchantKey as merchantName,
                MIN(merchant) as displayName,
-               SUM(${EFFECTIVE_AMOUNT_SQL}) as totalAmount,
+               SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) as totalAmount,
                COUNT(*) as transactionCount,
-               AVG(${EFFECTIVE_AMOUNT_SQL}) as averageAmount,
-               MIN(${EFFECTIVE_AMOUNT_SQL}) as minAmount,
-               MAX(${EFFECTIVE_AMOUNT_SQL}) as maxAmount,
+               AVG(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) as averageAmount,
+               MIN(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) as minAmount,
+               MAX(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) as maxAmount,
                MIN(date) as firstDate, 
                MAX(date) as lastDate
         FROM expenses 
@@ -2024,15 +2025,15 @@ AND LENGTH(:merchantKey) >= 8
 
     // Top merchants by total spending for a period
     // averageAmount, minAmount, maxAmount all use the effective (ownership-adjusted) value
-    // via [EFFECTIVE_AMOUNT_SQL].
+    // via [SpendingInclusionSql.EFFECTIVE_AMOUNT].
     @Query("""
-        SELECT merchantKey as merchantName, 
+        SELECT merchantKey as merchantName,
                MIN(merchant) as displayName,
-               SUM(${EFFECTIVE_AMOUNT_SQL}) as totalAmount,
+               SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) as totalAmount,
                COUNT(*) as transactionCount,
-               AVG(${EFFECTIVE_AMOUNT_SQL}) as averageAmount,
-               MIN(${EFFECTIVE_AMOUNT_SQL}) as minAmount,
-               MAX(${EFFECTIVE_AMOUNT_SQL}) as maxAmount,
+               AVG(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) as averageAmount,
+               MIN(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) as minAmount,
+               MAX(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) as maxAmount,
                MIN(date) as firstDate, 
                MAX(date) as lastDate
         FROM expenses 
@@ -2092,7 +2093,7 @@ AND LENGTH(:merchantKey) >= 8
     @Query("""
         SELECT CAST(strftime('%Y%m%d', date/1000, 'unixepoch', 'localtime') AS INTEGER) as dayEpoch,
                MIN(date) as startDate, MAX(date) as endDate,
-               SUM(${EFFECTIVE_AMOUNT_SQL}) as total, COUNT(*) as txCount
+               SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) as total, COUNT(*) as txCount
         FROM expenses 
         WHERE ${SPENDING_TYPE_SQL} 
         AND date >= :startMs AND date < :endMs
@@ -2109,11 +2110,11 @@ AND LENGTH(:merchantKey) >= 8
     @Query("""
         SELECT merchantKey as merchantName,
                MIN(merchant) as displayName,
-               SUM(${EFFECTIVE_AMOUNT_SQL}) as totalAmount,
+               SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) as totalAmount,
                COUNT(*) as transactionCount,
-               AVG(${EFFECTIVE_AMOUNT_SQL}) as averageAmount,
-               MIN(${EFFECTIVE_AMOUNT_SQL}) as minAmount,
-               MAX(${EFFECTIVE_AMOUNT_SQL}) as maxAmount,
+               AVG(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) as averageAmount,
+               MIN(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) as minAmount,
+               MAX(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) as maxAmount,
                MIN(date) as firstDate, 
                MAX(date) as lastDate
         FROM expenses 
@@ -2128,13 +2129,13 @@ AND LENGTH(:merchantKey) >= 8
     suspend fun getRecurringCandidates(): List<MerchantStats>
 
     // Day-of-week spending pattern
-    // avgAmount uses the effective (ownership-adjusted) amount via [EFFECTIVE_AMOUNT_SQL].
+    // avgAmount uses the effective (ownership-adjusted) amount via [SpendingInclusionSql.EFFECTIVE_AMOUNT].
     @Query("""
         SELECT 
             ((CAST(strftime('%w', date/1000, 'unixepoch', 'localtime') AS INTEGER) + 6) % 7) as dayOfWeek,
-            SUM(${EFFECTIVE_AMOUNT_SQL}) as total,
+            SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) as total,
             COUNT(*) as txCount,
-            AVG(${EFFECTIVE_AMOUNT_SQL}) as avgAmount
+            AVG(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) as avgAmount
         FROM expenses
         WHERE ${SPENDING_TYPE_SQL}
         AND date >= :startMs AND date < :endMs
@@ -2155,14 +2156,12 @@ AND LENGTH(:merchantKey) >= 8
     // TODO (P5-P1-5): Remove after all callers migrate to MultiCurrencyRepository
     @Deprecated("Raw SUM across mixed currencies. Use MultiCurrencyRepository for currency-aware aggregation.",
         level = DeprecationLevel.ERROR)
-    // spending-exempt: NON_SPENDING_INCOME
-    @Query("SELECT COALESCE(SUM(${EFFECTIVE_AMOUNT_SQL}), 0.0) FROM expenses WHERE transactionType = 'DEPOSIT' AND date >= :startMs AND date < :endMs AND isNotMine = 0")
+    @Query("SELECT COALESCE(SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT}), 0.0) FROM expenses WHERE transactionType = 'DEPOSIT' AND date >= :startMs AND date < :endMs AND isNotMine = 0")
     suspend fun getTotalDepositsForPeriod(startMs: Long, endMs: Long): Double
 
-    // spending-exempt: NON_SPENDING_INCOME
     @Query("""
-        SELECT strftime('%Y-%m', date/1000, 'unixepoch', 'localtime') as month, 
-               SUM(${EFFECTIVE_AMOUNT_SQL}) as total, COUNT(*) as count
+        SELECT strftime('%Y-%m', date/1000, 'unixepoch', 'localtime') as month,
+               SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) as total, COUNT(*) as count
         FROM expenses 
         WHERE transactionType = 'DEPOSIT'
         AND isNotMine = 0
@@ -2175,8 +2174,7 @@ AND LENGTH(:merchantKey) >= 8
     // TODO (P5-P1-5): Remove after all callers migrate to MultiCurrencyRepository
     @Deprecated("Raw SUM across mixed currencies. Use MultiCurrencyRepository for currency-aware aggregation.",
         level = DeprecationLevel.ERROR)
-    // spending-exempt: NON_SPENDING_INCOME
-    @Query("SELECT COALESCE(SUM(${EFFECTIVE_AMOUNT_SQL}), 0.0) FROM expenses WHERE transactionType = 'DEPOSIT' AND isNotMine = 0")
+    @Query("SELECT COALESCE(SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT}), 0.0) FROM expenses WHERE transactionType = 'DEPOSIT' AND isNotMine = 0")
     suspend fun getTotalDeposits(): Double
 
     // ── Location queries (v28) ────────────────────────────────────────────────
@@ -2304,7 +2302,7 @@ AND LENGTH(:merchantKey) >= 8
         level = DeprecationLevel.ERROR)
     @Query("""
         SELECT merchantKey as merchantKey, MIN(merchant) as merchant,
-               SUM(${EFFECTIVE_AMOUNT_SQL}) as total, COUNT(*) as cnt
+               SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) as total, COUNT(*) as cnt
         FROM expenses
         WHERE latitude IS NOT NULL
           AND longitude IS NOT NULL
@@ -2323,7 +2321,7 @@ AND LENGTH(:merchantKey) >= 8
     @Query("""
         SELECT MIN(merchant) AS merchant,
                UPPER(COALESCE(currency, 'EUR')) AS currency,
-               SUM(COALESCE(${EFFECTIVE_AMOUNT_SQL}, 0)) AS total,
+               SUM(COALESCE(${SpendingInclusionSql.EFFECTIVE_AMOUNT}, 0)) AS total,
                COUNT(*) AS txCount
         FROM expenses
         WHERE latitude IS NOT NULL
@@ -2450,7 +2448,7 @@ AND LENGTH(:merchantKey) >= 8
         SELECT date(date/1000, 'unixepoch', 'localtime', '-6 days', 'weekday 1') as weekKey,
                MIN(date) as startDate,
                MAX(date) as endDate,
-               SUM(${EFFECTIVE_AMOUNT_SQL}) as total,
+               SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) as total,
                COUNT(*) as txCount
         FROM expenses
         WHERE ${SPENDING_TYPE_SQL}
@@ -2468,7 +2466,7 @@ AND LENGTH(:merchantKey) >= 8
         SELECT strftime('%Y-%m', date/1000, 'unixepoch', 'localtime') as monthKey,
                MIN(date) as startDate,
                MAX(date) as endDate,
-               SUM(${EFFECTIVE_AMOUNT_SQL}) as total,
+               SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) as total,
                COUNT(*) as txCount
         FROM expenses
         WHERE ${SPENDING_TYPE_SQL}
@@ -2486,7 +2484,7 @@ AND LENGTH(:merchantKey) >= 8
         SELECT CAST(strftime('%Y%m%d', date/1000, 'unixepoch', 'localtime') AS INTEGER) as dayEpoch,
                MIN(date) as startDate,
                MAX(date) as endDate,
-               SUM(${EFFECTIVE_AMOUNT_SQL}) as total,
+               SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) as total,
                COUNT(*) as txCount
         FROM expenses
         WHERE ${SPENDING_TYPE_SQL}
@@ -2502,7 +2500,7 @@ AND LENGTH(:merchantKey) >= 8
         level = DeprecationLevel.ERROR)
     @Query("""
         SELECT AVG(daily_total) FROM (
-            SELECT SUM(${EFFECTIVE_AMOUNT_SQL}) as daily_total
+            SELECT SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) as daily_total
             FROM expenses
             WHERE ${SPENDING_TYPE_SQL}
             AND date >= :startMs AND date < :endMs
@@ -2517,7 +2515,7 @@ AND LENGTH(:merchantKey) >= 8
         level = DeprecationLevel.ERROR)
     @Query("""
         SELECT c.id, c.name, c.icon, c.color,
-               SUM(${EFFECTIVE_AMOUNT_E_SQL}) as total,
+               SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT_E}) as total,
                COUNT(*) as txCount
         FROM expenses e
         LEFT JOIN categories c ON e.categoryId = c.id
