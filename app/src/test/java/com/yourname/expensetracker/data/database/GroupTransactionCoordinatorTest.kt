@@ -134,7 +134,7 @@ class GroupTransactionCoordinatorTest {
                 com.yourname.expensetracker.domain.core.money.CurrencyCode("EUR")
             )
         transactionLifecycleCoordinator = TransactionLifecycleCoordinator(
-            database, expenseDao, transactionEventDao, timeProvider,
+            database, expenseDao, transactionEventDao, database.expenseRefundLinkDao(), timeProvider,
             mockk<CurrencyConverter>(relaxed = true),
             mockk<TransactionSideEffectDispatcher>(relaxed = true),
             tlcPlanner,

@@ -134,8 +134,8 @@ class RefundNettingArchitectureTest {
         val tlc = requireScan().firstOrNull { it.rel == TLC_REL }
             ?: throw AssertionError("scanned file missing: $TLC_REL - update the guard if it was moved")
         val clean = code(tlc.raw)
-        assertTrue("TLC must insert link rows", Regex("""expenseRefundLinkDao\(\)\s*\.\s*insert\s*\(""").containsMatchIn(clean))
-        assertTrue("TLC must delete link rows", Regex("""expenseRefundLinkDao\(\)\s*\.\s*deleteById\s*\(""").containsMatchIn(clean))
+        assertTrue("TLC must insert link rows", Regex("""\bexpenseRefundLinkDao\s*(?:\(\s*\))?\s*\.\s*insert\s*\(""").containsMatchIn(clean))
+        assertTrue("TLC must delete link rows", Regex("""\bexpenseRefundLinkDao\s*(?:\(\s*\))?\s*\.\s*deleteById\s*\(""").containsMatchIn(clean))
         assertTrue("TLC must update the netted column", NETTED_WRITE.containsMatchIn(clean))
         val dao = requireScan().firstOrNull { it.rel == EXPENSE_DAO_REL }
             ?: throw AssertionError("scanned file missing: $EXPENSE_DAO_REL")

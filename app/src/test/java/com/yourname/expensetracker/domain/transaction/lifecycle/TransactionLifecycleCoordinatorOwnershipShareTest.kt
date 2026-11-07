@@ -66,6 +66,7 @@ class TransactionLifecycleCoordinatorOwnershipShareTest {
             database = db,
             expenseDao = db.expenseDao(),
             transactionEventDao = db.transactionEventDao(),
+            expenseRefundLinkDao = db.expenseRefundLinkDao(),
             timeProvider = timeProvider,
             currencyConverter = mockk(relaxed = true),
             sideEffectDispatcher = mockk(relaxed = true),

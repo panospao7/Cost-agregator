@@ -268,6 +268,7 @@ class ReviewQueueRepositoryNestedRollbackTest {
             database = database,
             expenseDao = database.expenseDao(),
             transactionEventDao = database.transactionEventDao(),
+            expenseRefundLinkDao = database.expenseRefundLinkDao(),
             timeProvider = timeProvider,
             currencyConverter = mockk(relaxed = true),
             sideEffectDispatcher = mockk(relaxed = true),

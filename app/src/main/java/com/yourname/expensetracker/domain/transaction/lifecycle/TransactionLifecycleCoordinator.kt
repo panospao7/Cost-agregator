@@ -6,6 +6,7 @@ import com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException
 import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
+import com.yourname.expensetracker.data.database.dao.ExpenseRefundLinkDao
 import com.yourname.expensetracker.data.database.dao.RestrictedExpenseDaoMutation
 import com.yourname.expensetracker.data.database.dao.TransactionEventDao
 import com.yourname.expensetracker.data.database.entity.Expense
@@ -101,6 +102,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
     private val database: AppDatabase,
     private val expenseDao: ExpenseDao,
     private val transactionEventDao: TransactionEventDao,
+    private val expenseRefundLinkDao: ExpenseRefundLinkDao,
     private val timeProvider: TimeProvider,
     private val currencyConverter: CurrencyConverter,
     private val sideEffectDispatcher: TransactionSideEffectDispatcher,
@@ -2790,8 +2792,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 database.withTransaction {
                     val refund = expenseDao.getById(refundId)
                     val purchase = expenseDao.getById(purchaseId)
-                    val refundLinks = database.expenseRefundLinkDao().getForExpense(refundId)
-                    val purchaseLinks = database.expenseRefundLinkDao().getForExpense(purchaseId)
+                    val refundLinks = expenseRefundLinkDao.getForExpense(refundId)
+                    val purchaseLinks = expenseRefundLinkDao.getForExpense(purchaseId)
                     val refundGroupLinked =
                         refund != null && database.groupExpenseDao().existsForExpense(refundId)
                     val purchaseGroupLinked =
@@ -2820,7 +2822,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
                             val currencyCode = checkNotNull(CurrencyCode.parse(currency))
                             val appliedAmount = decision.applied.toDouble()
 
-                            val linkId = database.expenseRefundLinkDao().insert(
+                            val linkId = expenseRefundLinkDao.insert(
                                 ExpenseRefundLink(
                                     refundExpenseId = refundId,
                                     purchaseExpenseId = purchaseId,
@@ -2911,7 +2913,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
             ) {
                 database.withTransaction {
                     touchedIds.clear()
-                    val links = database.expenseRefundLinkDao().getByRefund(refundId)
+                    val links = expenseRefundLinkDao.getByRefund(refundId)
                     if (links.isEmpty()) {
                         result = RefundUnlinkResult.NotLinked
                         return@withTransaction
@@ -2993,14 +2995,14 @@ class TransactionLifecycleCoordinator @Inject constructor(
      * INV-1) and returns the number of links on that row. Runs inside the caller's transaction.
      */
     private suspend fun recomputeRefundNettedAmount(expenseId: Long): Int {
-        val links = database.expenseRefundLinkDao().getForExpense(expenseId)
+        val links = expenseRefundLinkDao.getForExpense(expenseId)
         expenseDao.updateRefundNettedAmount(expenseId, RefundNettingPolicy.nettedAmountOf(links))
         return links.size
     }
 
     /** Removes one link row inside the caller's transaction. Returns affected rows. */
     private suspend fun removeRefundLink(linkId: Long): Int {
-        return database.expenseRefundLinkDao().deleteById(linkId)
+        return expenseRefundLinkDao.deleteById(linkId)
     }
 
     /**
@@ -3505,7 +3507,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 // counterpart from its remaining links and write one UPDATED event per
                 // counterpart, all in this transaction. Any failure throws and rolls the
                 // delete back. Ids only; no amounts or text.
-                val removedRefundLinks = database.expenseRefundLinkDao().getForExpense(fresh.id)
+                val removedRefundLinks = expenseRefundLinkDao.getForExpense(fresh.id)
                 for (link in removedRefundLinks) {
                     removeRefundLink(link.id)
                 }

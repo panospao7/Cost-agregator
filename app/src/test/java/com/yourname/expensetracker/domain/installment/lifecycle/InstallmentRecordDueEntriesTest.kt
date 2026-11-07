@@ -499,6 +499,7 @@ class InstallmentRecordDueEntriesTest {
             database = fx.db,
             expenseDao = fx.db.expenseDao(),
             transactionEventDao = fx.db.transactionEventDao(),
+            expenseRefundLinkDao = fx.db.expenseRefundLinkDao(),
             timeProvider = fx.time,
             currencyConverter = converter,
             sideEffectDispatcher = mockk(relaxed = true),
