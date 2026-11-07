@@ -75,17 +75,17 @@ class JsonExpenseImporter @Inject constructor(
                     when (val result = coordinator.createExpense(request)) {
                         is CreateExpenseResult.Created -> { imported++; expenseIds.add(result.expenseId) }
                         is CreateExpenseResult.DuplicateSkipped -> skipped++
-                        is CreateExpenseResult.ValidationFailed -> { errors++; errorMessages.add("Row $i: ${result.errors.joinToString()}") }
-                        else -> { errors++; errorMessages.add("Row $i: import failed") }
+                        is CreateExpenseResult.ValidationFailed -> { errors++; errorMessages.add("Row ${i + 1}: ${result.errors.joinToString()}") }
+                        else -> { errors++; errorMessages.add("Row ${i + 1}: import failed") }
                     }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: ImportContractException) {
                     // RP-19 (19-B): contract violations surface as controlled
                     // reason codes, never interpolated exception payloads.
-                    errors++; errorMessages.add("Row $i: ${e.code}")
+                    errors++; errorMessages.add("Row ${i + 1}: ${e.code}")
                 } catch (e: Exception) {
-                    errors++; errorMessages.add("Row $i: ${e.message}")
+                    errors++; errorMessages.add("Row ${i + 1}: ${e.message}")
                 }
             }
             ImportResult(success = errors == 0, importedCount = imported, skippedCount = skipped, errorCount = errors, errors = errorMessages, expenseIds = expenseIds)

@@ -89,4 +89,6 @@
     <string name="transactions_refund_linked_locked">Esta transacción está vinculada a un reembolso, por lo que no se pueden cambiar su importe, moneda ni tipo. Quita primero el vínculo.</string>
     <!-- transactions_delete_refund_linked_note: DRAFT: owner native sign-off pending -->
     <string name="transactions_delete_refund_linked_note">Esta transacción está vinculada a un reembolso. Al eliminarla se quita el vínculo y la otra transacción vuelve a su importe completo.</string>
+    <!-- installments_action_failed_refund_linked: DRAFT: owner native sign-off pending -->
+    <string name="installments_action_failed_refund_linked">Esta compra está vinculada a un reembolso, por lo que no se puede usar en un plan de cuotas. Quita primero el vínculo del reembolso. No se cambió nada.</string>
 </resources>

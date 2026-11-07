@@ -35,7 +35,12 @@ sealed class GroupExpenseCreationResult {
         val groupExpenseId: Long,
         val expenseId: Long
     ) : GroupExpenseCreationResult()
-    data class Error(val message: String) : GroupExpenseCreationResult()
+    data class Error(val message: String) : GroupExpenseCreationResult() {
+        companion object {
+            /** Bounded code: the expense is refund-linked and cannot be attached to a group (refund-netting INV-19). */
+            const val REFUND_LINKED = "REFUND_LINKED"
+        }
+    }
 }
 
 /**

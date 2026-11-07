@@ -29,4 +29,12 @@
     <string name="capture_skip_error_generic">Δεν ήταν δυνατή η ενημέρωση της λίστας. Δοκιμάστε ξανά.</string>
     <!-- capture_skip_load_failed: DRAFT: owner native sign-off pending -->
     <string name="capture_skip_load_failed">Δεν ήταν δυνατή η φόρτωση της λίστας εφαρμογών.</string>
+    <!-- capture_skip_confirm_title: DRAFT: owner native sign-off pending -->
+    <string name="capture_skip_confirm_title">Παράλειψη αυτής της εφαρμογής;</string>
+    <!-- capture_skip_confirm_message_format: DRAFT: owner native sign-off pending -->
+    <string name="capture_skip_confirm_message_format">Η εφαρμογή %1$s στέλνει ειδοποιήσεις τράπεζας που μπορεί να διαβάσει αυτή η εφαρμογή. Αν την παραλείψετε, οι ειδοποιήσεις τράπεζας από αυτήν δεν θα καταγράφονται πλέον.</string>
+    <!-- capture_skip_confirm_action: DRAFT: owner native sign-off pending -->
+    <string name="capture_skip_confirm_action">Παράλειψη παρ\' όλα αυτά</string>
+    <!-- capture_skip_confirm_cancel: DRAFT: owner native sign-off pending -->
+    <string name="capture_skip_confirm_cancel">Ακύρωση</string>
 </resources>

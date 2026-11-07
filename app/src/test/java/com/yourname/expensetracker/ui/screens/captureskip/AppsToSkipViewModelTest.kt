@@ -4,6 +4,7 @@ import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.entity.BlockedPackage
 import com.yourname.expensetracker.data.repository.NotificationRepository
 import com.yourname.expensetracker.domain.model.UiText
+import com.yourname.expensetracker.domain.parser.AppParserRegistry
 import com.yourname.expensetracker.ui.util.blockedWriteException
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -41,6 +42,7 @@ class AppsToSkipViewModelTest {
     private val seenFlow = MutableStateFlow<List<String>>(emptyList())
     private val repository = mockk<NotificationRepository>(relaxed = true)
     private val labelResolver = mockk<AppLabelResolver>()
+    private val parserRegistry = mockk<AppParserRegistry>()
     private val labels = mutableMapOf(
         "com.synthetic.zeta" to "Zeta Pay",
         "com.synthetic.alpha" to "alpha bank",
@@ -52,6 +54,7 @@ class AppsToSkipViewModelTest {
         Dispatchers.setMain(dispatcher)
         every { repository.getBlockedPackages() } returns blockedFlow
         every { repository.getAllPackages() } returns seenFlow
+        every { parserRegistry.hasParserFor(any()) } returns false
         every { labelResolver.label(any()) } answers { labels[firstArg<String>()] ?: firstArg<String>() }
     }
 
@@ -60,7 +63,7 @@ class AppsToSkipViewModelTest {
         Dispatchers.resetMain()
     }
 
-    private fun viewModel() = AppsToSkipViewModel(repository, labelResolver, dispatcher)
+    private fun viewModel() = AppsToSkipViewModel(repository, labelResolver, parserRegistry, dispatcher)
 
     private fun blocked(vararg names: String) = names.map { BlockedPackage(packageName = it, blockedAt = 1L) }
 

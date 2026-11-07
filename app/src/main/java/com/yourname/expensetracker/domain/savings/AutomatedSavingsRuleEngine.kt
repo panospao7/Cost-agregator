@@ -4,6 +4,8 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.repository.AutomatedSavingsRuleStateRepository
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.CurrencyFractionDigits
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.data.repository.CategoryRepository
@@ -162,7 +164,8 @@ class AutomatedSavingsRuleEngine @Inject constructor(
             return null
         }
 
-        val roundUp = computeRoundUp(candidateAmount, roundUpTo)
+        val currencyCode = expense.currency
+        val roundUp = computeRoundUp(candidateAmount, roundUpTo, currencyCode)
         if (roundUp == null) {
             Timber.tag("AutomatedSavingsRuleEngine").d(
                 "ROUND_UP rule %s produced no round-up for roundUpTo=%s",
@@ -175,7 +178,7 @@ class AutomatedSavingsRuleEngine @Inject constructor(
         return RuleExecution(
             rule = rule,
             amount = roundUp.savedAmount,
-            reason = "Round up ${CurrencyFormatter.formatMoney(candidateAmount, displayCurrency)} to ${CurrencyFormatter.formatMoney(roundUp.roundedTarget, displayCurrency)}",
+            reason = "Round up ${CurrencyFormatter.formatMoney(candidateAmount, currencyCode)} to ${CurrencyFormatter.formatMoney(roundUp.roundedTarget, currencyCode)}",
             timestamp = timeProvider.now()
         )
     }
@@ -186,32 +189,38 @@ class AutomatedSavingsRuleEngine @Inject constructor(
     /**
      * Shared round-up computation for ROUND_UP and SPARE_CHANGE.
      *
-     * Works in the amount's own currency (no conversion). The amount is first
-     * normalised to cents (HALF_UP, 2 dp) and the remainder is computed with
-     * [BigDecimal] so binary-float artefacts (for example 3.40 % 1.0) cannot leak
-     * into the saved amount. The saved amount is `roundedTarget - amount`,
-     * rounded HALF_UP to 2 dp. Returns null when [amount] or [increment] is not a
-     * positive finite number, when the amount already sits on the increment, or
-     * when the saved amount rounds to zero.
+     * Works in the amount's own currency (no conversion) using that currency's
+     * minor-unit digits ([CurrencyFractionDigits]: 0 for JPY/KRW, 2 for EUR, 3 for
+     * BHD). The amount is first normalised to those digits (HALF_UP) and the
+     * remainder is computed with [BigDecimal] so binary-float artefacts (for
+     * example 3.40 % 1.0) cannot leak into the saved amount. The saved amount is
+     * `roundedTarget - amount`, rounded HALF_UP to the currency digits. Returns
+     * null (fail closed, no suggestion) when the currency code is malformed or its
+     * digits are unavailable, when [amount] or [increment] is not a positive
+     * finite number, when the amount already sits on the increment (including
+     * whole-unit amounts in 0-digit currencies), or when the saved amount rounds
+     * to zero.
      */
-    private fun computeRoundUp(amount: Double, increment: Double): RoundUpComputation? {
+    private fun computeRoundUp(amount: Double, increment: Double, currencyCode: String): RoundUpComputation? {
         if (!amount.isFinite() || amount <= 0.0 || !increment.isFinite() || increment <= 0.0) {
             return null
         }
-        val amountCents = BigDecimal.valueOf(amount).setScale(2, RoundingMode.HALF_UP)
+        val code = CurrencyCode.parse(currencyCode) ?: return null
+        val digits = CurrencyFractionDigits.of(code) ?: return null
+        val amountScaled = BigDecimal.valueOf(amount).setScale(digits, RoundingMode.HALF_UP)
         val incrementDecimal = BigDecimal.valueOf(increment)
-        if (amountCents.signum() <= 0 || incrementDecimal.signum() <= 0) {
+        if (amountScaled.signum() <= 0 || incrementDecimal.signum() <= 0) {
             return null
         }
-        val remainder = amountCents.remainder(incrementDecimal)
+        val remainder = amountScaled.remainder(incrementDecimal)
         if (remainder.signum() == 0) {
             return null
         }
-        val saved = incrementDecimal.subtract(remainder).setScale(2, RoundingMode.HALF_UP)
+        val saved = incrementDecimal.subtract(remainder).setScale(digits, RoundingMode.HALF_UP)
         if (saved.signum() <= 0) {
             return null
         }
-        val target = amountCents.add(incrementDecimal.subtract(remainder)).setScale(2, RoundingMode.HALF_UP)
+        val target = amountScaled.add(incrementDecimal.subtract(remainder)).setScale(digits, RoundingMode.HALF_UP)
         return RoundUpComputation(savedAmount = saved.toDouble(), roundedTarget = target.toDouble())
     }
 
@@ -236,11 +245,12 @@ class AutomatedSavingsRuleEngine @Inject constructor(
             return null
         }
 
-        val roundUp = computeRoundUp(candidateAmount, SPARE_CHANGE_UNIT) ?: return null
+        val currencyCode = expense.currency
+        val roundUp = computeRoundUp(candidateAmount, SPARE_CHANGE_UNIT, currencyCode) ?: return null
         return RuleExecution(
             rule = rule,
             amount = roundUp.savedAmount,
-            reason = "Spare change: ${expense.merchant} ${CurrencyFormatter.formatMoney(roundUp.savedAmount, displayCurrency)}",
+            reason = "Spare change: ${expense.merchant} ${CurrencyFormatter.formatMoney(roundUp.savedAmount, currencyCode)}",
             timestamp = timeProvider.now()
         )
     }

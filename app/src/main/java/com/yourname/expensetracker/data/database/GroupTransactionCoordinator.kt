@@ -112,7 +112,7 @@ class GroupTransactionCoordinator @Inject constructor(
             "Linked system expense is already attached to a group expense"
 
         /** Refund-netting INV-19: a refund-linked expense (netted amount > 0) cannot be group-linked. Bounded code. */
-        const val REFUND_LINKED_MESSAGE = "REFUND_LINKED"
+        const val REFUND_LINKED_MESSAGE = GroupExpenseCreationResult.Error.REFUND_LINKED
     }
 
     /**

@@ -6,6 +6,7 @@ import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.repository.NotificationRepository
 import com.yourname.expensetracker.di.IoDispatcher
 import com.yourname.expensetracker.domain.model.UiText
+import com.yourname.expensetracker.domain.parser.AppParserRegistry
 import com.yourname.expensetracker.ui.util.guardedWrite
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CoroutineDispatcher
@@ -37,7 +38,9 @@ data class AppsToSkipUiState(
     val blocked: List<SkipAppItem> = emptyList(),
     val candidates: List<SkipAppItem> = emptyList(),
     val inFlight: Set<String> = emptySet(),
-    val loadFailed: Boolean = false
+    val loadFailed: Boolean = false,
+    /** App awaiting the user's confirmation because it has a bank parser; null when no dialog is pending. */
+    val pendingBlockConfirm: SkipAppItem? = null
 )
 
 /**
@@ -52,10 +55,12 @@ data class AppsToSkipUiState(
 class AppsToSkipViewModel @Inject constructor(
     private val repository: NotificationRepository,
     private val labelResolver: AppLabelResolver,
+    private val parserRegistry: AppParserRegistry,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) : ViewModel() {
 
     private val inFlight = MutableStateFlow<Set<String>>(emptySet())
+    private val pendingBlockPackage = MutableStateFlow<String?>(null)
 
     private val _messages = MutableSharedFlow<UiText>(extraBufferCapacity = 1)
     val messages: SharedFlow<UiText> = _messages.asSharedFlow()
@@ -63,15 +68,17 @@ class AppsToSkipViewModel @Inject constructor(
     val uiState: StateFlow<AppsToSkipUiState> = combine(
         repository.getBlockedPackages(),
         repository.getAllPackages(),
-        inFlight
-    ) { blockedRows, seenPackages, busy ->
+        inFlight,
+        pendingBlockPackage
+    ) { blockedRows, seenPackages, busy, pending ->
         val blockedNames = blockedRows.map { it.packageName }.distinct()
         val blockedSet = blockedNames.toSet()
         AppsToSkipUiState(
             isLoading = false,
             blocked = blockedNames.toItems(),
             candidates = seenPackages.distinct().filterNot { it in blockedSet }.toItems(),
-            inFlight = busy
+            inFlight = busy,
+            pendingBlockConfirm = pending?.let { SkipAppItem(packageName = it, label = labelResolver.label(it)) }
         )
     }
         .flowOn(ioDispatcher)
@@ -81,8 +88,33 @@ class AppsToSkipViewModel @Inject constructor(
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AppsToSkipUiState())
 
-    /** Skip notifications from [packageName] from now on. Already-queued rows are dropped by the worker. */
-    fun block(packageName: String) = runWrite(packageName) { repository.blockPackage(packageName) }
+    /**
+     * Skip notifications from [packageName] from now on. Already-queued rows are dropped by the worker.
+     * When the app has a dedicated bank parser nothing is written yet: the package is held as
+     * [AppsToSkipUiState.pendingBlockConfirm] until [confirmPendingBlock] or [dismissPendingBlock].
+     */
+    fun block(packageName: String) {
+        if (packageName in inFlight.value) return
+        if (parserRegistry.hasParserFor(packageName)) {
+            pendingBlockPackage.value = packageName
+            return
+        }
+        blockNow(packageName)
+    }
+
+    /** The user confirmed the warning: skip the pending app. */
+    fun confirmPendingBlock() {
+        val packageName = pendingBlockPackage.value ?: return
+        pendingBlockPackage.value = null
+        blockNow(packageName)
+    }
+
+    /** The user cancelled the warning: nothing is written. */
+    fun dismissPendingBlock() {
+        pendingBlockPackage.value = null
+    }
+
+    private fun blockNow(packageName: String) = runWrite(packageName) { repository.blockPackage(packageName) }
 
     /** Capture notifications from [packageName] again. */
     fun unblock(packageName: String) = runWrite(packageName) { repository.unblockPackage(packageName) }

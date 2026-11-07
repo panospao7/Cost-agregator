@@ -12,6 +12,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -63,6 +64,23 @@ fun AppsToSkipScreen(
         viewModel.messages.collect { message ->
             snackbarHostState.showSnackbar(message.asString(currentContext))
         }
+    }
+    state.pendingBlockConfirm?.let { pending ->
+        AlertDialog(
+            onDismissRequest = viewModel::dismissPendingBlock,
+            title = { Text(stringResource(R.string.capture_skip_confirm_title)) },
+            text = { Text(stringResource(R.string.capture_skip_confirm_message_format, pending.label)) },
+            confirmButton = {
+                TextButton(onClick = viewModel::confirmPendingBlock) {
+                    Text(stringResource(R.string.capture_skip_confirm_action))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = viewModel::dismissPendingBlock) {
+                    Text(stringResource(R.string.capture_skip_confirm_cancel))
+                }
+            }
+        )
     }
     Scaffold(
         containerColor = SemanticColors.BaseNavy,

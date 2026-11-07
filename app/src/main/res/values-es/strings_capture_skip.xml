@@ -29,4 +29,12 @@
     <string name="capture_skip_error_generic">No se pudo actualizar la lista. Inténtalo de nuevo.</string>
     <!-- capture_skip_load_failed: DRAFT: owner native sign-off pending -->
     <string name="capture_skip_load_failed">No se pudo cargar la lista de apps.</string>
+    <!-- capture_skip_confirm_title: DRAFT: owner native sign-off pending -->
+    <string name="capture_skip_confirm_title">¿Omitir esta app?</string>
+    <!-- capture_skip_confirm_message_format: DRAFT: owner native sign-off pending -->
+    <string name="capture_skip_confirm_message_format">%1$s envía notificaciones bancarias que esta app puede leer. Si la omites, esas notificaciones bancarias dejarán de capturarse.</string>
+    <!-- capture_skip_confirm_action: DRAFT: owner native sign-off pending -->
+    <string name="capture_skip_confirm_action">Omitir de todos modos</string>
+    <!-- capture_skip_confirm_cancel: DRAFT: owner native sign-off pending -->
+    <string name="capture_skip_confirm_cancel">Cancelar</string>
 </resources>

@@ -29,8 +29,8 @@ class ImportCoordinator @Inject constructor(
      * RP-19 (19-D): the CSV leg now surfaces per-row errors (previously they
      * were dropped, leaving callers with a bare error count). Error strings
      * use the same `Row <n>: <reason>` convention as the JSON leg, where
-     * `<n>` is the 0-based data-row index (header/comment/blank rows
-     * excluded). CSV reasons are bounded [CsvImportFailureCode] names —
+     * `<n>` is the 1-based data-row number (header/comment/blank rows
+     * excluded), matching the CSV_IMPORT source-link `csvRowNumber`. CSV reasons are bounded [CsvImportFailureCode] names —
      * never file paths, exception messages or raw user payloads.
      */
     suspend fun importFromContent(content: String, fileImportRunId: Long? = null): ImportResult {
@@ -41,7 +41,7 @@ class ImportCoordinator @Inject constructor(
                     is CsvExpenseImporter.ImportResult.Success -> {
                         val errors = r.perRowResults.mapIndexedNotNull { index, row ->
                             when (row) {
-                                is CsvExpenseImporter.RowResult.Failed -> "Row $index: ${row.code.name}"
+                                is CsvExpenseImporter.RowResult.Failed -> "Row ${index + 1}: ${row.code.name}"
                                 else -> null
                             }
                         }

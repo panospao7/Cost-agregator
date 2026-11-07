@@ -46,7 +46,7 @@ data class InstallmentActionTarget(
 enum class InstallmentOperation { RECORD, LINK, SKIP, ADJUST, UNSKIP, UNDO_SKIP, UNDO_LINK, UNDO_ADJUST }
 
 /** Bounded non-input failure codes of an action (INV-31). The text comes from fixed strings. */
-enum class InstallmentActionFailureCode { CONFLICT, NOT_FOUND, RECORD_FAILED, UNEXPECTED }
+enum class InstallmentActionFailureCode { CONFLICT, NOT_FOUND, RECORD_FAILED, REFUND_LINKED, UNEXPECTED }
 
 /** State of the running action: idle / in progress / success / refused(code) / failed(code). */
 sealed interface InstallmentMutationState {
@@ -187,6 +187,7 @@ object InstallmentActionMessages {
         InstallmentActionFailureCode.CONFLICT -> R.string.installments_action_failed_conflict
         InstallmentActionFailureCode.NOT_FOUND -> R.string.installments_action_failed_not_found
         InstallmentActionFailureCode.RECORD_FAILED -> R.string.installments_action_failed_record
+        InstallmentActionFailureCode.REFUND_LINKED -> R.string.installments_action_failed_refund_linked
         InstallmentActionFailureCode.UNEXPECTED -> R.string.installments_action_failed_unexpected
     }
 
@@ -201,8 +202,8 @@ object InstallmentActionMessages {
         InstallmentOpFailure.RECORD_INSERT_CONFLICT -> InstallmentActionFailureCode.RECORD_FAILED
         InstallmentOpFailure.PURCHASE_DUPLICATE_SKIPPED,
         InstallmentOpFailure.PURCHASE_INSERT_CONFLICT,
-        InstallmentOpFailure.PURCHASE_CREATE_FAILED,
-        InstallmentOpFailure.REFUND_LINKED -> InstallmentActionFailureCode.UNEXPECTED
+        InstallmentOpFailure.PURCHASE_CREATE_FAILED -> InstallmentActionFailureCode.UNEXPECTED
+        InstallmentOpFailure.REFUND_LINKED -> InstallmentActionFailureCode.REFUND_LINKED
     }
 
     fun noticeText(notice: InstallmentActionNotice): Int = when (notice) {

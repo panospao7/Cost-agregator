@@ -15,4 +15,8 @@
     <string name="capture_skip_cd_resume_format">Capture notifications from %1$s again</string>
     <string name="capture_skip_error_generic">Could not update the list. Please try again.</string>
     <string name="capture_skip_load_failed">Could not load the list of apps.</string>
+    <string name="capture_skip_confirm_title">Skip this app?</string>
+    <string name="capture_skip_confirm_message_format">%1$s sends bank notifications that this app can read. If you skip it, those bank notifications will no longer be captured.</string>
+    <string name="capture_skip_confirm_action">Skip anyway</string>
+    <string name="capture_skip_confirm_cancel">Cancel</string>
 </resources>

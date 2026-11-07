@@ -201,6 +201,12 @@ class AppParserRegistry @Inject constructor(
         }
     }
 
+    /**
+     * Read-only, pure lookup: true when a dedicated (app-specific) parser is registered for
+     * [packageName]. The generic fallback parser does not count. Does not parse, log or mutate.
+     */
+    fun hasParserFor(packageName: String): Boolean = packageToParserMap.containsKey(packageName)
+
     @Deprecated(
         "Uses the home-currency snapshot taken when GreekBankParser was constructed. " +
             "Use parseWithProvenance(), which resolves the current home currency per call.",

@@ -345,8 +345,15 @@ class SharedExpenseGroupsViewModel @Inject constructor(
                     }
                     is GroupExpenseCreationResult.Error -> {
                         // Same as create group: Error.message may carry exception text and is
-                        // not typed, so only the fixed message is shown.
-                        postMutationError("Failed to add expense")
+                        // not typed, so only fixed messages are shown; the one bounded code
+                        // (REFUND_LINKED) gets its own fixed message.
+                        postMutationError(
+                            if (result.message == GroupExpenseCreationResult.Error.REFUND_LINKED) {
+                                REFUND_LINKED_ADD_EXPENSE_MESSAGE
+                            } else {
+                                "Failed to add expense"
+                            }
+                        )
                     }
                 }
             } catch (e: Exception) {
@@ -501,6 +508,8 @@ class SharedExpenseGroupsViewModel @Inject constructor(
 
     private companion object {
         const val TAG = "SharedExpenseGroupsVM"
+        const val REFUND_LINKED_ADD_EXPENSE_MESSAGE =
+            "This expense is linked to a refund, so it can't be added to a group. Remove the refund link first."
     }
 
     private sealed class CustomSplitPayload {

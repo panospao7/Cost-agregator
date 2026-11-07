@@ -45,4 +45,5 @@
     <string name="refund_unlink_body_remaining_format">The %1$s refund will count as income again, and %2$s will show %3$s in its month and category.</string>
     <string name="transactions_refund_linked_locked">This transaction is linked to a refund, so its amount, currency and type can\'t be changed. Remove the link first.</string>
     <string name="transactions_delete_refund_linked_note">This transaction is linked to a refund. Deleting it removes the link, and the other transaction goes back to its full amount.</string>
+    <string name="installments_action_failed_refund_linked">This purchase is linked to a refund, so it can\'t be used for an installment plan. Remove the refund link first. Nothing was changed.</string>
 </resources>

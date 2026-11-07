@@ -89,4 +89,6 @@
     <string name="transactions_refund_linked_locked">Αυτή η συναλλαγή συνδέεται με επιστροφή, επομένως δεν μπορούν να αλλάξουν το ποσό, το νόμισμα και ο τύπος της. Αφαιρέστε πρώτα τη σύνδεση.</string>
     <!-- transactions_delete_refund_linked_note: DRAFT: owner native sign-off pending -->
     <string name="transactions_delete_refund_linked_note">Αυτή η συναλλαγή συνδέεται με επιστροφή. Η διαγραφή της αφαιρεί τη σύνδεση και η άλλη συναλλαγή επανέρχεται στο πλήρες ποσό της.</string>
+    <!-- installments_action_failed_refund_linked: DRAFT: owner native sign-off pending -->
+    <string name="installments_action_failed_refund_linked">Αυτή η αγορά συνδέεται με επιστροφή, επομένως δεν μπορεί να χρησιμοποιηθεί σε πλάνο δόσεων. Αφαιρέστε πρώτα τη σύνδεση επιστροφής. Δεν άλλαξε τίποτα.</string>
 </resources>
