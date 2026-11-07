@@ -28,6 +28,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -79,13 +80,13 @@ class RefundLinkViewModelTest : ViewModelTestUtils() {
     }
 
     private fun kotlinx.coroutines.test.TestScope.collectErrors(into: MutableList<UiText>) =
-        backgroundScope.launch { model.error.collect { into += it } }
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { model.error.collect { into += it } }
 
     private fun kotlinx.coroutines.test.TestScope.collectSuccess(into: MutableList<UiText>) =
-        backgroundScope.launch { model.successMessage.collect { into += it } }
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { model.successMessage.collect { into += it } }
 
     private fun kotlinx.coroutines.test.TestScope.collectRefresh(into: MutableList<Unit>) =
-        backgroundScope.launch { model.refreshRequests.collect { into += it } }
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { model.refreshRequests.collect { into += it } }
 
     private suspend fun kotlinx.coroutines.test.TestScope.openAndSelect() {
         model.openPicker(deposit)
@@ -381,8 +382,8 @@ class RefundLinkViewModelTest : ViewModelTestUtils() {
             coEvery { useCase.link(1L, 2L) } returns RefundLinkResult.Refused(code)
             val errors = mutableListOf<UiText>()
             val success = mutableListOf<UiText>()
-            val job1 = backgroundScope.launch { vm.error.collect { errors += it } }
-            val job2 = backgroundScope.launch { vm.successMessage.collect { success += it } }
+            val job1 = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.error.collect { errors += it } }
+            val job2 = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.successMessage.collect { success += it } }
             runCurrent()
             vm.openPicker(deposit)
             advanceUntilIdle()

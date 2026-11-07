@@ -5,7 +5,12 @@ import android.content.Context
 import androidx.activity.ComponentActivity
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Column
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.and
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -37,7 +42,7 @@ import org.robolectric.annotation.Config
  * formatter so each shows its own currency.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34])
+@Config(sdk = [34], qualifiers = "w400dp-h900dp")
 class TransactionsRefundUiTest {
 
     /** Same registration as the sibling Compose tests: ui-test-manifest is not on the release unit-test variant. */
@@ -260,7 +265,7 @@ class TransactionsRefundUiTest {
         var retried = 0
         showPicker(RefundPickerUiState.Unavailable(depositRef), onRetry = { retried++ })
         shows(s(R.string.refund_picker_unavailable))
-        composeRule.onNodeWithText("Retry").performClick()
+        composeRule.onAllNodes(hasClickAction() and hasText("Retry"))[0].performSemanticsAction(SemanticsActions.OnClick)
         composeRule.runOnIdle { assertEquals(1, retried) }
         composeRule.onAllNodesWithText("No matching purchases found", substring = true, useUnmergedTree = true).assertCountEquals(0)
     }
@@ -284,7 +289,8 @@ class TransactionsRefundUiTest {
         val selected = mutableListOf<RefundCandidateRowUi>()
         val only = row(2L, "Synthetic Alpha")
         showPicker(RefundPickerUiState.Content(depositRef, listOf(only)), onSelect = { selected += it })
-        composeRule.onAllNodesWithText("Synthetic Alpha", useUnmergedTree = true)[0].performClick()
+        composeRule.onAllNodes(hasClickAction() and hasText("Synthetic Alpha", substring = true))[0]
+            .performSemanticsAction(SemanticsActions.OnClick)
         composeRule.runOnIdle { assertEquals(listOf(only), selected) }
     }
 
@@ -357,7 +363,7 @@ class TransactionsRefundUiTest {
         shows(m(100.0))
         shows(m(40.0))
         shows(m(60.0))
-        composeRule.onNodeWithText("Remove link").performClick()
+        composeRule.onAllNodes(hasClickAction() and hasText("Remove link"))[0].performSemanticsAction(SemanticsActions.OnClick)
         composeRule.runOnIdle { assertEquals(listOf(linkRow), removed) }
     }
 
