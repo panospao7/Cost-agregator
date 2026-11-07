@@ -1340,7 +1340,8 @@ class AnalyticsViewModel @Inject constructor(
                 null -> null
             },
             notes = notes,
-            spendingExclusionReason = spendingExclusionReason
+            spendingExclusionReason = spendingExclusionReason,
+            refundNettedAmount = refundNettedAmount
         )
     }
 

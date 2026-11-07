@@ -71,7 +71,15 @@ data class ExportTransaction(
      * [ExportInstallmentMarker.isInstallmentFlagged] (generic CSV/JSON, PDF and business report mark them instead);
      * never written to any output column.
      */
-    val spendingExclusionReason: String? = null
+    val spendingExclusionReason: String? = null,
+
+    // ── Refund netting (refund-netting INV-6) ─────────────────────
+    /**
+     * Stored `refundNettedAmount` of the source expense (0.0 = no refund link), in [currency].
+     * DTO carry only: [effectiveAmount] is already net of it. No export column is written for it
+     * until refund-netting S4.
+     */
+    val refundNettedAmount: Double = 0.0
 ) {
     /**
      * True when this row carries no usable conversion (see [isNoRateConversionSentinel]).

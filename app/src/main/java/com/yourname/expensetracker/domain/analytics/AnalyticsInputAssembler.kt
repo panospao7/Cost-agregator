@@ -122,7 +122,8 @@ class AnalyticsInputAssembler @Inject constructor(
                 rateSource = normExp.rateSource,
                 conversionPath = normExp.conversionPath,
                 qualityWarning = normExp.qualityWarning,
-                spendingExclusionReason = snap.spendingExclusionReason
+                spendingExclusionReason = snap.spendingExclusionReason,
+                refundNettedAmount = snap.refundNettedAmount
             )
         }
 

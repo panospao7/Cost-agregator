@@ -317,7 +317,8 @@ private fun Expense.toNormalizedExpense(
         rateValidDate = rateValidDate,
         rateLastUpdated = rateLastUpdated,
         conversionPath = path.name,
-        spendingExclusionReason = spendingExclusionReason
+        spendingExclusionReason = spendingExclusionReason,
+        refundNettedAmount = refundNettedAmount
     )
 }
 
