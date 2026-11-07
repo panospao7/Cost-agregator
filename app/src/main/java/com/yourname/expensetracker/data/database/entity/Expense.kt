@@ -165,8 +165,8 @@ data class Expense(
      * this row's side, in this row's currency. 0.0 means no link. On a PURCHASE it is the refunds
      * received; on a DEPOSIT it is the part applied to purchases. Denormalised: the link table is
      * the source of truth (refund-netting INV-1). Intentionally NOT indexed. Written only by
-     * TransactionLifecycleCoordinator (through ExpenseDao.updateRefundNettedAmount). It does not
-     * yet affect [effectiveAmount] (the formula switch is a later slice).
+     * TransactionLifecycleCoordinator (through ExpenseDao.updateRefundNettedAmount). It nets
+     * [effectiveAmount] (refund-netting INV-6) and the snapshot value (INV-7).
      */
     @ColumnInfo(defaultValue = "0.0") val refundNettedAmount: Double = 0.0
 ) {
@@ -178,6 +178,8 @@ data class Expense(
      * - If isSharedExpense + myShareAmount set: the explicit per-person amount
      * - If isSharedExpense + mySharePercentage set: proportional share of the full amount
      * - Otherwise: full amount
+     * - With [refundNettedAmount] > 0 the amount above is first reduced by the refund (shared
+     *   fixed share scaled by net/gross, percentage taken on the net), never below 0.0
      *
      * All calculations (totals, budgets, analytics, forecasting) must use this
      * instead of `amount` to correctly handle shared and not-mine expenses.
@@ -188,10 +190,20 @@ data class Expense(
     val effectiveAmount: Double
         get() = when {
             spendingExclusionReason != null -> 0.0
+            // Refund netting (refund-netting INV-6; SQL mirror SpendingInclusionSql.EFFECTIVE_AMOUNT):
+            // a row with no refund takes today's expression unchanged. Otherwise the refund reduces
+            // the gross amount first and the user's share is taken from the net gross, never below 0.
+            !(refundNettedAmount > 0.0) -> when {
+                isNotMine -> 0.0
+                isSharedExpense && myShareAmount != null -> myShareAmount
+                isSharedExpense && mySharePercentage != null -> amount * mySharePercentage / 100.0
+                else -> amount
+            }
             isNotMine -> 0.0
-            isSharedExpense && myShareAmount != null -> myShareAmount
-            isSharedExpense && mySharePercentage != null -> amount * mySharePercentage / 100.0
-            else -> amount
+            refundNettedAmount >= amount -> 0.0
+            isSharedExpense && myShareAmount != null -> myShareAmount * (amount - refundNettedAmount) / amount
+            isSharedExpense && mySharePercentage != null -> (amount - refundNettedAmount) * mySharePercentage / 100.0
+            else -> amount - refundNettedAmount
         }
 
     /**

@@ -2287,7 +2287,7 @@ ENFORCEMENT:
     that op is the implementation, not a second caller
   • config/guards/db_ownership_policy.yml entries for the plan DAOs and the new TLC op (S2/S3)
   • Registered static guard spending_predicate_usage (S4d; scripts/verify_spending_predicate_usage.py,
-    rules G-SPENDING-PREDICATE-01..04; no allowlist, no baseline): every aggregate @Query over the
+    rules G-SPENDING-PREDICATE-01..05; no allowlist, no baseline): every aggregate @Query over the
     expenses table in a production data/database/dao file references a qualified
     SpendingInclusionSql.{SPENDING_PREDICATE, SPENDING_PREDICATE_E, EFFECTIVE_AMOUNT, EFFECTIVE_AMOUNT_E}
     or carries a "// spending-exempt: <REASON>" line comment above the @Query (REASON in
@@ -2297,7 +2297,10 @@ ENFORCEMENT:
     construction site and @RawQuery DAO method in production Kotlin needs an exact entry (file, enclosing
     function, DAO method, selectClause literal) in config/guards/spending_raw_query_builders.yml; a new,
     changed, stale or miscounted builder fails, and buildExpenseDynamicQueryParts must keep referencing
-    EFFECTIVE_AMOUNT_E_SQL and COMPARABLE_HOME_VALUE_E_SQL. An empty DAO surface or a missing/malformed pin
+    EFFECTIVE_AMOUNT_E_SQL and COMPARABLE_HOME_VALUE_E_SQL. Rule 05 (refund-netting INV-9, no marker or
+    allowlist): no @Query may pass the inner ExpenseDao.EFFECTIVE_AMOUNT_SQL / EFFECTIVE_AMOUNT_E_SQL directly
+    to SUM/AVG/TOTAL/MIN/MAX; totals use the netted SpendingInclusionSql.EFFECTIVE_AMOUNT / EFFECTIVE_AMOUNT_E.
+    An empty DAO surface or a missing/malformed pin
     file exits 2. "--report" lists every classified query
   • Spending-predicate parity tests (S3/S4)
 ```

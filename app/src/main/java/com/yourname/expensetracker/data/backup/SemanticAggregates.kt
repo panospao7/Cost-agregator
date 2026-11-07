@@ -354,6 +354,39 @@ object SemanticAggregates {
         )
     )
 
+    /**
+     * Definition hashes written by earlier builds that stay comparable (INV-10). Refund netting changed
+     * the text of the spending value expression; a manifest written before it carries the old hash. The
+     * old and new expressions are equal on every row with `refundNettedAmount = 0.0`, which is every
+     * row of a database that was migrated up from schema 152 or below, so such a manifest is compared
+     * (not reported DEFINITION_CHANGED). The legacy value text is the frozen
+     * [SpendingInclusionSql.EFFECTIVE_AMOUNT_PRE_REFUND_NETTING]. The income aggregate keeps the inner
+     * constant and did not change.
+     *
+     * The legacy definition is also the one that is QUERIED for such a manifest: the current spending
+     * SQL references `refundNettedAmount`, which does not exist in a schema-152 database that is verified
+     * before its Room migration, whereas the legacy SQL runs on both 152 and later schemas.
+     */
+    private val LEGACY_DEFINITIONS: Map<SemanticAggregateId, Map<String, AggregateDefinition>> = mapOf(
+        SemanticAggregateId.SPENDING_EFFECTIVE_BY_CURRENCY to listOf(
+            AggregateDefinition(
+                id = SemanticAggregateId.SPENDING_EFFECTIVE_BY_CURRENCY,
+                table = "expenses",
+                keyColumns = listOf("currency"),
+                filterSql = SPENDING_TYPE_SQL,
+                valueSql = SpendingInclusionSql.EFFECTIVE_AMOUNT_PRE_REFUND_NETTING
+            )
+        ).associateBy { it.definitionHash }
+    )
+
+    /** The accepted legacy definition of [id] whose hash is [hash], or null. */
+    private fun legacyDefinitionOf(id: SemanticAggregateId, hash: String): AggregateDefinition? =
+        LEGACY_DEFINITIONS[id]?.get(hash)
+
+    /** True when [hash] is the current definition hash of [id] or one of its accepted legacy hashes. */
+    internal fun isAcceptedDefinitionHash(id: SemanticAggregateId, hash: String): Boolean =
+        hash == definitionOf(id).definitionHash || legacyDefinitionOf(id, hash) != null
+
     /** The current definition hash of [id]. */
     fun definitionHash(id: SemanticAggregateId): String = definitionOf(id).definitionHash
 
@@ -379,8 +412,19 @@ object SemanticAggregates {
     fun capture(db: SQLiteDatabase, tableCounts: Map<String, Int>): SemanticAggregateSet {
         return try {
             val aggregates = LinkedHashMap<SemanticAggregateId, AggregateEntry>()
+            val hasRefundNetting = expensesHasColumn(db, REFUND_NETTED_COLUMN)
             for (definition in registry) {
-                aggregates[definition.id] = AggregateEntry(definition.definitionHash, readBuckets(db, definition))
+                // A schema without the refund-netting column (a pre-153 database captured at its start
+                // version) is queried with the frozen pre-netting spending value. The two expressions
+                // are equal while refundNettedAmount = 0.0, which is every row of such a schema (and of
+                // the same rows after migration), so the entry keeps the CURRENT definition hash and the
+                // pre/post-migration captures stay comparable entry for entry (INV-10).
+                val queried = if (!hasRefundNetting) {
+                    LEGACY_DEFINITIONS[definition.id]?.values?.firstOrNull() ?: definition
+                } else {
+                    definition
+                }
+                aggregates[definition.id] = AggregateEntry(definition.definitionHash, readBuckets(db, queried))
             }
             if (!conservationHolds(aggregates, tableCounts)) {
                 SemanticAggregateSet.ofNotCaptured(SemanticNotCapturedReason.SEMANTIC_CAPTURE_FAILED)
@@ -394,6 +438,12 @@ object SemanticAggregates {
             SemanticAggregateSet.ofNotCaptured(SemanticNotCapturedReason.SEMANTIC_CAPTURE_FAILED)
         }
     }
+
+    private const val REFUND_NETTED_COLUMN = "refundNettedAmount"
+
+    /** True when `expenses` has [column]. Zero-row projection read; no PRAGMA text, no user data. */
+    private fun expensesHasColumn(db: SQLiteDatabase, column: String): Boolean =
+        db.query("expenses", null, null, null, null, null, null, "0").use { it.getColumnIndex(column) >= 0 }
 
     private fun conservationHolds(
         aggregates: Map<SemanticAggregateId, AggregateEntry>,
@@ -610,12 +660,19 @@ object SemanticAggregates {
             val id = definition.id
             val entry = expected.aggregates[id]
                 ?: return SemanticCheckResult.Failed(checkpoint, SemanticCode.SEMANTIC_MANIFEST_MALFORMED, id, 0)
-            if (id in definitionChanged || entry.definitionHash != definition.definitionHash) {
+            if (id in definitionChanged || !isAcceptedDefinitionHash(id, entry.definitionHash)) {
                 if (firstNotVerifiable == null) firstNotVerifiable = SemanticNotVerifiableReason.DEFINITION_CHANGED
                 continue
             }
+            // A legacy-hash manifest is verified with its own frozen definition (INV-10), so the query
+            // never references columns that a pre-migration source database does not have.
+            val queried = if (entry.definitionHash == definition.definitionHash) {
+                definition
+            } else {
+                legacyDefinitionOf(id, entry.definitionHash) ?: definition
+            }
             val actual = try {
-                actualBuckets(definition)
+                actualBuckets(queried)
             } catch (e: BucketLimitExceeded) {
                 // The expectation holds at most 256 buckets, so a larger actual aggregate cannot match.
                 return SemanticCheckResult.Failed(

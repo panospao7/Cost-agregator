@@ -117,7 +117,7 @@ class MultiCurrencyRepository @Inject constructor(
      * **LATEST-RATE:** Get total expenses between dates, converted to home currency.
      *
      * Uses type-agnostic aggregate DAO helper [ExpenseDao.getAllSpentBetweenByCurrency]
-     * so that the DB does the per-currency grouping with [ExpenseDao.EFFECTIVE_AMOUNT_SQL],
+     * so that the DB does the per-currency grouping with [SpendingInclusionSql.EFFECTIVE_AMOUNT],
      * and only the per-currency totals are converted — no uncapped row scan needed.
      *
      * This method is intentionally **type-agnostic** (includes all transaction types),
@@ -159,7 +159,7 @@ class MultiCurrencyRepository @Inject constructor(
      * **LATEST-RATE:** Get expenses grouped by currency.
      *
      * Uses type-agnostic aggregate DAO helper [ExpenseDao.getAllSpentBetweenByCurrency]
-     * which groups by `UPPER(currency)` and sums [ExpenseDao.EFFECTIVE_AMOUNT_SQL] —
+     * which groups by `UPPER(currency)` and sums [SpendingInclusionSql.EFFECTIVE_AMOUNT] —
      * no uncapped row scan needed.
      *
      * Intentionally **type-agnostic**, preserving pre-A.10 semantics.
