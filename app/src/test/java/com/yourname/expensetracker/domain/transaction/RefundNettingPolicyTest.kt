@@ -243,6 +243,32 @@ class RefundNettingPolicyTest {
     }
 
     @Test
+    fun `INV-19 a purchase linked to an installment plan is refused as INSTALLMENT_MANAGED`() {
+        assertRefused(
+            RefundLinkRefusal.INSTALLMENT_MANAGED,
+            decide(deposit(), purchase(), purchaseInstallmentLinked = true)
+        )
+    }
+
+    @Test
+    fun `INV-19 a refund linked to an installment plan is refused as INSTALLMENT_MANAGED`() {
+        assertRefused(
+            RefundLinkRefusal.INSTALLMENT_MANAGED,
+            decide(deposit(), purchase(), refundInstallmentLinked = true)
+        )
+    }
+
+    @Test
+    fun `INV-19 control - neither side installment linked leaves the decision unchanged`() {
+        assertApplied("40.00", 2, decide(deposit(), purchase()))
+        assertApplied(
+            "40.00",
+            2,
+            decide(deposit(), purchase(), refundInstallmentLinked = false, purchaseInstallmentLinked = false)
+        )
+    }
+
+    @Test
     fun `INV-19 group-linked rows are refused on either side (AE-11)`() {
         assertRefused(RefundLinkRefusal.GROUP_LINKED, decide(deposit(), purchase(), purchaseGroupLinked = true))
         assertRefused(RefundLinkRefusal.GROUP_LINKED, decide(deposit(), purchase(), refundGroupLinked = true))

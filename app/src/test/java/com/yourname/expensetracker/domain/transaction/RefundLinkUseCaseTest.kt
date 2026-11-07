@@ -116,7 +116,7 @@ class RefundLinkUseCaseTest {
 
     private fun stubPurchases(refund: Expense, purchases: List<Expense>) {
         coEvery { expenseDao.getById(refund.id) } returns refund
-        coEvery { expenseDao.getExpensesBetween(any(), any()) } returns purchases
+        coEvery { expenseDao.getRefundCandidatePurchasesBetween(any(), any()) } returns purchases
     }
 
     // ---- INV-16 delegation -------------------------------------------------------------------
@@ -203,7 +203,7 @@ class RefundLinkUseCaseTest {
         result as RefundCandidates.Available
         assertEquals(listOf(11L, 12L, 1L), result.items.map { it.purchaseId })
         verify { readBarrier.checkReadAllowed(any<String>()) }
-        coVerify(exactly = 1) { expenseDao.getExpensesBetween(any(), any()) }
+        coVerify(exactly = 1) { expenseDao.getRefundCandidatePurchasesBetween(any(), any()) }
     }
 
     @Test
@@ -214,7 +214,7 @@ class RefundLinkUseCaseTest {
         useCase.findCandidates(100L)
 
         coVerify {
-            expenseDao.getExpensesBetween(
+            expenseDao.getRefundCandidatePurchasesBetween(
                 refund.date - RefundLikelihoodDetector.WINDOW_MS,
                 refund.date + 24L * 60L * 60L * 1000L
             )
@@ -252,7 +252,7 @@ class RefundLinkUseCaseTest {
         coEvery { groupDao.existsForExpense(100L) } returns true
 
         assertEquals(RefundCandidates.Available(emptyList()), useCase.findCandidates(100L))
-        coVerify(exactly = 0) { expenseDao.getExpensesBetween(any(), any()) }
+        coVerify(exactly = 0) { expenseDao.getRefundCandidatePurchasesBetween(any(), any()) }
     }
 
     @Test
@@ -303,7 +303,7 @@ class RefundLinkUseCaseTest {
         val result = useCase.findCandidates(100L)
 
         assertEquals(RefundCandidates.Unavailable(RefundReadFailure.READ_BLOCKED), result)
-        coVerify(exactly = 0) { expenseDao.getExpensesBetween(any(), any()) }
+        coVerify(exactly = 0) { expenseDao.getRefundCandidatePurchasesBetween(any(), any()) }
     }
 
     @Test
@@ -323,7 +323,7 @@ class RefundLinkUseCaseTest {
 
         coEvery { expenseDao.getById(101L) } returns refundRow(id = 101L)
         coEvery { groupDao.existsForExpense(101L) } returns false
-        coEvery { expenseDao.getExpensesBetween(any(), any()) } throws IOException("io")
+        coEvery { expenseDao.getRefundCandidatePurchasesBetween(any(), any()) } throws IOException("io")
         assertEquals(RefundCandidates.Unavailable(RefundReadFailure.READ_FAILED), useCase.findCandidates(101L))
     }
 
