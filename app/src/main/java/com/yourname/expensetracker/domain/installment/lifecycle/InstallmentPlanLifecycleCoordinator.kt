@@ -360,6 +360,11 @@ class InstallmentPlanLifecycleCoordinator @Inject constructor(
         if (goneOnLink != null) return@writeTxn goneOnLink
         val facts = factsReader.findExpenseFacts(expenseId)
             ?: return@writeTxn InstallmentOpResult.Failed(InstallmentOpFailure.EXPENSE_NOT_FOUND)
+        // D-19, both directions: an expense that carries a refund netting cannot be claimed by an
+        // entry. Read inside this transaction; refused before any write.
+        if (facts.isRefundLinked) {
+            return@writeTxn InstallmentOpResult.Failed(InstallmentOpFailure.REFUND_LINKED)
+        }
         // Links of any entry status (PAID and REVERSED included) count for exclusivity.
         val relations = InstallmentLinkRelations.forExistingExpense(
             linkedInstallmentEntryId = planDao.getEntryByLinkedExpenseId(expenseId)?.id,
@@ -1260,9 +1265,12 @@ class InstallmentPlanLifecycleCoordinator @Inject constructor(
                 if (facts == null) {
                     if (planDao.updatePlanDetachedFromPurchaseIfLinkedTo(plan.id, purchaseId, now) == 1) r5++
                 } else if (facts.spendingExclusionReason != SpendingExclusionReason.INSTALLMENT_PURCHASE.name) {
+                    // Count a repair only when the flag write actually happened (not refused or no-op).
                     setPurchaseFlag(purchaseId, SpendingExclusionReason.INSTALLMENT_PURCHASE, abortIfMissing = false)
-                        ?.let { batches += it }
-                    r1++
+                        ?.let {
+                            batches += it
+                            r1++
+                        }
                 }
             }
 
@@ -1285,8 +1293,10 @@ class InstallmentPlanLifecycleCoordinator @Inject constructor(
                             if (applyReversedExpenseRemoved(plan, entry, now)) r2++
                         } else if (facts.spendingExclusionReason != SpendingExclusionReason.INSTALLMENT_REVERSED.name) {
                             setPurchaseFlag(linked, SpendingExclusionReason.INSTALLMENT_REVERSED, abortIfMissing = false)
-                                ?.let { batches += it }
-                            r3++
+                                ?.let {
+                                    batches += it
+                                    r3++
+                                }
                         }
                     }
                     else -> Unit

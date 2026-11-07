@@ -23,7 +23,9 @@ data class InstallmentExpenseFacts(
     val spendingExclusionReason: String?,
     val categoryId: Long?,
     val paymentMethod: PaymentMethod,
-    val linkedRecurringOccurrenceId: Long?
+    val linkedRecurringOccurrenceId: Long?,
+    /** true when the expense carries a refund netting (`refundNettedAmount > 0`, D-19). */
+    val isRefundLinked: Boolean = false
 ) {
     companion object {
         /**

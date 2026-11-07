@@ -131,6 +131,42 @@ class InstallmentPlanLifecycleCoordinatorRefundLinkedTest {
         assertEquals(0.0, nettedOf(purchase), 0.0)
     }
 
+    // ------------------------------------------------------------------ entry linking (other direction)
+
+    @Test
+    fun `INV-19 D-19 linkExpense of a refund-netted expense fails REFUND_LINKED and leaves the entry unchanged`() = runBlocking {
+        val (purchase, _) = refundLinkedPurchase()
+        val planId = fx.seedPlan(uuid = "rl-link-plan", entries = listOf(SeedEntry(1)))
+        val entryId = fx.entries(planId).single().id
+        val counts = fx.tableCounts()
+        val eventsBefore = fx.count("transaction_events")
+
+        val result = coordinator.linkExpense(entryId, purchase)
+
+        assertEquals(InstallmentOpResult.Failed(InstallmentOpFailure.REFUND_LINKED), result)
+        val entry = fx.entries(planId).single()
+        assertEquals("SCHEDULED", entry.status)
+        assertNull(entry.linkedExpenseId)
+        assertNull("the exclusion flag must not be written", fx.flagOf(purchase))
+        fx.assertTablesUnchanged(counts)
+        assertEquals(eventsBefore, fx.count("transaction_events"))
+        assertEquals(100.0, nettedOf(purchase), 0.0)
+        verify(exactly = 0) { fx.planner.planUpdated(any(), any(), any(), any()) }
+        assertEquals(0, fx.barrier.inFlightWriteCount())
+    }
+
+    @Test
+    fun `INV-19 D-19 control linkExpense of an unlinked purchase succeeds`() = runBlocking {
+        val purchase = fx.seedExpense(amount = 50.0)
+        val planId = fx.seedPlan(uuid = "rl-link-control", entries = listOf(SeedEntry(1)))
+        val entryId = fx.entries(planId).single().id
+
+        val result = coordinator.linkExpense(entryId, purchase)
+
+        assertTrue("Expected Done, got $result", result is InstallmentOpResult.Done)
+        assertEquals(purchase, fx.entries(planId).single().linkedExpenseId)
+    }
+
     // ------------------------------------------------------------------ REFUNDED-plan path
 
     @Test
@@ -139,8 +175,8 @@ class InstallmentPlanLifecycleCoordinatorRefundLinkedTest {
         val (planId, _) = ae1WithPaid(3, today)
         val paidExpenseIds = fx.entries(planId).filter { it.status == "PAID" }.map { it.linkedExpenseId!! }
         assertEquals(3, paidExpenseIds.size)
-        // Legacy or restored state that the link path itself would refuse: the last paid expense
-        // carries a refund netting while its plan is refunded.
+        // Legacy or restored state (linkExpense now refuses a refund-netted expense, but older data
+        // may predate that): the last paid expense carries a refund netting while its plan is refunded.
         fx.exec("UPDATE expenses SET refundNettedAmount = 10.0 WHERE id = ${paidExpenseIds.last()}")
         val statusesBefore = fx.entries(planId).map { it.status }
         val eventsBefore = fx.count("transaction_events")
@@ -189,6 +225,7 @@ class InstallmentPlanLifecycleCoordinatorRefundLinkedTest {
 
         assertTrue("reconcile must not fail, got $result", result is InstallmentOpResult.Done)
         assertTrue("no flag batch for a skipped flag", (result as InstallmentOpResult.Done).postCommit.isEmpty())
+        assertEquals("a skipped flag is not a repair", 0, result.value.r1Reflagged)
         assertNull("the flag is skipped, not forced", fx.flagOf(purchase))
         assertEquals(100.0, nettedOf(purchase), 0.0)
         assertEquals(100.0, nettedOf(deposit), 0.0)
@@ -218,6 +255,7 @@ class InstallmentPlanLifecycleCoordinatorRefundLinkedTest {
 
         assertTrue("reconcile must not fail, got $result", result is InstallmentOpResult.Done)
         assertTrue((result as InstallmentOpResult.Done).postCommit.isEmpty())
+        assertEquals("a skipped flag is not a repair", 0, result.value.r3Reflagged)
         assertNull(fx.flagOf(charge))
         assertEquals(20.0, nettedOf(charge), 0.0)
         assertEquals("REVERSED", fx.entries(planId).single().status)
@@ -238,6 +276,7 @@ class InstallmentPlanLifecycleCoordinatorRefundLinkedTest {
         val result = coordinator.reconcile()
 
         assertTrue(result is InstallmentOpResult.Done)
+        assertEquals(1, (result as InstallmentOpResult.Done).value.r1Reflagged)
         assertEquals(SpendingExclusionReason.INSTALLMENT_PURCHASE.name, fx.flagOf(purchase))
     }
 }

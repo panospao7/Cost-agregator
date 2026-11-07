@@ -36,7 +36,8 @@ class InstallmentExpenseFactsReaderImpl @Inject constructor(
             spendingExclusionReason = expense.spendingExclusionReason,
             categoryId = expense.categoryId,
             paymentMethod = expense.paymentMethod,
-            linkedRecurringOccurrenceId = recurringOccurrenceDao.getByLinkedExpenseId(expenseId)?.id
+            linkedRecurringOccurrenceId = recurringOccurrenceDao.getByLinkedExpenseId(expenseId)?.id,
+            isRefundLinked = expense.refundNettedAmount > 0.0
         )
     }
 
