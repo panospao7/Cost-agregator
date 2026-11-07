@@ -445,6 +445,25 @@ class InstallmentRecordDueEntriesTest {
         assertEquals("PAID", entry(planId, 2).status)
     }
 
+    @Test
+    fun AE17_D19_a_refund_netted_charge_in_the_window_does_not_defer_the_entry() = runTest {
+        val planId = candidatePlan()
+        val charge = fx.seedCharge(athensMillis(2027, 5, 9))
+        val deposit = fx.seedExpense(
+            amount = 10.0,
+            type = com.yourname.expensetracker.data.database.entity.TransactionType.DEPOSIT,
+            dateMillis = athensMillis(2027, 5, 9)
+        )
+        val linked = fx.tlc.linkRefund(deposit, charge)
+        assertTrue("fixture: expected Linked, got $linked", linked is com.yourname.expensetracker.domain.transaction.RefundLinkResult.Linked)
+
+        val done = runDue(day(2027, 5, 10))
+
+        assertTrue("a refund-netted charge can never be linked, so it must not defer", done.value.deferred.isEmpty())
+        assertEquals(1, done.value.recorded)
+        assertEquals("PAID", entry(planId, 2).status)
+    }
+
     // ------------------------------------------------------------------ AE-19 DST
 
     @Test

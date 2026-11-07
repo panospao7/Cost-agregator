@@ -9,6 +9,7 @@ import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentCoord
 import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentCoordinatorFixture.Companion.ATHENS
 import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentCoordinatorFixture.Companion.athensMillis
 import com.yourname.expensetracker.domain.installment.lifecycle.InstallmentCoordinatorFixture.Companion.day
+import com.yourname.expensetracker.domain.transaction.RefundLinkResult
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -201,6 +202,39 @@ class InstallmentCandidateChargeProbeImplTest {
             merchant = "Synthetic Cash Point"
         )
         assertFalse(hasCandidate(subject("CONFIRM")))
+    }
+
+    /** Links a synthetic DEPOSIT to [charge] through the real TLC, so the charge carries a refund netting (D-19). */
+    private suspend fun refundNet(charge: Long) {
+        val deposit = fx.seedExpense(
+            amount = 10.0,
+            type = TransactionType.DEPOSIT,
+            dateMillis = athensMillis(2027, 4, 11)
+        )
+        val linked = fx.tlc.linkRefund(deposit, charge)
+        assertTrue("fixture: expected Linked, got $linked", linked is RefundLinkResult.Linked)
+        assertEquals(10.0, fx.expenseDao.getById(charge)!!.refundNettedAmount, 0.0)
+    }
+
+    @Test
+    fun a_refund_netted_charge_is_not_a_candidate() = runBlocking {
+        val charge = chargeOn(4, 10)
+        refundNet(charge)
+        assertFalse(hasCandidate(subject("CONFIRM")))
+    }
+
+    @Test
+    fun a_refund_netted_charge_is_not_a_candidate_in_auto_record_mode() = runBlocking {
+        val charge = chargeOn(4, 10)
+        refundNet(charge)
+        assertFalse(hasCandidate(subject("AUTO_RECORD")))
+    }
+
+    @Test
+    fun parity_a_refund_netted_charge_is_neither_suggested_nor_a_candidate() = runBlocking {
+        val s = subject("AUTO_RECORD")
+        refundNet(chargeOn(4, 9))
+        assertSuggestionAndProbeAgree(s, expectedCandidate = false)
     }
 
     @Test

@@ -156,6 +156,24 @@ class InstallmentPlanLifecycleCoordinatorRefundLinkedTest {
     }
 
     @Test
+    fun `INV-19 D-19 linkExpense of a refund-netted expense already linked to the same entry stays a no-op`() = runBlocking {
+        val (purchase, _) = refundLinkedPurchase()
+        val planId = fx.seedPlan(
+            uuid = "rl-legacy-link",
+            entries = listOf(SeedEntry(1, status = "PAID", linkedExpenseId = purchase))
+        )
+        val entryId = fx.entries(planId).single().id
+        val counts = fx.tableCounts()
+
+        val result = coordinator.linkExpense(entryId, purchase)
+
+        assertTrue("Expected AlreadyInState, got $result", result is InstallmentOpResult.AlreadyInState)
+        assertEquals(purchase, fx.entries(planId).single().linkedExpenseId)
+        fx.assertTablesUnchanged(counts)
+        assertEquals(100.0, nettedOf(purchase), 0.0)
+    }
+
+    @Test
     fun `INV-19 D-19 control linkExpense of an unlinked purchase succeeds`() = runBlocking {
         val purchase = fx.seedExpense(amount = 50.0)
         val planId = fx.seedPlan(uuid = "rl-link-control", entries = listOf(SeedEntry(1)))

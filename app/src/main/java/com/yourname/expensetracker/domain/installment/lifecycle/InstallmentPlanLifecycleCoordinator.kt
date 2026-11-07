@@ -360,11 +360,6 @@ class InstallmentPlanLifecycleCoordinator @Inject constructor(
         if (goneOnLink != null) return@writeTxn goneOnLink
         val facts = factsReader.findExpenseFacts(expenseId)
             ?: return@writeTxn InstallmentOpResult.Failed(InstallmentOpFailure.EXPENSE_NOT_FOUND)
-        // D-19, both directions: an expense that carries a refund netting cannot be claimed by an
-        // entry. Read inside this transaction; refused before any write.
-        if (facts.isRefundLinked) {
-            return@writeTxn InstallmentOpResult.Failed(InstallmentOpFailure.REFUND_LINKED)
-        }
         // Links of any entry status (PAID and REVERSED included) count for exclusivity.
         val relations = InstallmentLinkRelations.forExistingExpense(
             linkedInstallmentEntryId = planDao.getEntryByLinkedExpenseId(expenseId)?.id,
@@ -379,6 +374,12 @@ class InstallmentPlanLifecycleCoordinator @Inject constructor(
             is ScheduleLinkDecision.Refused ->
                 return@writeTxn InstallmentOpResult.Refused(InstallmentRefusalCode.fromScheduleRefusal(d.reason))
             ScheduleLinkDecision.Allowed -> Unit
+        }
+        // D-19, both directions: an expense that carries a refund netting cannot be claimed by an
+        // entry. Same rule as the INV-13 candidate probe (InstallmentLinkRelations.isRefundNetted);
+        // evaluated after the already-linked no-op so legacy linked rows stay a no-op.
+        if (InstallmentLinkRelations.isRefundNetted(facts)) {
+            return@writeTxn InstallmentOpResult.Failed(InstallmentOpFailure.REFUND_LINKED)
         }
         when (val t = InstallmentPlanTransitions.entryTransition(context(plan, entry), EntryTrigger.LINK)) {
             is EntryTransitionResult.AlreadyInState ->

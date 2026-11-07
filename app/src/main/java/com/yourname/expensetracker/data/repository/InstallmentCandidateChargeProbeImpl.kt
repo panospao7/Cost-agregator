@@ -127,9 +127,11 @@ class InstallmentCandidateChargeProbeImpl @Inject constructor(
             planPurchaseRecordExists = purchaseRecord != null,
             facts = facts
         )
-        return ExpenseScheduleLinkPolicy.evaluateInstallmentLink(
+        val decision = ExpenseScheduleLinkPolicy.evaluateInstallmentLink(
             currency.code, facts.currency, facts.isSpendingType, entryId, relations
-        ) == ScheduleLinkDecision.Allowed
+        )
+        // D-19: a refund-netted charge is never a candidate (the link would always fail REFUND_LINKED).
+        return decision == ScheduleLinkDecision.Allowed && !InstallmentLinkRelations.isRefundNetted(facts)
     }
 
     private fun epochDayOf(millis: Long, zone: ZoneId): Long =

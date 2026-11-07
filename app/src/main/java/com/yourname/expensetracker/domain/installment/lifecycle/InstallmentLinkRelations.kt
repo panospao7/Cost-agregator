@@ -24,6 +24,9 @@ import com.yourname.expensetracker.domain.transaction.SpendingExclusionReason
  */
 object InstallmentLinkRelations {
 
+    /** D-19: an expense that carries a refund netting may not be claimed by an installment entry. */
+    fun isRefundNetted(facts: InstallmentExpenseFacts): Boolean = facts.isRefundLinked
+
     /**
      * @param linkedInstallmentEntryId id of the entry whose `linkedExpenseId` is this expense, or null.
      * @param planPurchaseRecordExists true when a plan row has this expense as its purchase.
