@@ -301,4 +301,86 @@ class RefundLikelihoodDetectorTest {
         assertTrue(result)
         assertEquals(snapshotBefore, candidates)
     }
+
+    // ---- Refund netting INV-18 -------------------------------------------------------------
+
+    private fun matchingPair(
+        depositNetted: Double = 0.0,
+        purchaseNetted: Double = 0.0,
+        purchaseAmount: Double = 200.0
+    ): Pair<Expense, Expense> {
+        val purchase = expense(
+            id = 1L,
+            amount = purchaseAmount,
+            merchant = "Zara",
+            transactionType = TransactionType.PURCHASE,
+            date = DAY_1_MS
+        ).copy(refundNettedAmount = purchaseNetted)
+        val deposit = expense(
+            id = 2L,
+            amount = 200.0,
+            merchant = "ZARA",
+            transactionType = TransactionType.DEPOSIT,
+            date = DAY_1_MS + 9L * ONE_DAY_MS
+        ).copy(refundNettedAmount = depositNetted)
+        return deposit to purchase
+    }
+
+    @Test
+    fun `INV-18 control - unlinked deposit and unrefunded purchase still raise the notice`() {
+        val (deposit, purchase) = matchingPair()
+        assertTrue(RefundLikelihoodDetector.isLikelyRefund(deposit, listOf(purchase)))
+    }
+
+    @Test
+    fun `INV-18 deposit already netted raises no notice`() {
+        val (deposit, purchase) = matchingPair(depositNetted = 40.0)
+        assertFalse(RefundLikelihoodDetector.isLikelyRefund(deposit, listOf(purchase)))
+    }
+
+    @Test
+    fun `INV-18 deposit netted by one minor unit raises no notice`() {
+        val (deposit, purchase) = matchingPair(depositNetted = 0.01)
+        assertFalse(RefundLikelihoodDetector.isLikelyRefund(deposit, listOf(purchase)))
+    }
+
+    @Test
+    fun `INV-18 fully refunded purchase is skipped`() {
+        val (deposit, purchase) = matchingPair(purchaseNetted = 200.0)
+        assertFalse(RefundLikelihoodDetector.isLikelyRefund(deposit, listOf(purchase)))
+    }
+
+    @Test
+    fun `INV-18 purchase netted above its amount is skipped`() {
+        val (deposit, purchase) = matchingPair(purchaseNetted = 200.01)
+        assertFalse(RefundLikelihoodDetector.isLikelyRefund(deposit, listOf(purchase)))
+    }
+
+    @Test
+    fun `INV-18 partially refunded purchase is still a candidate`() {
+        val (deposit, purchase) = matchingPair(purchaseNetted = 199.99)
+        assertTrue(RefundLikelihoodDetector.isLikelyRefund(deposit, listOf(purchase)))
+    }
+
+    @Test
+    fun `INV-18 a fully refunded purchase is skipped but another matching purchase still raises the notice`() {
+        val (deposit, refunded) = matchingPair(purchaseNetted = 200.0)
+        val fresh = refunded.copy(id = 3L, refundNettedAmount = 0.0)
+        assertTrue(RefundLikelihoodDetector.isLikelyRefund(deposit, listOf(refunded, fresh)))
+    }
+
+    @Test
+    fun `INV-18 field level overload also skips a fully refunded purchase`() {
+        val (deposit, purchase) = matchingPair(purchaseNetted = 200.0)
+        assertFalse(
+            RefundLikelihoodDetector.isLikelyRefund(
+                depositAmount = deposit.amount,
+                depositMerchant = deposit.merchant,
+                depositDateMs = deposit.date,
+                depositCurrency = deposit.currency,
+                depositMerchantKey = null,
+                candidates = listOf(purchase)
+            )
+        )
+    }
 }

@@ -201,7 +201,8 @@ object InstallmentActionMessages {
         InstallmentOpFailure.RECORD_INSERT_CONFLICT -> InstallmentActionFailureCode.RECORD_FAILED
         InstallmentOpFailure.PURCHASE_DUPLICATE_SKIPPED,
         InstallmentOpFailure.PURCHASE_INSERT_CONFLICT,
-        InstallmentOpFailure.PURCHASE_CREATE_FAILED -> InstallmentActionFailureCode.UNEXPECTED
+        InstallmentOpFailure.PURCHASE_CREATE_FAILED,
+        InstallmentOpFailure.REFUND_LINKED -> InstallmentActionFailureCode.UNEXPECTED
     }
 
     fun noticeText(notice: InstallmentActionNotice): Int = when (notice) {

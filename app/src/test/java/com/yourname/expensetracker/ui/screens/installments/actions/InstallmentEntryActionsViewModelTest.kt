@@ -311,6 +311,14 @@ class InstallmentEntryActionsViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
+    fun `a refund-linked failure maps to the bounded UNEXPECTED code`() {
+        assertEquals(
+            InstallmentActionFailureCode.UNEXPECTED,
+            InstallmentActionMessages.failureCode(InstallmentOpFailure.REFUND_LINKED)
+        )
+    }
+
+    @Test
     fun `smoke only - every notice maps to a string resource id without throwing`() {
         InstallmentActionNotice.entries.forEach { assertNotEquals(0, InstallmentActionMessages.noticeText(it)) }
     }

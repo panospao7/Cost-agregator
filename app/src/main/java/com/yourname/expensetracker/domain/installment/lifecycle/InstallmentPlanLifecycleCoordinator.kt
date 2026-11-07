@@ -375,6 +375,12 @@ class InstallmentPlanLifecycleCoordinator @Inject constructor(
                 return@writeTxn InstallmentOpResult.Refused(InstallmentRefusalCode.fromScheduleRefusal(d.reason))
             ScheduleLinkDecision.Allowed -> Unit
         }
+        // D-19, both directions: an expense that carries a refund netting cannot be claimed by an
+        // entry. Same rule as the INV-13 candidate probe (InstallmentLinkRelations.isRefundNetted);
+        // evaluated after the already-linked no-op so legacy linked rows stay a no-op.
+        if (InstallmentLinkRelations.isRefundNetted(facts)) {
+            return@writeTxn InstallmentOpResult.Failed(InstallmentOpFailure.REFUND_LINKED)
+        }
         when (val t = InstallmentPlanTransitions.entryTransition(context(plan, entry), EntryTrigger.LINK)) {
             is EntryTransitionResult.AlreadyInState ->
                 return@writeTxn InstallmentOpResult.AlreadyInState(entryRef(entry, planStatusOf(plan)))
@@ -1260,9 +1266,12 @@ class InstallmentPlanLifecycleCoordinator @Inject constructor(
                 if (facts == null) {
                     if (planDao.updatePlanDetachedFromPurchaseIfLinkedTo(plan.id, purchaseId, now) == 1) r5++
                 } else if (facts.spendingExclusionReason != SpendingExclusionReason.INSTALLMENT_PURCHASE.name) {
+                    // Count a repair only when the flag write actually happened (not refused or no-op).
                     setPurchaseFlag(purchaseId, SpendingExclusionReason.INSTALLMENT_PURCHASE, abortIfMissing = false)
-                        ?.let { batches += it }
-                    r1++
+                        ?.let {
+                            batches += it
+                            r1++
+                        }
                 }
             }
 
@@ -1285,8 +1294,10 @@ class InstallmentPlanLifecycleCoordinator @Inject constructor(
                             if (applyReversedExpenseRemoved(plan, entry, now)) r2++
                         } else if (facts.spendingExclusionReason != SpendingExclusionReason.INSTALLMENT_REVERSED.name) {
                             setPurchaseFlag(linked, SpendingExclusionReason.INSTALLMENT_REVERSED, abortIfMissing = false)
-                                ?.let { batches += it }
-                            r3++
+                                ?.let {
+                                    batches += it
+                                    r3++
+                                }
                         }
                     }
                     else -> Unit
@@ -1663,6 +1674,15 @@ class InstallmentPlanLifecycleCoordinator @Inject constructor(
                 null
             }
             SpendingInclusionResult.NoOp -> null
+            // D-19: installments and refund links are mutually exclusive. TLC refused before any
+            // write. Declare and refund-path callers (abortIfMissing) abort the whole transaction
+            // with a bounded failure; repair callers skip the flag (it is retried on the next run).
+            SpendingInclusionResult.RefundLinked -> {
+                if (abortIfMissing) {
+                    throw AbortSignal(InstallmentOpResult.Failed(InstallmentOpFailure.REFUND_LINKED))
+                }
+                null
+            }
             is SpendingInclusionResult.Updated -> result.postCommitActions
         }
     }

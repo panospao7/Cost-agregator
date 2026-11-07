@@ -119,6 +119,7 @@ class InstallmentExpenseReactionTest {
             database = fx.db,
             expenseDao = fx.db.expenseDao(),
             transactionEventDao = fx.db.transactionEventDao(),
+            expenseRefundLinkDao = fx.db.expenseRefundLinkDao(),
             timeProvider = fx.time,
             currencyConverter = mockk(relaxed = true),
             sideEffectDispatcher = mockk(relaxed = true),

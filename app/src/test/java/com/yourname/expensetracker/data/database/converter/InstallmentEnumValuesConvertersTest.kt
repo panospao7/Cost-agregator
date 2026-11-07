@@ -43,12 +43,13 @@ class InstallmentEnumValuesConvertersTest {
     }
 
     @Test
-    fun `TransactionUpdateKind keeps every existing value in place and appends SPENDING_INCLUSION last`() {
+    fun `TransactionUpdateKind keeps every existing value in place and appends SPENDING_INCLUSION then REFUND_NETTING`() {
         val names = TransactionUpdateKind.entries.map { it.name }
 
         assertEquals(originalUpdateKinds, names.take(originalUpdateKinds.size))
-        assertEquals(originalUpdateKinds.size + 1, names.size)
-        assertEquals("SPENDING_INCLUSION", names.last())
+        assertEquals(originalUpdateKinds.size + 2, names.size)
+        assertEquals("SPENDING_INCLUSION", names[originalUpdateKinds.size])
+        assertEquals("REFUND_NETTING", names.last())
     }
 
     @Test

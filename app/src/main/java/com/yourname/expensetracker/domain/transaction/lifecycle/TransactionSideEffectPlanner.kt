@@ -79,8 +79,8 @@ class TransactionSideEffectPlanner @Inject constructor(
             TransactionUpdateKind.LOCATION_ONLY -> {
                 return PostCommitActionBatch.empty(corrId)
             }
-            TransactionUpdateKind.SPENDING_INCLUSION -> {
-                // The flag changes what counts toward budgets; the row itself (merchant,
+            TransactionUpdateKind.SPENDING_INCLUSION, TransactionUpdateKind.REFUND_NETTING -> {
+                // The flag (or the refund netting) changes what counts toward budgets; the row itself (merchant,
                 // amount, category) is unchanged, so only the budget recheck is needed.
                 actions.add(makeBudgetCheckAction(expenseId, ExpenseSource.UNKNOWN, corrId, SideEffectTriggerType.EXPENSE_UPDATED))
             }
@@ -152,6 +152,8 @@ class TransactionSideEffectPlanner @Inject constructor(
         TransactionUpdateKind.DATE -> false
         // Ownership (not mine, share) is not read by R1 to R6.
         TransactionUpdateKind.OWNERSHIP -> false
+        // Refund netting only moves refundNettedAmount; amount, currency and type are locked while linked.
+        TransactionUpdateKind.REFUND_NETTING -> false
     }
 
     fun planDeleted(

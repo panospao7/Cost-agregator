@@ -927,7 +927,9 @@ class ExpenseRepository @Inject constructor(
             val beforeCount = expenseDao.countAllExpenses()
             expenseDao.deleteAll()
             if (snapshot.expenses.isNotEmpty()) {
-                expenseDao.insertAll(snapshot.expenses)
+                // deleteAll cascades the refund links away, so a snapshotted refundNettedAmount
+                // would be stale (INV-1): re-insert with the column reset to 0.0.
+                expenseDao.insertAll(snapshot.expenses.map { it.copy(refundNettedAmount = 0.0) })
             }
             debugExpenseAuditWriter.writeRestoreSnapshotEvent(
                 beforeCount = beforeCount,
