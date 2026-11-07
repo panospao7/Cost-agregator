@@ -412,8 +412,19 @@ object SemanticAggregates {
     fun capture(db: SQLiteDatabase, tableCounts: Map<String, Int>): SemanticAggregateSet {
         return try {
             val aggregates = LinkedHashMap<SemanticAggregateId, AggregateEntry>()
+            val hasRefundNetting = expensesHasColumn(db, REFUND_NETTED_COLUMN)
             for (definition in registry) {
-                aggregates[definition.id] = AggregateEntry(definition.definitionHash, readBuckets(db, definition))
+                // A schema without the refund-netting column (a pre-153 database captured at its start
+                // version) is queried with the frozen pre-netting spending value. The two expressions
+                // are equal while refundNettedAmount = 0.0, which is every row of such a schema (and of
+                // the same rows after migration), so the entry keeps the CURRENT definition hash and the
+                // pre/post-migration captures stay comparable entry for entry (INV-10).
+                val queried = if (!hasRefundNetting) {
+                    LEGACY_DEFINITIONS[definition.id]?.values?.firstOrNull() ?: definition
+                } else {
+                    definition
+                }
+                aggregates[definition.id] = AggregateEntry(definition.definitionHash, readBuckets(db, queried))
             }
             if (!conservationHolds(aggregates, tableCounts)) {
                 SemanticAggregateSet.ofNotCaptured(SemanticNotCapturedReason.SEMANTIC_CAPTURE_FAILED)
@@ -427,6 +438,12 @@ object SemanticAggregates {
             SemanticAggregateSet.ofNotCaptured(SemanticNotCapturedReason.SEMANTIC_CAPTURE_FAILED)
         }
     }
+
+    private const val REFUND_NETTED_COLUMN = "refundNettedAmount"
+
+    /** True when `expenses` has [column]. Zero-row projection read; no PRAGMA text, no user data. */
+    private fun expensesHasColumn(db: SQLiteDatabase, column: String): Boolean =
+        db.query("expenses", null, null, null, null, null, null, "0").use { it.getColumnIndex(column) >= 0 }
 
     private fun conservationHolds(
         aggregates: Map<SemanticAggregateId, AggregateEntry>,
