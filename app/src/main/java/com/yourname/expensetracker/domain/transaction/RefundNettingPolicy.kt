@@ -42,7 +42,7 @@ object RefundNettingPolicy {
     /** Outcome of evaluating one (refund, purchase) pair. */
     sealed interface LinkDecision {
         /** The pair is eligible; [applied] is at [scale] and at least one minor unit. */
-        data class Apply(val applied: BigDecimal, val scale: Int) : LinkDecision
+        data class ApplyLink(val applied: BigDecimal, val scale: Int) : LinkDecision
 
         /** The exact pair is already linked; nothing to write. */
         data class AlreadyLinked(val linkId: Long) : LinkDecision
@@ -107,7 +107,7 @@ object RefundNettingPolicy {
         val capRefund = capacity(refund.amount, refundLinks, scale)
         val applied = capPurchase.min(capRefund)
         if (applied < minorUnit(scale)) return refused(RefundLinkRefusal.NOTHING_TO_APPLY)
-        return LinkDecision.Apply(applied, scale)
+        return LinkDecision.ApplyLink(applied, scale)
     }
 
     /**

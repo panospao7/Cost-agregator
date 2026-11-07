@@ -110,8 +110,8 @@ class RefundNettingPolicyTest {
     )
 
     private fun assertApplied(expected: String, scale: Int, decision: LinkDecision) {
-        assertTrue("expected Apply but was $decision", decision is LinkDecision.Apply)
-        decision as LinkDecision.Apply
+        assertTrue("expected Apply but was $decision", decision is LinkDecision.ApplyLink)
+        decision as LinkDecision.ApplyLink
         assertEquals(scale, decision.scale)
         assertEquals(
             "applied ${decision.applied} != $expected",

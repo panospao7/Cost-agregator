@@ -2844,7 +2844,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
                         is RefundNettingPolicy.LinkDecision.Refused -> {
                             result = RefundLinkResult.Refused(decision.code)
                         }
-                        is RefundNettingPolicy.LinkDecision.Apply -> {
+                        is RefundNettingPolicy.LinkDecision.ApplyLink -> {
                             val refundRow = checkNotNull(refund)
                             val purchaseRow = checkNotNull(purchase)
                             val currency = DuplicateDetectionPolicy.normalizeCurrency(purchaseRow.currency)
@@ -2900,6 +2900,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
             Timber.w("Refund netting: code=REFUND_LINK_FAILED reason=%s", RefundWriteFailure.WRITE_BLOCKED.name)
             return RefundLinkResult.Failed(RefundWriteFailure.WRITE_BLOCKED)
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             Timber.w(
                 "Refund netting: code=REFUND_LINK_FAILED reason=%s type=%s",
                 RefundWriteFailure.INTERNAL.name,
@@ -2992,6 +2993,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
             Timber.w("Refund netting: code=REFUND_LINK_FAILED reason=%s", RefundWriteFailure.WRITE_BLOCKED.name)
             return RefundUnlinkResult.Failed(RefundWriteFailure.WRITE_BLOCKED)
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             Timber.w(
                 "Refund netting: code=REFUND_LINK_FAILED reason=%s type=%s",
                 RefundWriteFailure.INTERNAL.name,
