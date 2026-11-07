@@ -42,7 +42,10 @@ class RefundNettingArchitectureTest {
     private val scannedFiles: List<ScannedFile> by lazy {
         val files = mutableListOf<ScannedFile>()
         FailClosedScan.walkSourceFiles(sourceRoot) { file, text ->
-            files += ScannedFile(FailClosedScan.relativePath(sourceRoot, file), text)
+            files += ScannedFile(
+                FailClosedScan.relativePath(sourceRoot, file).removePrefix("com/yourname/expensetracker/"),
+                text
+            )
         }
         files
     }

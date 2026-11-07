@@ -14,8 +14,13 @@ import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
+import com.yourname.expensetracker.domain.diagnostics.AppPipeline
+import com.yourname.expensetracker.domain.sideeffect.PostCommitAction
 import com.yourname.expensetracker.domain.sideeffect.PostCommitActionBatch
 import com.yourname.expensetracker.domain.sideeffect.PostCommitActionRunner
+import com.yourname.expensetracker.domain.sideeffect.SideEffectCategory
+import com.yourname.expensetracker.domain.sideeffect.SideEffectOutcome
+import com.yourname.expensetracker.domain.sideeffect.SideEffectTriggerType
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
@@ -97,14 +102,31 @@ class TransactionLifecycleCoordinatorRefundLinkTest {
 
         planner = mockk(relaxed = true)
         every { planner.planUpdated(any(), any(), any(), any()) } answers {
-            PostCommitActionBatch("updated-${firstArg<Long>()}", emptyList())
+            nonEmptyBatch("updated-${firstArg<Long>()}", firstArg<Long>())
         }
         every { planner.planDeleted(any(), any(), any()) } answers {
-            PostCommitActionBatch("deleted-${firstArg<Long>()}", emptyList())
+            nonEmptyBatch("deleted-${firstArg<Long>()}", firstArg<Long>())
         }
         runner = mockk(relaxed = true)
 
         coordinator = buildCoordinator(noLinkedReceiptsLinkService())
+    }
+
+    private fun nonEmptyBatch(correlationId: String, entityId: Long): PostCommitActionBatch {
+        val action = PostCommitAction(
+            pipeline = AppPipeline.TRANSACTION,
+            name = "test_action",
+            category = SideEffectCategory.BUDGET,
+            triggerType = SideEffectTriggerType.EXPENSE_CREATED,
+            targetEntityType = "expense",
+            targetEntityId = entityId,
+            source = "test",
+            correlationId = correlationId,
+            causationId = null,
+            idempotencyKey = "key-$correlationId",
+            execute = { SideEffectOutcome.Completed }
+        )
+        return PostCommitActionBatch(correlationId, listOf(action))
     }
 
     @After
@@ -256,8 +278,8 @@ class TransactionLifecycleCoordinatorRefundLinkTest {
 
         verify(exactly = 1) { planner.planUpdated(d1, any(), any(), TransactionUpdateKind.REFUND_NETTING) }
         verify(exactly = 1) { planner.planUpdated(p1, any(), any(), TransactionUpdateKind.REFUND_NETTING) }
-        coVerify(exactly = 1) { runner.run(PostCommitActionBatch("updated-$d1", emptyList())) }
-        coVerify(exactly = 1) { runner.run(PostCommitActionBatch("updated-$p1", emptyList())) }
+        coVerify(exactly = 1) { runner.run(match { it.correlationId == "updated-$d1" }) }
+        coVerify(exactly = 1) { runner.run(match { it.correlationId == "updated-$p1" }) }
     }
 
     @Test
@@ -707,9 +729,9 @@ class TransactionLifecycleCoordinatorRefundLinkTest {
         verify(exactly = 1) { planner.planDeleted(p1, any(), "corr-del") }
         verify(exactly = 1) { planner.planUpdated(d1, any(), "corr-del", TransactionUpdateKind.REFUND_NETTING) }
         verify(exactly = 1) { planner.planUpdated(d2, any(), "corr-del", TransactionUpdateKind.REFUND_NETTING) }
-        coVerify(exactly = 1) { runner.run(PostCommitActionBatch("updated-$d1", emptyList())) }
-        coVerify(exactly = 1) { runner.run(PostCommitActionBatch("updated-$d2", emptyList())) }
-        coVerify(exactly = 1) { runner.run(PostCommitActionBatch("deleted-$p1", emptyList())) }
+        coVerify(exactly = 1) { runner.run(match { it.correlationId == "updated-$d1" }) }
+        coVerify(exactly = 1) { runner.run(match { it.correlationId == "updated-$d2" }) }
+        coVerify(exactly = 1) { runner.run(match { it.correlationId == "deleted-$p1" }) }
     }
 
     @Test
