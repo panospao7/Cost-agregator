@@ -717,6 +717,242 @@ class CategoryRepositoryTest {
         assertCachesInvalidatedOnce()
     }
 
+    // ── post-commit steps are best-effort (cache / snapshot / batch) ─────────
+
+    private suspend fun assertDeleteCommitted(source: Long, replacement: Long, expense: Long) {
+        assertNull(db.categoryDao().getById(source))
+        assertEquals(replacement, categoryOf(expense))
+        assertEquals(1, bulkEvents().size)
+    }
+
+    @Test
+    fun `deleteCategory still succeeds when cache invalidation throws and later steps still run`() = runTest {
+        val source = insertCategory("Source")
+        val replacement = insertCategory("Replacement")
+        val expense = insertExpense(source)
+        coEvery { categorizationEngine.invalidateCache() } throws RuntimeException("synthetic cache failure")
+
+        val result = repository.deleteCategory(source, replacement)
+
+        assertEquals(DeleteCategoryResult.Deleted, result)
+        assertDeleteCommitted(source, replacement, expense)
+        coVerify(exactly = 1) { hybridExpenseClassifier.invalidateCategorySnapshot() }
+        coVerify(exactly = 1) { runner.run(any()) }
+    }
+
+    @Test
+    fun `deleteCategory still succeeds when snapshot invalidation throws and the batch still runs`() = runTest {
+        val source = insertCategory("Source")
+        val replacement = insertCategory("Replacement")
+        val expense = insertExpense(source)
+        coEvery { hybridExpenseClassifier.invalidateCategorySnapshot() } throws RuntimeException("synthetic snapshot failure")
+
+        val result = repository.deleteCategory(source, replacement)
+
+        assertEquals(DeleteCategoryResult.Deleted, result)
+        assertDeleteCommitted(source, replacement, expense)
+        coVerify(exactly = 1) { categorizationEngine.invalidateCache() }
+        coVerify(exactly = 1) { runner.run(any()) }
+    }
+
+    @Test
+    fun `deleteCategory still succeeds when every post-commit step throws`() = runTest {
+        val source = insertCategory("Source")
+        val replacement = insertCategory("Replacement")
+        val expense = insertExpense(source)
+        coEvery { categorizationEngine.invalidateCache() } throws RuntimeException("synthetic cache failure")
+        coEvery { hybridExpenseClassifier.invalidateCategorySnapshot() } throws RuntimeException("synthetic snapshot failure")
+        coEvery { runner.run(any()) } throws RuntimeException("synthetic batch failure")
+
+        val result = repository.deleteCategory(source, replacement)
+
+        assertEquals(DeleteCategoryResult.Deleted, result)
+        assertDeleteCommitted(source, replacement, expense)
+        coVerify(exactly = 1) { categorizationEngine.invalidateCache() }
+        coVerify(exactly = 1) { hybridExpenseClassifier.invalidateCategorySnapshot() }
+        coVerify(exactly = 1) { runner.run(any()) }
+    }
+
+    @Test
+    fun `deleteCategory propagates a cancellation from cache invalidation and the delete stays committed`() = runTest {
+        val source = insertCategory("Source")
+        val replacement = insertCategory("Replacement")
+        val expense = insertExpense(source)
+        coEvery { categorizationEngine.invalidateCache() } throws CancellationException("synthetic cache cancel")
+
+        try {
+            repository.deleteCategory(source, replacement)
+            fail("Expected CancellationException")
+        } catch (expected: CancellationException) {
+            assertTrue(expected.message.orEmpty().contains("synthetic cache cancel"))
+        }
+
+        assertDeleteCommitted(source, replacement, expense)
+        assertEquals(0, barrier.inFlightWriteCount())
+    }
+
+    @Test
+    fun `deleteCategory propagates a cancellation from snapshot invalidation and the delete stays committed`() = runTest {
+        val source = insertCategory("Source")
+        val replacement = insertCategory("Replacement")
+        val expense = insertExpense(source)
+        coEvery { hybridExpenseClassifier.invalidateCategorySnapshot() } throws CancellationException("synthetic snapshot cancel")
+
+        try {
+            repository.deleteCategory(source, replacement)
+            fail("Expected CancellationException")
+        } catch (expected: CancellationException) {
+            assertTrue(expected.message.orEmpty().contains("synthetic snapshot cancel"))
+        }
+
+        assertDeleteCommitted(source, replacement, expense)
+        assertEquals(0, barrier.inFlightWriteCount())
+    }
+
+    @Test
+    fun `mergeCategories still returns the moved count when cache invalidation throws and later steps still run`() = runTest {
+        val source = insertCategory("Source")
+        val target = insertCategory("Target")
+        val e1 = insertExpense(source, "Shop One")
+        val e2 = insertExpense(source, "Shop Two")
+        coEvery { categorizationEngine.invalidateCache() } throws RuntimeException("synthetic cache failure")
+
+        val moved = repository.mergeCategories(source, target)
+
+        assertEquals(2, moved)
+        assertNull(db.categoryDao().getById(source))
+        assertEquals(target, categoryOf(e1))
+        assertEquals(target, categoryOf(e2))
+        assertEquals(1, bulkEvents().size)
+        coVerify(exactly = 1) { hybridExpenseClassifier.invalidateCategorySnapshot() }
+        coVerify(exactly = 1) { runner.run(any()) }
+    }
+
+    @Test
+    fun `mergeCategories still returns the moved count when snapshot invalidation throws and the batch still runs`() = runTest {
+        val source = insertCategory("Source")
+        val target = insertCategory("Target")
+        val e1 = insertExpense(source, "Shop One")
+        coEvery { hybridExpenseClassifier.invalidateCategorySnapshot() } throws RuntimeException("synthetic snapshot failure")
+
+        val moved = repository.mergeCategories(source, target)
+
+        assertEquals(1, moved)
+        assertNull(db.categoryDao().getById(source))
+        assertEquals(target, categoryOf(e1))
+        coVerify(exactly = 1) { categorizationEngine.invalidateCache() }
+        coVerify(exactly = 1) { runner.run(any()) }
+    }
+
+    @Test
+    fun `mergeCategories still returns the moved count when the post-commit batch throws`() = runTest {
+        val source = insertCategory("Source")
+        val target = insertCategory("Target")
+        val e1 = insertExpense(source, "Shop One")
+        val e2 = insertExpense(source, "Shop Two")
+        coEvery { runner.run(any()) } throws RuntimeException("synthetic batch failure")
+
+        val moved = repository.mergeCategories(source, target)
+
+        assertEquals(2, moved)
+        assertNull(db.categoryDao().getById(source))
+        assertEquals(target, categoryOf(e1))
+        assertEquals(target, categoryOf(e2))
+        assertCachesInvalidatedOnce()
+    }
+
+    @Test
+    fun `mergeCategories propagates a cancellation from cache invalidation and the merge stays committed`() = runTest {
+        val source = insertCategory("Source")
+        val target = insertCategory("Target")
+        val expense = insertExpense(source)
+        coEvery { categorizationEngine.invalidateCache() } throws CancellationException("synthetic cache cancel")
+
+        try {
+            repository.mergeCategories(source, target)
+            fail("Expected CancellationException")
+        } catch (expected: CancellationException) {
+            assertTrue(expected.message.orEmpty().contains("synthetic cache cancel"))
+        }
+
+        assertDeleteCommitted(source, target, expense)
+        assertEquals(0, barrier.inFlightWriteCount())
+    }
+
+    @Test
+    fun `mergeCategories propagates a cancellation from snapshot invalidation and the merge stays committed`() = runTest {
+        val source = insertCategory("Source")
+        val target = insertCategory("Target")
+        val expense = insertExpense(source)
+        coEvery { hybridExpenseClassifier.invalidateCategorySnapshot() } throws CancellationException("synthetic snapshot cancel")
+
+        try {
+            repository.mergeCategories(source, target)
+            fail("Expected CancellationException")
+        } catch (expected: CancellationException) {
+            assertTrue(expected.message.orEmpty().contains("synthetic snapshot cancel"))
+        }
+
+        assertDeleteCommitted(source, target, expense)
+        assertEquals(0, barrier.inFlightWriteCount())
+    }
+
+    @Test
+    fun `renameCategory still returns Renamed when cache invalidation throws and the snapshot is still invalidated`() = runTest {
+        val id = insertCategory("Old Name")
+        coEvery { categorizationEngine.invalidateCache() } throws RuntimeException("synthetic cache failure")
+
+        val result = repository.renameCategory(id, "New Name")
+
+        assertEquals(RenameCategoryResult.Renamed, result)
+        assertEquals("New Name", db.categoryDao().getById(id)!!.name)
+        coVerify(exactly = 1) { hybridExpenseClassifier.invalidateCategorySnapshot() }
+    }
+
+    @Test
+    fun `renameCategory still returns Renamed when snapshot invalidation throws`() = runTest {
+        val id = insertCategory("Old Name")
+        coEvery { hybridExpenseClassifier.invalidateCategorySnapshot() } throws RuntimeException("synthetic snapshot failure")
+
+        val result = repository.renameCategory(id, "New Name")
+
+        assertEquals(RenameCategoryResult.Renamed, result)
+        assertEquals("New Name", db.categoryDao().getById(id)!!.name)
+        coVerify(exactly = 1) { categorizationEngine.invalidateCache() }
+    }
+
+    @Test
+    fun `renameCategory propagates a cancellation from cache invalidation and the rename stays committed`() = runTest {
+        val id = insertCategory("Old Name")
+        coEvery { categorizationEngine.invalidateCache() } throws CancellationException("synthetic cache cancel")
+
+        try {
+            repository.renameCategory(id, "New Name")
+            fail("Expected CancellationException")
+        } catch (expected: CancellationException) {
+            assertTrue(expected.message.orEmpty().contains("synthetic cache cancel"))
+        }
+
+        assertEquals("New Name", db.categoryDao().getById(id)!!.name)
+        assertEquals(0, barrier.inFlightWriteCount())
+    }
+
+    @Test
+    fun `renameCategory propagates a cancellation from snapshot invalidation and the rename stays committed`() = runTest {
+        val id = insertCategory("Old Name")
+        coEvery { hybridExpenseClassifier.invalidateCategorySnapshot() } throws CancellationException("synthetic snapshot cancel")
+
+        try {
+            repository.renameCategory(id, "New Name")
+            fail("Expected CancellationException")
+        } catch (expected: CancellationException) {
+            assertTrue(expected.message.orEmpty().contains("synthetic snapshot cancel"))
+        }
+
+        assertEquals("New Name", db.categoryDao().getById(id)!!.name)
+        assertEquals(0, barrier.inFlightWriteCount())
+    }
+
     // ── renameCategory ───────────────────────────────────────────────────────
 
     @Test

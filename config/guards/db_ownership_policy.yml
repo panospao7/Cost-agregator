@@ -966,7 +966,7 @@ entries:
   daoAccessor: categoryDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.CategoryDao
   operation: delete
-  barrierMode: helper
+  barrierMode: direct
   reason: 'Item 144 shared delete/merge path: source category delete after its references
     were re-pointed, in one transaction with the TLC expense move; barrier via checkWritesAllowed
     helper (public callers) plus runWrite'
@@ -984,7 +984,7 @@ entries:
   daoAccessor: categoryDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.CategoryDao
   operation: reassignAllReferencesExceptExpenses
-  barrierMode: helper
+  barrierMode: direct
   reason: 'Item 144 shared delete/merge path: @Transaction multi-table re-point of every
     non-expense category reference (expenses move only via the TLC reassignCategoryBulkDbOnly
     in the same transaction); barrier via checkWritesAllowed helper plus runWrite'
@@ -1001,7 +1001,7 @@ entries:
   daoAccessor: categoryDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.CategoryDao
   operation: updateNameById
-  barrierMode: helper
+  barrierMode: direct
   reason: 'Item 144 category rename: validated and NOCASE-deduped name update inside
     one transaction; barrier via checkWritesAllowed helper plus runWrite'
   owner: '@panospao7'
@@ -1017,7 +1017,7 @@ entries:
   daoAccessor: categoryDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.CategoryDao
   operation: updateDenormalizedCategoryNames
-  barrierMode: helper
+  barrierMode: direct
   reason: 'Item 144 category rename: keeps denormalized category-name columns (budget
     adjustment recommendations, receipt item categorizations) in sync with the new name
     in the same transaction as updateNameById; barrier via checkWritesAllowed helper

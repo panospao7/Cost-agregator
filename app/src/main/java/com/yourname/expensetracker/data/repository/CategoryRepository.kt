@@ -17,6 +17,7 @@ import javax.inject.Singleton
 import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.domain.sideeffect.PostCommitActionBatch
+import com.yourname.expensetracker.domain.util.CancellationSafe
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import timber.log.Timber
 
@@ -206,10 +207,24 @@ class CategoryRepository @Inject constructor(
         }
         // Committed: refresh caches first so a cancelled post-commit run can never leave a
         // classifier snapshot that still references the deleted category.
-        categorizationEngine.invalidateCache()
-        hybridExpenseClassifier.get().invalidateCategorySnapshot()
-        batch?.let { coordinator.runPostCommit(it) }
+        // Best-effort: the commit already succeeded, so a failing refresh must not surface as a
+        // failed delete/merge. Each step is independent; cancellation is still rethrown.
+        bestEffortPostCommit("CATEGORY_CACHE_INVALIDATE_FAILED") { categorizationEngine.invalidateCache() }
+        bestEffortPostCommit("CATEGORY_SNAPSHOT_INVALIDATE_FAILED") {
+            hybridExpenseClassifier.get().invalidateCategorySnapshot()
+        }
+        batch?.let { bestEffortPostCommit("CATEGORY_POST_COMMIT_FAILED") { coordinator.runPostCommit(it) } }
         return expensesMoved
+    }
+
+    /** Runs one post-commit step; logs only a bounded reason code on failure (no message/stack). */
+    private suspend fun bestEffortPostCommit(reasonCode: String, step: suspend () -> Unit) {
+        try {
+            step()
+        } catch (e: Exception) {
+            CancellationSafe.rethrowIfCancellation(e)
+            Timber.w("Category post-commit step failed: %s", reasonCode)
+        }
     }
 
     /**
@@ -247,8 +262,10 @@ class CategoryRepository @Inject constructor(
             }
         }
         if (result == RenameCategoryResult.Renamed) {
-            categorizationEngine.invalidateCache()
-            hybridExpenseClassifier.get().invalidateCategorySnapshot()
+            bestEffortPostCommit("CATEGORY_CACHE_INVALIDATE_FAILED") { categorizationEngine.invalidateCache() }
+            bestEffortPostCommit("CATEGORY_SNAPSHOT_INVALIDATE_FAILED") {
+                hybridExpenseClassifier.get().invalidateCategorySnapshot()
+            }
         }
         return result
     }
