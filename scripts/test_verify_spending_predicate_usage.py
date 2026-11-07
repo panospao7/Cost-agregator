@@ -971,6 +971,12 @@ def test_aggregate_over_inner_constant_is_rule_05(aggregate, constant):
         "${ExpenseDao.EFFECTIVE_AMOUNT_SQL}",
         "${ExpenseDao.Companion.EFFECTIVE_AMOUNT_E_SQL}",
         "${ EFFECTIVE_AMOUNT_SQL }",
+        "(${EFFECTIVE_AMOUNT_SQL})",
+        "( ( ${EFFECTIVE_AMOUNT_E_SQL} ) )",
+        "1 * ${EFFECTIVE_AMOUNT_SQL}",
+        "1.0*$EFFECTIVE_AMOUNT_SQL",
+        "-${EFFECTIVE_AMOUNT_SQL}",
+        "COALESCE((${EFFECTIVE_AMOUNT_SQL}), 0)",
     ],
 )
 def test_inner_constant_forms_are_rule_05(argument):

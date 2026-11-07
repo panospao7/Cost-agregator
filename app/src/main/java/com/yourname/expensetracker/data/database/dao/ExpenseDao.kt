@@ -1980,9 +1980,9 @@ AND LENGTH(:merchantKey) >= 8
 
     // Merchant averages (merchants with 2+ transactions)
     // averageAmount, minAmount, maxAmount all use the effective (ownership-adjusted) value
-    // via [EFFECTIVE_AMOUNT_SQL].
+    // via [SpendingInclusionSql.EFFECTIVE_AMOUNT].
     @Query("""
-        SELECT merchantKey as merchantName, 
+        SELECT merchantKey as merchantName,
                MIN(merchant) as displayName,
                SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) as totalAmount,
                COUNT(*) as transactionCount,
@@ -2003,9 +2003,9 @@ AND LENGTH(:merchantKey) >= 8
 
     // All merchant stats (including single-transaction merchants)
     // averageAmount, minAmount, maxAmount all use the effective (ownership-adjusted) value
-    // via [EFFECTIVE_AMOUNT_SQL].
+    // via [SpendingInclusionSql.EFFECTIVE_AMOUNT].
     @Query("""
-        SELECT merchantKey as merchantName, 
+        SELECT merchantKey as merchantName,
                MIN(merchant) as displayName,
                SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) as totalAmount,
                COUNT(*) as transactionCount,
@@ -2025,9 +2025,9 @@ AND LENGTH(:merchantKey) >= 8
 
     // Top merchants by total spending for a period
     // averageAmount, minAmount, maxAmount all use the effective (ownership-adjusted) value
-    // via [EFFECTIVE_AMOUNT_SQL].
+    // via [SpendingInclusionSql.EFFECTIVE_AMOUNT].
     @Query("""
-        SELECT merchantKey as merchantName, 
+        SELECT merchantKey as merchantName,
                MIN(merchant) as displayName,
                SUM(${SpendingInclusionSql.EFFECTIVE_AMOUNT}) as totalAmount,
                COUNT(*) as transactionCount,
@@ -2129,7 +2129,7 @@ AND LENGTH(:merchantKey) >= 8
     suspend fun getRecurringCandidates(): List<MerchantStats>
 
     // Day-of-week spending pattern
-    // avgAmount uses the effective (ownership-adjusted) amount via [EFFECTIVE_AMOUNT_SQL].
+    // avgAmount uses the effective (ownership-adjusted) amount via [SpendingInclusionSql.EFFECTIVE_AMOUNT].
     @Query("""
         SELECT 
             ((CAST(strftime('%w', date/1000, 'unixepoch', 'localtime') AS INTEGER) + 6) % 7) as dayOfWeek,

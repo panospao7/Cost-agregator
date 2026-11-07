@@ -336,10 +336,13 @@ _QUALIFIED_REF_RE = re.compile(
 # Rule 05: an aggregate (optionally through COALESCE) whose argument STARTS with the
 # inner effective-amount constant, written ``${EFFECTIVE_AMOUNT_SQL}``, ``$EFFECTIVE_AMOUNT_E_SQL``,
 # by plain code reference in a concatenation, or with an ``ExpenseDao.`` / ``ExpenseDao.Companion.``
-# qualifier.  The outer constants live in ``SpendingInclusionSql`` and never match.
+# qualifier.  The argument may be wrapped in extra parentheses, a unary sign, COALESCE( or simple
+# leading operands (``1 * ``, ``x + ``); a ``CASE WHEN ... THEN <outer> ELSE <inner> END`` argument
+# never matches because the inner constant must directly follow that prefix.
+# The outer constants live in ``SpendingInclusionSql`` and never match.
 _INNER_AGG_RE = re.compile(
-    r"(?<![A-Za-z0-9_])(?:SUM|AVG|TOTAL|MIN|MAX)\s*\(\s*"
-    r"(?:COALESCE\s*\(\s*)?"
+    r"(?<![A-Za-z0-9_])(?:SUM|AVG|TOTAL|MIN|MAX)\s*\("
+    r"(?:[\s(+\-]|COALESCE\s*\(|(?:[0-9]+(?:\.[0-9]+)?|[A-Za-z_][A-Za-z0-9_]*)\s*[*/+\-]\s*)*"
     r"(?:\$\{?\s*)?(?:ExpenseDao\s*\.\s*(?:Companion\s*\.\s*)?)?"
     r"EFFECTIVE_AMOUNT(?:_E)?_SQL(?![A-Za-z0-9_])",
     _ASCII | re.IGNORECASE,
