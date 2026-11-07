@@ -165,7 +165,8 @@ class ForecastInputAssembler @Inject constructor(
                 null -> null
             },
             notes = expense.notes,
-            spendingExclusionReason = expense.spendingExclusionReason
+            spendingExclusionReason = expense.spendingExclusionReason,
+            refundNettedAmount = expense.refundNettedAmount
         )
     }
 

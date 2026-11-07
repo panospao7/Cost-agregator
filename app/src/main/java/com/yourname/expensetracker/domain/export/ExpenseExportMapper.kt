@@ -59,7 +59,8 @@ object ExpenseExportMapper {
             businessProject = expense.businessProject,
             requiresReceipt = expense.requiresReceipt,
 
-            spendingExclusionReason = expense.spendingExclusionReason
+            spendingExclusionReason = expense.spendingExclusionReason,
+            refundNettedAmount = expense.refundNettedAmount.takeIf { it.isFinite() } ?: 0.0
         )
     }
 

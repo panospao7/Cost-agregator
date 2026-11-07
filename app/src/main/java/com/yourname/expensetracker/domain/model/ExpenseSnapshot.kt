@@ -13,5 +13,7 @@ data class ExpenseSnapshot(
     val isNotMine: Boolean,
     val transferDirection: DomainTransferDirection?,
     val notes: String?,
-    val spendingExclusionReason: String? = null
+    val spendingExclusionReason: String? = null,
+    /** Refund netting (INV-6): carried from Expense.refundNettedAmount; 0.0 = no link. */
+    val refundNettedAmount: Double = 0.0
 )

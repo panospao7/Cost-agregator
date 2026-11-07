@@ -21,7 +21,9 @@ data class DashboardExpense(
     val isManualEntry: Boolean,
     val isSharedExpense: Boolean = false,
     val currency: String = "EUR",
-    val spendingExclusionReason: String? = null
+    val spendingExclusionReason: String? = null,
+    /** Refund netting (INV-6): carried from Expense.refundNettedAmount; [effectiveAmount] is already net of it. */
+    val refundNettedAmount: Double = 0.0
 ) {
     val moneyAmount: MoneyAmount get() = MoneyAmount(amount, CurrencyCode(currency))
     val moneyEffectiveAmount: MoneyAmount get() = MoneyAmount(effectiveAmount, CurrencyCode(currency))
