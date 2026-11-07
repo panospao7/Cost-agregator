@@ -85,14 +85,16 @@ class JsonExpenseImporter @Inject constructor(
                     // reason codes, never interpolated exception payloads.
                     errors++; errorMessages.add("Row ${i + 1}: ${e.code}")
                 } catch (e: Exception) {
-                    errors++; errorMessages.add("Row ${i + 1}: ${e.message}")
+                    if (e is CancellationException) throw e
+                    // Bounded text only: never interpolate raw exception text.
+                    errors++; errorMessages.add("Row ${i + 1}: import failed")
                 }
             }
             ImportResult(success = errors == 0, importedCount = imported, skippedCount = skipped, errorCount = errors, errors = errorMessages, expenseIds = expenseIds)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            ImportResult(false, 0, 0, 1, listOf("Parse error: ${e.message}"), emptyList())
+            ImportResult(false, 0, 0, 1, listOf("Parse error"), emptyList())
         }
     }
 

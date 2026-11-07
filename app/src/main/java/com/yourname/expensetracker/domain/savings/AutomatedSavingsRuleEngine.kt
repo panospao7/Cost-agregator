@@ -80,9 +80,9 @@ class AutomatedSavingsRuleEngine @Inject constructor(
                 SavingsRuleType.PERCENTAGE_OF_INCOME -> 
                     evaluatePercentageRule(expense, rule, displayCurrency)
                 SavingsRuleType.ROUND_UP -> 
-                    evaluateRoundUpRule(expense, rule, displayCurrency)
+                    evaluateRoundUpRule(expense, rule)
                 SavingsRuleType.SPARE_CHANGE -> 
-                    evaluateSpareChangeRule(expense, rule, displayCurrency)
+                    evaluateSpareChangeRule(expense, rule)
                 SavingsRuleType.WEEKLY_NO_SPEND -> 
                     evaluateWeeklyNoSpendRule(rule, displayCurrency)
                 SavingsRuleType.CUSTOM -> null
@@ -136,8 +136,7 @@ class AutomatedSavingsRuleEngine @Inject constructor(
     
     private fun evaluateRoundUpRule(
         expense: Expense,
-        rule: AutomatedSavingsRule,
-        displayCurrency: String
+        rule: AutomatedSavingsRule
     ): RuleExecution? {
         // Only process purchases
         if (expense.transactionType.toDomain() != DomainTransactionType.PURCHASE) {
@@ -227,8 +226,7 @@ class AutomatedSavingsRuleEngine @Inject constructor(
 
     private fun evaluateSpareChangeRule(
         expense: Expense,
-        rule: AutomatedSavingsRule,
-        displayCurrency: String
+        rule: AutomatedSavingsRule
     ): RuleExecution? {
         // Save the spare change: the difference up to the next whole unit
         // (3.40 -> 0.60), in the expense's own currency.

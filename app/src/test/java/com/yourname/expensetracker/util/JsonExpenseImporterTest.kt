@@ -214,6 +214,20 @@ class JsonExpenseImporterTest {
     }
 
     @Test
+    fun `hostile exception message is not surfaced in row errors`() = runTest {
+        val hostile = "SQLiteException /data/user/0/secret.db PAYLOAD-SECRET-123"
+        coEvery { coordinator.createExpense(any()) } throws IllegalStateException(hostile)
+
+        val result = newImporter(newCountingProvider()).importFromContent(
+            """{"schemaVersion":2,"rows":[{"merchant":"A","amount":1.00}]}"""
+        )
+
+        assertEquals(false, result.success)
+        assertEquals(listOf("Row 1: import failed"), result.errors)
+        assertTrue(result.errors.none { it.contains("SECRET") || it.contains("/data/") })
+    }
+
+    @Test
     fun `cancellation from the barrier propagates`() = runTest {
         val cancellingBarrier = mockk<DatabaseWriteBarrier>()
         coEvery { cancellingBarrier.checkWritesAllowed(any<String>()) } throws
