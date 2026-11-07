@@ -362,22 +362,30 @@ object SemanticAggregates {
      * (not reported DEFINITION_CHANGED). The legacy value text is the frozen
      * [SpendingInclusionSql.EFFECTIVE_AMOUNT_PRE_REFUND_NETTING]. The income aggregate keeps the inner
      * constant and did not change.
+     *
+     * The legacy definition is also the one that is QUERIED for such a manifest: the current spending
+     * SQL references `refundNettedAmount`, which does not exist in a schema-152 database that is verified
+     * before its Room migration, whereas the legacy SQL runs on both 152 and later schemas.
      */
-    private val LEGACY_DEFINITION_HASHES: Map<SemanticAggregateId, Set<String>> = mapOf(
-        SemanticAggregateId.SPENDING_EFFECTIVE_BY_CURRENCY to setOf(
+    private val LEGACY_DEFINITIONS: Map<SemanticAggregateId, Map<String, AggregateDefinition>> = mapOf(
+        SemanticAggregateId.SPENDING_EFFECTIVE_BY_CURRENCY to listOf(
             AggregateDefinition(
                 id = SemanticAggregateId.SPENDING_EFFECTIVE_BY_CURRENCY,
                 table = "expenses",
                 keyColumns = listOf("currency"),
                 filterSql = SPENDING_TYPE_SQL,
                 valueSql = SpendingInclusionSql.EFFECTIVE_AMOUNT_PRE_REFUND_NETTING
-            ).definitionHash
-        )
+            )
+        ).associateBy { it.definitionHash }
     )
+
+    /** The accepted legacy definition of [id] whose hash is [hash], or null. */
+    private fun legacyDefinitionOf(id: SemanticAggregateId, hash: String): AggregateDefinition? =
+        LEGACY_DEFINITIONS[id]?.get(hash)
 
     /** True when [hash] is the current definition hash of [id] or one of its accepted legacy hashes. */
     internal fun isAcceptedDefinitionHash(id: SemanticAggregateId, hash: String): Boolean =
-        hash == definitionOf(id).definitionHash || hash in (LEGACY_DEFINITION_HASHES[id] ?: emptySet())
+        hash == definitionOf(id).definitionHash || legacyDefinitionOf(id, hash) != null
 
     /** The current definition hash of [id]. */
     fun definitionHash(id: SemanticAggregateId): String = definitionOf(id).definitionHash
@@ -639,8 +647,15 @@ object SemanticAggregates {
                 if (firstNotVerifiable == null) firstNotVerifiable = SemanticNotVerifiableReason.DEFINITION_CHANGED
                 continue
             }
+            // A legacy-hash manifest is verified with its own frozen definition (INV-10), so the query
+            // never references columns that a pre-migration source database does not have.
+            val queried = if (entry.definitionHash == definition.definitionHash) {
+                definition
+            } else {
+                legacyDefinitionOf(id, entry.definitionHash) ?: definition
+            }
             val actual = try {
-                actualBuckets(definition)
+                actualBuckets(queried)
             } catch (e: BucketLimitExceeded) {
                 // The expectation holds at most 256 buckets, so a larger actual aggregate cannot match.
                 return SemanticCheckResult.Failed(
