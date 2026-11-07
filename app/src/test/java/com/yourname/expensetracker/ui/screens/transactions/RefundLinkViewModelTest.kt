@@ -323,6 +323,27 @@ class RefundLinkViewModelTest : ViewModelTestUtils() {
         assertTrue(success.isEmpty())
     }
 
+    @Test
+    fun `selectCandidate with an unavailable currency scale shows the stale message and reloads the picker`() = runTest(testDispatcher) {
+        val xxx = CurrencyCode.parse("XXX")!!
+        val xxxDeposit = deposit.copy(currency = "XXX")
+        val xxxCandidate = RefundCandidate(
+            purchaseId = 2L, purchaseDate = 1_000L, amount = MoneyAmount(100.0, xxx), remaining = MoneyAmount(100.0, xxx),
+            exactAmountMatch = false, merchantMatch = false, dayDelta = 1
+        )
+        coEvery { useCase.findCandidates(1L) } returns RefundCandidates.Available(listOf(xxxCandidate))
+        val errors = mutableListOf<UiText>()
+        collectErrors(errors)
+        runCurrent()
+        model.openPicker(xxxDeposit)
+        advanceUntilIdle()
+        model.selectCandidate((model.picker.value as RefundPickerUiState.Content).candidates.single())
+        advanceUntilIdle()
+        assertEquals(listOf(UiText.from(R.string.refund_refused_stale)), errors)
+        assertNull(model.confirm.value)
+        coVerify(exactly = 2) { useCase.findCandidates(1L) }
+    }
+
     // ---- confirmLink refusals and failures ---------------------------------------------------------
 
     private suspend fun kotlinx.coroutines.test.TestScope.linkRefused(code: RefundLinkRefusal): Triple<List<UiText>, List<Unit>, List<UiText>> {

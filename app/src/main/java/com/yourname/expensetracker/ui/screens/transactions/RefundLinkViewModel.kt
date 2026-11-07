@@ -315,8 +315,14 @@ class RefundLinkViewModel @Inject constructor(
             else -> return
         }
         val currency = deposit.amount.currency.code
-        val applied = RefundUiMoney.minOf(candidate.remaining.amount, deposit.amount.amount, currency) ?: return
-        val netAfter = RefundUiMoney.subtract(candidate.remaining.amount, applied, currency) ?: return
+        // Scale unavailable: say so (stale wording) and reload the picker, never a silent no-op or a zero preview.
+        val applied = RefundUiMoney.minOf(candidate.remaining.amount, deposit.amount.amount, currency)
+        val netAfter = applied?.let { RefundUiMoney.subtract(candidate.remaining.amount, it, currency) }
+        if (applied == null || netAfter == null) {
+            _error.tryEmit(UiText.from(R.string.refund_refused_stale))
+            loadCandidates(deposit)
+            return
+        }
         _confirm.value = RefundConfirmUiState(
             deposit = deposit,
             candidate = candidate,

@@ -243,6 +243,7 @@ fun TransactionsScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     
     val context = LocalContext.current
+    val okLabel = stringResource(R.string.action_ok)
     val mutatingExpenseIds by viewModel.mutatingExpenseIds.collectAsState()
     // refund-netting S4: ids with a link or unlink write in flight disable that row's refund actions.
     val refundMutatingIds by refundViewModel.mutatingExpenseIds.collectAsState()
@@ -262,7 +263,7 @@ fun TransactionsScreen(
                 snackbarHostState.showSnackbar(
                     message = message.asString(context),
                     duration = SnackbarDuration.Short,
-                    actionLabel = "OK"
+                    actionLabel = okLabel
                 )
             }
         }
@@ -289,11 +290,11 @@ fun TransactionsScreen(
             snackbarHostState.showSnackbar(
                 message = message.asString(context),
                 duration = SnackbarDuration.Short,
-                actionLabel = "OK"
+                actionLabel = okLabel
             )
         }
     }
-    
+
     // Detect when to load more for pagination
     // F3: while the installments filter is on, the filtered list can be empty or tiny although more
     // pages exist, which would block the scroll trigger and show a false empty list. Keep loading
@@ -923,6 +924,7 @@ fun TransactionsScreen(
                 currentTransferAccountName = expenseToChangeType?.transferAccountName,
                 isLikelyRefund = expenseToChangeType?.let { it.id in likelyRefundDepositIds && it.canApplyAsRefund() } == true,
                 isRefundLinked = expenseToChangeType?.hasRefundLink() == true,
+                refundBusy = expenseToChangeType?.let { it.id in refundMutatingIds } == true,
                 onApplyRefund = {
                     val target = expenseToChangeType
                     expenseToChangeType = null
@@ -2334,6 +2336,7 @@ fun ChangeTypeDialog(
     onConfirm: (TransactionType, TransferDirection?, String) -> Unit,
     isLikelyRefund: Boolean = false,
     isRefundLinked: Boolean = false,
+    refundBusy: Boolean = false,
     onApplyRefund: () -> Unit = {}
 ) {
     var selectedType by remember { mutableStateOf(currentType) }
@@ -2361,7 +2364,7 @@ fun ChangeTypeDialog(
 
                 if (isLikelyRefund) {
                     // Q11: same shared notice as the row; the button closes this dialog first (caller).
-                    RefundLikelyNotice(onApply = onApplyRefund)
+                    RefundLikelyNotice(onApply = onApplyRefund, enabled = !refundBusy)
                 }
                 // INV-12: a refund-linked row cannot change amount, currency or type; remove the link first.
                 if (isRefundLinked) {
