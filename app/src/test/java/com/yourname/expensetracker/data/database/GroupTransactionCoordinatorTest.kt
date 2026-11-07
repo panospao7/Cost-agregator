@@ -947,6 +947,146 @@ class GroupTransactionCoordinatorTest {
         assertThat(groupExpenseDao.getExpensesForGroup(groupId).first()).hasSize(1)
     }
 
+    // ── refund-netting INV-19 / AE-11: a refund-linked row cannot join a group ──
+
+    @Test
+    fun `INV-19 AE-11 addExpenseWithLink refuses a refund-linked system expense and writes nothing`() = runTest {
+        val groupId = coordinator.createGroupWithMembersAtomic(
+            group = ExpenseGroup(name = "Refund Guard Group", defaultCurrency = "EUR"),
+            members = listOf(GroupMember(groupId = 0, name = "Alice", isCurrentUser = true))
+        )
+        val payerId = memberDao.getMembersForGroup(groupId).first().first().id
+        val linkedId = expenseDao.insert(
+            Expense(
+                amount = 100.0,
+                currency = "EUR",
+                merchant = "Synthetic Shop",
+                transactionType = TransactionType.PURCHASE,
+                date = TEST_DATE,
+                refundNettedAmount = 40.0
+            )
+        )
+
+        val result = coordinator.addExpenseWithLink(
+            groupId = groupId,
+            systemExpenseId = linkedId,
+            description = "Synthetic Shop",
+            amount = 100.0,
+            paidById = payerId,
+            currency = "EUR",
+            splitType = SplitType.EQUAL,
+            date = TEST_DATE
+        )
+
+        assertThat(result).isInstanceOf(GroupExpenseCreationResult.Error::class.java)
+        assertThat((result as GroupExpenseCreationResult.Error).message)
+            .isEqualTo("REFUND_LINKED")
+        assertThat(groupExpenseDao.getExpensesForGroup(groupId).first()).isEmpty()
+        assertThat(expenseDao.getById(linkedId)!!.refundNettedAmount).isEqualTo(40.0)
+    }
+
+    @Test
+    fun `INV-19 control addExpenseWithLink still links an unlinked system expense`() = runTest {
+        val groupId = coordinator.createGroupWithMembersAtomic(
+            group = ExpenseGroup(name = "Refund Control Group", defaultCurrency = "EUR"),
+            members = listOf(GroupMember(groupId = 0, name = "Alice", isCurrentUser = true))
+        )
+        val payerId = memberDao.getMembersForGroup(groupId).first().first().id
+        val plainId = expenseDao.insert(
+            Expense(
+                amount = 100.0,
+                currency = "EUR",
+                merchant = "Synthetic Shop",
+                transactionType = TransactionType.PURCHASE,
+                date = TEST_DATE
+            )
+        )
+
+        val result = coordinator.addExpenseWithLink(
+            groupId = groupId,
+            systemExpenseId = plainId,
+            description = "Synthetic Shop",
+            amount = 100.0,
+            paidById = payerId,
+            currency = "EUR",
+            splitType = SplitType.EQUAL,
+            date = TEST_DATE
+        )
+
+        assertThat(result).isInstanceOf(GroupExpenseCreationResult.Success::class.java)
+        assertThat(groupExpenseDao.getExpensesForGroup(groupId).first()).hasSize(1)
+    }
+
+    @Test
+    fun `INV-19 AE-11 addExpenseToGroupAtomic refuses a refund-linked system expense with the bounded code`() = runTest {
+        val groupId = coordinator.createGroupWithMembersAtomic(
+            group = ExpenseGroup(name = "Refund Atomic Group", defaultCurrency = "EUR"),
+            members = listOf(GroupMember(groupId = 0, name = "Alice", isCurrentUser = true))
+        )
+        val payerId = memberDao.getMembersForGroup(groupId).first().first().id
+        val linkedId = expenseDao.insert(
+            Expense(
+                amount = 12.0,
+                currency = "EUR",
+                merchant = "Synthetic Cafe",
+                transactionType = TransactionType.PURCHASE,
+                date = TEST_DATE,
+                refundNettedAmount = 0.01
+            )
+        )
+
+        var thrown: Exception? = null
+        try {
+            coordinator.addExpenseToGroupAtomic(
+                GroupExpense(
+                    groupId = groupId,
+                    expenseId = linkedId,
+                    paidById = payerId,
+                    date = TEST_DATE,
+                    description = "Synthetic Cafe",
+                    totalAmount = 12.0
+                )
+            )
+        } catch (e: Exception) {
+            thrown = e
+        }
+
+        assertThat(thrown).isInstanceOf(IllegalArgumentException::class.java)
+        assertThat(thrown!!.message).isEqualTo("REFUND_LINKED")
+        assertThat(groupExpenseDao.getExpensesForGroup(groupId).first()).isEmpty()
+    }
+
+    @Test
+    fun `INV-19 control addExpenseToGroupAtomic still inserts for an unlinked system expense`() = runTest {
+        val groupId = coordinator.createGroupWithMembersAtomic(
+            group = ExpenseGroup(name = "Refund Atomic Control", defaultCurrency = "EUR"),
+            members = listOf(GroupMember(groupId = 0, name = "Alice", isCurrentUser = true))
+        )
+        val payerId = memberDao.getMembersForGroup(groupId).first().first().id
+        val plainId = expenseDao.insert(
+            Expense(
+                amount = 12.0,
+                currency = "EUR",
+                merchant = "Synthetic Cafe",
+                transactionType = TransactionType.PURCHASE,
+                date = TEST_DATE
+            )
+        )
+
+        coordinator.addExpenseToGroupAtomic(
+            GroupExpense(
+                groupId = groupId,
+                expenseId = plainId,
+                paidById = payerId,
+                date = TEST_DATE,
+                description = "Synthetic Cafe",
+                totalAmount = 12.0
+            )
+        )
+
+        assertThat(groupExpenseDao.getExpensesForGroup(groupId).first()).hasSize(1)
+    }
+
     @Test
     fun `repository rejects departed member and RG04A-1 late joiner splits before system or group rows appear`() = runTest {
         val groupId = coordinator.createGroupWithMembersAtomic(
