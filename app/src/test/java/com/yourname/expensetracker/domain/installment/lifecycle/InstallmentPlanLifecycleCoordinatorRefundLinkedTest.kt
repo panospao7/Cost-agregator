@@ -211,7 +211,9 @@ class InstallmentPlanLifecycleCoordinatorRefundLinkedTest {
         assertEquals(eventsBefore, fx.count("transaction_events"))
         fx.assertTablesUnchanged(counts)
         assertEquals(10.0, nettedOf(paidExpenseIds.last()), 0.0)
-        verify(exactly = 0) { fx.planner.planUpdated(any(), any(), any(), any()) }
+        // No post-commit dispatch: Failed carries no post-commit batch (only Done does), so the
+        // batches built for earlier entries inside the aborted transaction were dropped.
+        assertTrue("Failed must not be a Done carrying post-commit batches", result !is InstallmentOpResult.Done)
         assertEquals(0, fx.barrier.inFlightWriteCount())
     }
 
