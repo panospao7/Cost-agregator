@@ -2,6 +2,7 @@ package com.yourname.expensetracker.data.repository
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import com.yourname.expensetracker.BuildConfig
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.AppDatabase
@@ -32,7 +33,8 @@ import org.robolectric.annotation.Config
  * restored rows must carry 0.0. Real in-memory Room database and real transaction; only the
  * diagnostics sink is a mock. Synthetic data only.
  *
- * Unit tests run against the debug build type, where the debug-only operation is allowed.
+ * In the debug build type the debug-only operation is exercised; in release it must refuse with
+ * [UnsupportedOperationException] and change nothing.
  */
 @OptIn(RestrictedExpenseDaoMutation::class)
 @RunWith(RobolectricTestRunner::class)
@@ -114,9 +116,28 @@ class ExpenseRepositoryRestoreDebugSnapshotRefundTest {
         return purchaseId to refundId
     }
 
+    /**
+     * Release-variant refusal: the debug-only snapshot API must throw and leave the seeded rows and
+     * refund links exactly as they were.
+     */
+    private suspend fun assertReleaseRefusalLeavesStateUnchanged(call: suspend () -> Unit) {
+        val rowsBefore = db.expenseDao().getAllUncapped()
+        val linksBefore = db.expenseRefundLinkDao().countAll()
+
+        val failure = runCatching { call() }.exceptionOrNull()
+
+        assertTrue(failure is UnsupportedOperationException)
+        assertEquals(rowsBefore, db.expenseDao().getAllUncapped())
+        assertEquals(linksBefore, db.expenseRefundLinkDao().countAll())
+    }
+
     @Test
     fun `INV-1 restoreDebugSnapshot re-inserts netted rows with refundNettedAmount zero and keeps every other field`() = runTest {
         val (purchaseId, refundId) = seedNettedPair()
+        if (!BuildConfig.DEBUG) {
+            assertReleaseRefusalLeavesStateUnchanged { repository.createDebugSnapshot() }
+            return@runTest
+        }
         val snapshot = repository.createDebugSnapshot()
         assertEquals(
             "fixture: the snapshot carries the netted amounts",
@@ -142,6 +163,10 @@ class ExpenseRepositoryRestoreDebugSnapshotRefundTest {
     @Test
     fun `INV-1 after restoreDebugSnapshot no link rows remain and the column equals the empty link sum`() = runTest {
         seedNettedPair()
+        if (!BuildConfig.DEBUG) {
+            assertReleaseRefusalLeavesStateUnchanged { repository.createDebugSnapshot() }
+            return@runTest
+        }
         val snapshot = repository.createDebugSnapshot()
 
         repository.restoreDebugSnapshot(snapshot)
@@ -164,6 +189,10 @@ class ExpenseRepositoryRestoreDebugSnapshotRefundTest {
                 date = 1_700_000_000_000L
             )
         )
+        if (!BuildConfig.DEBUG) {
+            assertReleaseRefusalLeavesStateUnchanged { repository.createDebugSnapshot() }
+            return@runTest
+        }
         val snapshot = repository.createDebugSnapshot()
 
         repository.restoreDebugSnapshot(snapshot)
@@ -175,6 +204,12 @@ class ExpenseRepositoryRestoreDebugSnapshotRefundTest {
     @Test
     fun `INV-1 restoreDebugSnapshot of an empty snapshot leaves an empty table and no links`() = runTest {
         seedNettedPair()
+        if (!BuildConfig.DEBUG) {
+            assertReleaseRefusalLeavesStateUnchanged {
+                repository.restoreDebugSnapshot(ExpenseRepository.DebugExpenseSnapshot(expenses = emptyList()))
+            }
+            return@runTest
+        }
 
         repository.restoreDebugSnapshot(ExpenseRepository.DebugExpenseSnapshot(expenses = emptyList()))
 
