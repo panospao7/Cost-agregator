@@ -415,7 +415,8 @@ class SemanticAggregatesTest {
             db.execSQL(
                 "CREATE TABLE expenses (id INTEGER PRIMARY KEY, transactionType TEXT NOT NULL, currency TEXT NOT NULL, " +
                     "amount REAL, isNotMine INTEGER NOT NULL DEFAULT 0, isSharedExpense INTEGER NOT NULL DEFAULT 0, " +
-                    "myShareAmount REAL, mySharePercentage INTEGER, spendingExclusionReason TEXT DEFAULT NULL)"
+                    "myShareAmount REAL, mySharePercentage INTEGER, spendingExclusionReason TEXT DEFAULT NULL, " +
+                    "refundNettedAmount REAL NOT NULL DEFAULT 0.0)"
             )
             db.execSQL(
                 "CREATE TABLE manual_recurring_expenses (id INTEGER PRIMARY KEY, isActive INTEGER NOT NULL, " +
