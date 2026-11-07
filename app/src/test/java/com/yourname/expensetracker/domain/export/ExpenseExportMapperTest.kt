@@ -102,4 +102,41 @@ class ExpenseExportMapperTest {
         assertThat(convertedMapped.exchangeRateUsed).isEqualTo(0.85)
         assertThat(convertedMapped.conversionRateUsed).isEqualTo(0.85)
     }
+
+    @Test
+    fun `toExportTransaction maps refundNettedAmount with gross amount and net effective amount`() {
+        val expense = Expense(
+            id = 60L,
+            amount = 100.0,
+            currency = "EUR",
+            merchant = "Shirt",
+            transactionType = TransactionType.PURCHASE,
+            date = 1_700_000_000_000L,
+            refundNettedAmount = 40.0
+        )
+
+        val result = expense.toExportTransaction()
+
+        assertThat(result.amount).isEqualTo(100.0)
+        assertThat(result.effectiveAmount).isEqualTo(60.0)
+        assertThat(result.refundNettedAmount).isEqualTo(40.0)
+    }
+
+    @Test
+    fun `toExportTransaction defaults refundNettedAmount to zero and guards non-finite values`() {
+        val base = Expense(
+            id = 61L,
+            amount = 25.0,
+            currency = "EUR",
+            merchant = "Plain",
+            transactionType = TransactionType.PURCHASE,
+            date = 1_700_000_000_000L
+        )
+
+        assertThat(base.toExportTransaction().refundNettedAmount).isEqualTo(0.0)
+        assertThat(base.copy(refundNettedAmount = Double.NaN).toExportTransaction().refundNettedAmount)
+            .isEqualTo(0.0)
+        assertThat(base.copy(refundNettedAmount = Double.POSITIVE_INFINITY).toExportTransaction().refundNettedAmount)
+            .isEqualTo(0.0)
+    }
 }

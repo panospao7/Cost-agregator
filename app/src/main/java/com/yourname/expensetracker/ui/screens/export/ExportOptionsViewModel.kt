@@ -760,7 +760,10 @@ class ExportOptionsViewModel @Inject constructor(
                         append(escapeCsv(tx.businessCategory ?: "")).append(',')
                         append(escapeCsv(tx.businessProject ?: "")).append(',')
                         append(if (tx.requiresReceipt) "true" else "false").append(',')
-                        append(escapeCsv(tx.sourceLinksJson ?: "")).append('\n')
+                        append(escapeCsv(tx.sourceLinksJson ?: "")).append(',')
+                        // refund-netting INV-21: trailing column, stored refund in [currency]
+                        // (0.0 = unlinked). The CSV importer ignores it (links are not restored).
+                        append(formatJsonNumber(tx.refundNettedAmount)).append('\n')
                     }
                     writer.append(line)
                     preview?.append(line)
@@ -838,6 +841,8 @@ class ExportOptionsViewModel @Inject constructor(
                 // P12-PR1 (NEW-P12-002): sourceLinksJson is already valid JSON — append raw, don't escape
                 if (tx.sourceLinksJson == null) append("null")
                 else append(tx.sourceLinksJson)
+                // refund-netting INV-21: trailing field, stored refund in currency (0.0 = unlinked).
+                append(",\"refundNettedAmount\":").append(formatJsonNumber(tx.refundNettedAmount))
                 append("}")
             }
             writer.append(row)
@@ -997,7 +1002,7 @@ class ExportOptionsViewModel @Inject constructor(
                 writer.append(metadataLine)
                 preview.append(metadataLine)
                 // P12-P1-06: Added BusinessCategory, BusinessProject, RequiresReceipt, SourceAccountName, ConversionRateUsed columns
-                val header = "ID,Date,CreatedAt,Merchant,Amount,EffectiveAmount,Currency,TransactionType,Category,Notes,Source,PaymentMethod,SourceAccountName,OriginalCurrency,OriginalAmount,HomeCurrency,BaseAmount,BaseCurrency,ExchangeRateUsed,ConversionRateUsed,IsBusinessExpense,BusinessPurpose,BusinessCategory,BusinessProject,RequiresReceipt,SourceLinks\n"
+                val header = "ID,Date,CreatedAt,Merchant,Amount,EffectiveAmount,Currency,TransactionType,Category,Notes,Source,PaymentMethod,SourceAccountName,OriginalCurrency,OriginalAmount,HomeCurrency,BaseAmount,BaseCurrency,ExchangeRateUsed,ConversionRateUsed,IsBusinessExpense,BusinessPurpose,BusinessCategory,BusinessProject,RequiresReceipt,SourceLinks,RefundNettedAmount\n"
                 writer.append(header)
                 preview.append(header)
             }

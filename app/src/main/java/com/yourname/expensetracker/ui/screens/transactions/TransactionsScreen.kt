@@ -135,7 +135,8 @@ fun TransactionsScreen(
     onNavigateToAnalytics: () -> Unit = {},
     onAddExpense: () -> Unit = {},
     onOpenVisualSplit: (Expense) -> Unit = {},
-    onOpenInstallmentPlan: (Long) -> Unit = {}
+    onOpenInstallmentPlan: (Long) -> Unit = {},
+    refundViewModel: RefundLinkViewModel = hiltViewModel()
 ) {
     val transactions by viewModel.transactions.collectAsState()
     val groupedTransactionsBase by viewModel.groupedTransactions.collectAsState()
@@ -242,7 +243,34 @@ fun TransactionsScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     
     val context = LocalContext.current
+    val okLabel = stringResource(R.string.action_ok)
     val mutatingExpenseIds by viewModel.mutatingExpenseIds.collectAsState()
+    // refund-netting S4: ids with a link or unlink write in flight disable that row's refund actions.
+    val refundMutatingIds by refundViewModel.mutatingExpenseIds.collectAsState()
+
+    // refund-netting S4: results of the refund flows use the same snackbars; a changed link reloads the list.
+    LaunchedEffect(refundViewModel) {
+        launch {
+            refundViewModel.error.collect { message ->
+                snackbarHostState.showSnackbar(
+                    message = message.asString(context),
+                    duration = SnackbarDuration.Short
+                )
+            }
+        }
+        launch {
+            refundViewModel.successMessage.collect { message ->
+                snackbarHostState.showSnackbar(
+                    message = message.asString(context),
+                    duration = SnackbarDuration.Short,
+                    actionLabel = okLabel
+                )
+            }
+        }
+        launch {
+            refundViewModel.refreshRequests.collect { viewModel.refresh() }
+        }
+    }
 
     // Collect error messages
     LaunchedEffect(Unit) {
@@ -262,11 +290,11 @@ fun TransactionsScreen(
             snackbarHostState.showSnackbar(
                 message = message.asString(context),
                 duration = SnackbarDuration.Short,
-                actionLabel = "OK"
+                actionLabel = okLabel
             )
         }
     }
-    
+
     // Detect when to load more for pagination
     // F3: while the installments filter is on, the filtered list can be empty or tiny although more
     // pages exist, which would block the scroll trigger and show a false empty list. Keep loading
@@ -674,7 +702,10 @@ fun TransactionsScreen(
                                     TransactionItem(
                                         transaction = item,
                                         isHighlighted = highlightedExpenseId == item.expense.id,
-                                        isLikelyRefund = item.expense.id in likelyRefundDepositIds,
+                                        isLikelyRefund = item.expense.id in likelyRefundDepositIds && item.expense.canApplyAsRefund(),
+                                        refundBusy = item.expense.id in refundMutatingIds,
+                                        onApplyRefund = { refundViewModel.openPicker(item.expense) },
+                                        onRefundDetails = { refundViewModel.openDetails(item.expense) },
                                         onDelete = { expenseToDelete = item.expense },
                                         onEditCategory = { expenseToCategorize = item.expense },
                                         onMarkRecurring = { expenseToRecurring = item.expense },
@@ -746,6 +777,9 @@ fun TransactionsScreen(
                 onOpenPlan = onOpenInstallmentPlan
             )
         }
+
+        // refund-netting S4: picker, confirm, details and unlink (nothing renders while all are closed)
+        RefundLinkHost(viewModel = refundViewModel)
 
         // Delete confirmation dialog
         if (expenseToDelete != null) {
@@ -888,7 +922,14 @@ fun TransactionsScreen(
                 currentType = expenseToChangeType?.transactionType ?: TransactionType.PURCHASE,
                 currentTransferDirection = expenseToChangeType?.transferDirection,
                 currentTransferAccountName = expenseToChangeType?.transferAccountName,
-                isLikelyRefund = expenseToChangeType?.id in likelyRefundDepositIds,
+                isLikelyRefund = expenseToChangeType?.let { it.id in likelyRefundDepositIds && it.canApplyAsRefund() } == true,
+                isRefundLinked = expenseToChangeType?.hasRefundLink() == true,
+                refundBusy = expenseToChangeType?.let { it.id in refundMutatingIds } == true,
+                onApplyRefund = {
+                    val target = expenseToChangeType
+                    expenseToChangeType = null
+                    if (target != null) refundViewModel.openPicker(target)
+                },
                 onDismiss = { expenseToChangeType = null },
                 onConfirm = { newType, transferDirection, transferAccountName ->
                     expenseToChangeType?.let {
@@ -1468,7 +1509,10 @@ private fun TransactionItem(
     installmentRow: InstallmentRowUi? = null,
     onPayInInstallments: () -> Unit = {},
     onOpenInstallmentPlan: (Long) -> Unit = {},
-    isLikelyRefund: Boolean = false
+    isLikelyRefund: Boolean = false,
+    refundBusy: Boolean = false,
+    onApplyRefund: () -> Unit = {},
+    onRefundDetails: () -> Unit = {}
 ) {
     val expense = transaction.expense
     val category = transaction.category
@@ -1670,13 +1714,10 @@ private fun TransactionItem(
 
                 if (isLikelyRefund) {
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = stringResource(R.string.transactions_refund_likelihood_notice),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = SemanticColors.WarningOrange
-                    )
+                    // Q11: the same notice composable is used in ChangeTypeDialog.
+                    RefundLikelyNotice(onApply = onApplyRefund, enabled = !refundBusy)
                 }
-                
+
                 // Time
                 Text(
                     text = transaction.formattedTime,
@@ -1730,9 +1771,9 @@ private fun TransactionItem(
                         color = MaterialTheme.colorScheme.primary
                     )
                 }
-                
+                // refund-netting S4: Refunded/Net (purchase) or Applied (deposit), from the row's own values.
+                RefundRowChips(expense)
 
-                
                 // Action buttons row (primary + overflow to preserve text space)
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
@@ -1784,6 +1825,13 @@ private fun TransactionItem(
                                 onDismiss = { showActionMenu = false },
                                 onPay = onPayInInstallments,
                                 onViewPlan = onOpenInstallmentPlan
+                            )
+                            RefundMenuItems(
+                                expense = expense,
+                                busy = refundBusy,
+                                onApply = onApplyRefund,
+                                onDetails = onRefundDetails,
+                                onDismiss = { showActionMenu = false }
                             )
                             val (ownershipIcon, _) = remember(expense.isNotMine, expense.isSharedExpense, expense.transactionType, ownershipNotMine, ownershipShared, ownershipTransfer, ownershipSettings) {
                                 when {
@@ -1967,6 +2015,8 @@ private fun DeleteConfirmationDialog(
                         expense.merchant
                     )
                 )
+                // refund-netting S4: the link goes with the row and the other side returns to its full amount.
+                RefundDeleteNote(expense)
                 // PE-D: static role line from the row marks (flag fallback); no plan read.
                 if (installmentRole != null) {
                     Text(
@@ -2284,7 +2334,10 @@ fun ChangeTypeDialog(
     currentTransferAccountName: String?,
     onDismiss: () -> Unit,
     onConfirm: (TransactionType, TransferDirection?, String) -> Unit,
-    isLikelyRefund: Boolean = false
+    isLikelyRefund: Boolean = false,
+    isRefundLinked: Boolean = false,
+    refundBusy: Boolean = false,
+    onApplyRefund: () -> Unit = {}
 ) {
     var selectedType by remember { mutableStateOf(currentType) }
     var transferDirection by remember { mutableStateOf(currentTransferDirection) }
@@ -2310,11 +2363,12 @@ fun ChangeTypeDialog(
                 )
 
                 if (isLikelyRefund) {
-                    Text(
-                        text = stringResource(R.string.transactions_refund_likelihood_notice),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = SemanticColors.WarningOrange
-                    )
+                    // Q11: same shared notice as the row; the button closes this dialog first (caller).
+                    RefundLikelyNotice(onApply = onApplyRefund, enabled = !refundBusy)
+                }
+                // INV-12: a refund-linked row cannot change amount, currency or type; remove the link first.
+                if (isRefundLinked) {
+                    RefundLockedNote()
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -2417,7 +2471,7 @@ fun ChangeTypeDialog(
         confirmButton = {
             Button(
                 onClick = { onConfirm(selectedType, transferDirection, transferAccountNameTrimmed) },
-                enabled = (selectedType != currentType || hasTransferMetadataChange) && transferMetadataValid,
+                enabled = (selectedType != currentType || hasTransferMetadataChange) && transferMetadataValid && !isRefundLinked,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = SemanticColors.PrimaryIndigo
                 )

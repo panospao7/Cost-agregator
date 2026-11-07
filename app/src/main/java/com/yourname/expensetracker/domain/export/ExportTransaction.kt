@@ -76,8 +76,9 @@ data class ExportTransaction(
     // ── Refund netting (refund-netting INV-6) ─────────────────────
     /**
      * Stored `refundNettedAmount` of the source expense (0.0 = no refund link), in [currency].
-     * DTO carry only: [effectiveAmount] is already net of it. No export column is written for it
-     * until refund-netting S4.
+     * [effectiveAmount] is already net of it. The generic CSV (`RefundNettedAmount`) and JSON
+     * (`refundNettedAmount`) exports write it as the trailing column/field (INV-21); accounting
+     * exporters do not.
      */
     val refundNettedAmount: Double = 0.0
 ) {

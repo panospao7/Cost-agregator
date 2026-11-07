@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- refund-netting S4 (DR-05): Transactions refund link UI. 43 keys: ux-flows 7.2 (42) plus refund_unlink_body_remaining_format (Q7). -->
+    <string name="refund_notice_action">Apply to purchase</string>
+    <string name="refund_menu_apply">This is a refund of...</string>
+    <string name="refund_menu_details">Refund details</string>
+    <string name="refund_chip_purchase_format">Refunded %1$s</string>
+    <string name="refund_chip_net_format">Net %1$s</string>
+    <string name="refund_chip_deposit_format">Applied to a purchase: %1$s</string>
+    <string name="refund_chip_deposit_left_format">%1$s still counts as income</string>
+    <string name="refund_chip_purchase_cd_format">Refunded %1$s of %2$s, net %3$s</string>
+    <string name="refund_chip_deposit_cd_format">Refund applied to a purchase: %1$s of %2$s</string>
+    <string name="refund_picker_title">Which purchase was refunded?</string>
+    <string name="refund_picker_subtitle_format">Refund of %1$s on %2$s</string>
+    <string name="refund_picker_loading_cd">Looking for matching purchases</string>
+    <string name="refund_picker_none_format">No matching purchases found. Only %1$s purchases from the %2$d days before this refund can be matched.</string>
+    <string name="refund_picker_unavailable">Matching purchases are unavailable right now.</string>
+    <string name="refund_candidate_remaining_format">%1$s not yet refunded</string>
+    <string name="refund_candidate_select_cd_format">Apply the refund to the %1$s purchase</string>
+    <string name="refund_confirm_title">Apply this refund?</string>
+    <string name="refund_label_purchase">Purchase</string>
+    <string name="refund_label_refunded">Refunded</string>
+    <string name="refund_label_net">Net</string>
+    <string name="refund_confirm_effect_format">This lowers spending in %1$s (%2$s) by %3$s, even if that month has passed. It also stops %3$s of this deposit counting as income.</string>
+    <string name="refund_confirm_partial_format">Only %1$s of this %2$s deposit can be applied. The rest still counts as income.</string>
+    <string name="refund_confirm_action">Apply</string>
+    <string name="refund_done_format">Refund applied to %1$s. Net: %2$s.</string>
+    <string name="refund_already_applied">This refund is already applied to that purchase.</string>
+    <string name="refund_refused_nothing_to_apply">That purchase has nothing left to refund.</string>
+    <string name="refund_refused_linked_elsewhere">This refund is already applied to another purchase. Remove that link first.</string>
+    <string name="refund_refused_before_purchase">A refund can\'t be dated more than a day before the purchase.</string>
+    <string name="refund_refused_currency">A refund can only be applied to a purchase in the same currency.</string>
+    <string name="refund_refused_installment">Installment purchases are refunded from the installment plan.</string>
+    <string name="refund_refused_group">This transaction is part of a shared group, so it can\'t be linked to a refund.</string>
+    <string name="refund_refused_stale">That refund can no longer be applied to this purchase. The list was refreshed.</string>
+    <string name="refund_unlinked">Link removed. Both amounts are back to the original.</string>
+    <string name="refund_details_purchase_header">Refunds on this purchase</string>
+    <string name="refund_details_deposit_header">Applied to</string>
+    <string name="refund_details_unavailable">Refund details are unavailable right now.</string>
+    <string name="refund_details_remove">Remove link</string>
+    <string name="refund_details_remove_cd_format">Remove the link for the %1$s refund dated %2$s</string>
+    <string name="refund_unlink_title">Remove this link?</string>
+    <string name="refund_unlink_body_format">The %1$s refund will count as income again, and %2$s will go back to %3$s in its month and category.</string>
+    <string name="refund_unlink_body_remaining_format">The %1$s refund will count as income again, and %2$s will show %3$s in its month and category.</string>
+    <string name="transactions_refund_linked_locked">This transaction is linked to a refund, so its amount, currency and type can\'t be changed. Remove the link first.</string>
+    <string name="transactions_delete_refund_linked_note">This transaction is linked to a refund. Deleting it removes the link, and the other transaction goes back to its full amount.</string>
+</resources>
