@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- refund-netting S4 (all 44 keys below are DRAFT: owner native sign-off pending) -->
+    <!-- refund_notice_action: DRAFT: owner native sign-off pending -->
+    <string name="refund_notice_action">Aplicar a una compra</string>
+    <!-- refund_menu_apply: DRAFT: owner native sign-off pending -->
+    <string name="refund_menu_apply">Esto es un reembolso de...</string>
+    <!-- refund_menu_details: DRAFT: owner native sign-off pending -->
+    <string name="refund_menu_details">Detalles del reembolso</string>
+    <!-- refund_chip_purchase_format: DRAFT: owner native sign-off pending -->
+    <string name="refund_chip_purchase_format">Reembolsado: %1$s</string>
+    <!-- refund_chip_net_format: DRAFT: owner native sign-off pending -->
+    <string name="refund_chip_net_format">Neto: %1$s</string>
+    <!-- refund_chip_deposit_format: DRAFT: owner native sign-off pending -->
+    <string name="refund_chip_deposit_format">Aplicado a una compra: %1$s</string>
+    <!-- refund_chip_deposit_left_format: DRAFT: owner native sign-off pending -->
+    <string name="refund_chip_deposit_left_format">%1$s sigue contando como ingreso</string>
+    <!-- refund_chip_purchase_cd_format: DRAFT: owner native sign-off pending -->
+    <string name="refund_chip_purchase_cd_format">Reembolsado %1$s de %2$s, neto %3$s</string>
+    <!-- refund_chip_deposit_cd_format: DRAFT: owner native sign-off pending -->
+    <string name="refund_chip_deposit_cd_format">Reembolso aplicado a una compra: %1$s de %2$s</string>
+    <!-- refund_picker_title: DRAFT: owner native sign-off pending -->
+    <string name="refund_picker_title">¿Qué compra se reembolsó?</string>
+    <!-- refund_picker_subtitle_format: DRAFT: owner native sign-off pending -->
+    <string name="refund_picker_subtitle_format">Reembolso de %1$s el %2$s</string>
+    <!-- refund_picker_loading_cd: DRAFT: owner native sign-off pending -->
+    <string name="refund_picker_loading_cd">Buscando compras coincidentes</string>
+    <!-- refund_picker_none_format: DRAFT: owner native sign-off pending -->
+    <string name="refund_picker_none_format">No se encontraron compras coincidentes. Solo se pueden relacionar compras en %1$s de los %2$d días anteriores a este reembolso.</string>
+    <!-- refund_picker_unavailable: DRAFT: owner native sign-off pending -->
+    <string name="refund_picker_unavailable">Las compras coincidentes no están disponibles ahora.</string>
+    <!-- refund_candidate_remaining_format: DRAFT: owner native sign-off pending -->
+    <string name="refund_candidate_remaining_format">%1$s sin reembolsar</string>
+    <!-- refund_candidate_select_cd_format: DRAFT: owner native sign-off pending -->
+    <string name="refund_candidate_select_cd_format">Aplicar el reembolso a la compra de %1$s</string>
+    <!-- refund_confirm_title: DRAFT: owner native sign-off pending -->
+    <string name="refund_confirm_title">¿Aplicar este reembolso?</string>
+    <!-- refund_label_purchase: DRAFT: owner native sign-off pending -->
+    <string name="refund_label_purchase">Compra</string>
+    <!-- refund_label_refunded: DRAFT: owner native sign-off pending -->
+    <string name="refund_label_refunded">Reembolsado</string>
+    <!-- refund_label_net: DRAFT: owner native sign-off pending -->
+    <string name="refund_label_net">Neto</string>
+    <!-- refund_confirm_effect_format: DRAFT: owner native sign-off pending -->
+    <string name="refund_confirm_effect_format">Esto reduce el gasto de %1$s (%2$s) en %3$s, aunque ese mes ya haya pasado. También hace que %3$s de este depósito deje de contar como ingreso.</string>
+    <!-- refund_confirm_partial_format: DRAFT: owner native sign-off pending -->
+    <string name="refund_confirm_partial_format">Solo se pueden aplicar %1$s de este depósito de %2$s. El resto sigue contando como ingreso.</string>
+    <!-- refund_confirm_action: DRAFT: owner native sign-off pending -->
+    <string name="refund_confirm_action">Aplicar</string>
+    <!-- refund_done_format: DRAFT: owner native sign-off pending -->
+    <string name="refund_done_format">Reembolso aplicado a %1$s. Neto: %2$s.</string>
+    <!-- refund_done_plain_format: DRAFT: owner native sign-off pending -->
+    <string name="refund_done_plain_format">Reembolso aplicado a %1$s.</string>
+    <!-- refund_already_applied: DRAFT: owner native sign-off pending -->
+    <string name="refund_already_applied">Este reembolso ya está aplicado a esa compra.</string>
+    <!-- refund_refused_nothing_to_apply: DRAFT: owner native sign-off pending -->
+    <string name="refund_refused_nothing_to_apply">Esa compra no tiene nada más que reembolsar.</string>
+    <!-- refund_refused_linked_elsewhere: DRAFT: owner native sign-off pending -->
+    <string name="refund_refused_linked_elsewhere">Este reembolso ya está aplicado a otra compra. Quita primero ese vínculo.</string>
+    <!-- refund_refused_before_purchase: DRAFT: owner native sign-off pending -->
+    <string name="refund_refused_before_purchase">Un reembolso no puede tener fecha más de un día anterior a la compra.</string>
+    <!-- refund_refused_currency: DRAFT: owner native sign-off pending -->
+    <string name="refund_refused_currency">Un reembolso solo se puede aplicar a una compra en la misma moneda.</string>
+    <!-- refund_refused_installment: DRAFT: owner native sign-off pending -->
+    <string name="refund_refused_installment">Las compras a plazos se reembolsan desde el plan de cuotas.</string>
+    <!-- refund_refused_group: DRAFT: owner native sign-off pending -->
+    <string name="refund_refused_group">Esta transacción forma parte de un grupo compartido, por lo que no se puede vincular a un reembolso.</string>
+    <!-- refund_refused_stale: DRAFT: owner native sign-off pending -->
+    <string name="refund_refused_stale">Ese reembolso ya no se puede aplicar a esta compra. Se actualizó la lista.</string>
+    <!-- refund_unlinked: DRAFT: owner native sign-off pending -->
+    <string name="refund_unlinked">Reembolso eliminado de esta compra.</string>
+    <!-- refund_details_purchase_header: DRAFT: owner native sign-off pending -->
+    <string name="refund_details_purchase_header">Reembolsos de esta compra</string>
+    <!-- refund_details_deposit_header: DRAFT: owner native sign-off pending -->
+    <string name="refund_details_deposit_header">Aplicado a</string>
+    <!-- refund_details_unavailable: DRAFT: owner native sign-off pending -->
+    <string name="refund_details_unavailable">Los detalles del reembolso no están disponibles ahora.</string>
+    <!-- refund_details_remove: DRAFT: owner native sign-off pending -->
+    <string name="refund_details_remove">Quitar vínculo</string>
+    <!-- refund_details_remove_cd_format: DRAFT: owner native sign-off pending -->
+    <string name="refund_details_remove_cd_format">Quitar el vínculo del reembolso de %1$s con fecha %2$s</string>
+    <!-- refund_unlink_title: DRAFT: owner native sign-off pending -->
+    <string name="refund_unlink_title">¿Quitar este vínculo?</string>
+    <!-- refund_unlink_body_format: DRAFT: owner native sign-off pending -->
+    <string name="refund_unlink_body_format">El reembolso de %1$s volverá a contar como ingreso y %2$s volverá a %3$s en su mes y categoría.</string>
+    <!-- refund_unlink_body_remaining_format: DRAFT: owner native sign-off pending -->
+    <string name="refund_unlink_body_remaining_format">El reembolso de %1$s volverá a contar como ingreso y %2$s mostrará %3$s en su mes y categoría.</string>
+    <!-- transactions_refund_linked_locked: DRAFT: owner native sign-off pending -->
+    <string name="transactions_refund_linked_locked">Esta transacción está vinculada a un reembolso, por lo que no se pueden cambiar su importe, moneda ni tipo. Quita primero el vínculo.</string>
+    <!-- transactions_delete_refund_linked_note: DRAFT: owner native sign-off pending -->
+    <string name="transactions_delete_refund_linked_note">Esta transacción está vinculada a un reembolso. Al eliminarla se quita el vínculo y la otra transacción vuelve a su importe completo.</string>
+</resources>

@@ -269,6 +269,12 @@
     <string name="receipt_currency_unverified_warning">Δεν μπορέσαμε να διαβάσουμε το νόμισμα της απόδειξης. Ελέγξτε το πριν την αποθήκευση.</string>
     <!-- MC 1a-3b: Transactions amount ordering. Best-effort translation, pending owner review. -->
     <string name="action_got_it">Εντάξει</string>
+    <!-- action_ok: DRAFT: owner native sign-off pending -->
+    <string name="action_ok">Εντάξει</string>
+    <!-- a11y_close: DRAFT: owner native sign-off pending -->
+    <string name="a11y_close">Κλείσιμο</string>
+    <!-- uncategorized_label: DRAFT: owner native sign-off pending -->
+    <string name="uncategorized_label">Χωρίς κατηγορία</string>
     <string name="transactions_filter_min_money_format">Ελάχ.: %1$s</string>
     <string name="transactions_filter_max_money_format">Μέγ.: %1$s</string>
     <string name="transactions_filter_paused_suffix">" (σε παύση)"</string>
@@ -774,7 +780,8 @@
     <string name="savings_goal_deleting_cd">Διαγραφή στόχου σε εξέλιξη</string>
     <string name="action_delete">Διαγραφή</string>
     <string name="error_delete_failed">Αποτυχία διαγραφής</string>
-    <string name="transactions_refund_likelihood_notice">Αυτό μοιάζει με επιστροφή χρημάτων. Οι επιστροφές καταγράφονται ως καταθέσεις, επομένως το σύνολο κατηγορίας της αρχικής αγοράς δεν μειώνεται. Για διόρθωση, επεξεργαστείτε ή διαγράψτε την αρχική αγορά. Διαγράψτε επίσης αυτή την κατάθεση, ώστε να μην υπολογίζεται ως εισόδημα.</string>
+    <!-- transactions_refund_likelihood_notice: DRAFT: owner native sign-off pending (refund-netting S4) -->
+    <string name="transactions_refund_likelihood_notice">Αυτό μοιάζει με επιστροφή χρημάτων για πρόσφατη αγορά. Εφαρμόστε την σε εκείνη την αγορά, ώστε να μειωθούν τα σύνολα κατηγορίας και προϋπολογισμού και αυτή η κατάθεση να μην υπολογίζεται ως εισόδημα.</string>
     <!-- fix-1.0.4 B1 split: DRAFT: owner native sign-off pending -->
     <string name="calendar_label_starting_balance_no_currency">Αρχικό υπόλοιπο</string>
 </resources>

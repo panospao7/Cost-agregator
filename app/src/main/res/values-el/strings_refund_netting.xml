@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- refund-netting S4 (all 44 keys below are DRAFT: owner native sign-off pending) -->
+    <!-- refund_notice_action: DRAFT: owner native sign-off pending -->
+    <string name="refund_notice_action">Εφαρμογή σε αγορά</string>
+    <!-- refund_menu_apply: DRAFT: owner native sign-off pending -->
+    <string name="refund_menu_apply">Αυτό είναι επιστροφή χρημάτων για...</string>
+    <!-- refund_menu_details: DRAFT: owner native sign-off pending -->
+    <string name="refund_menu_details">Λεπτομέρειες επιστροφής</string>
+    <!-- refund_chip_purchase_format: DRAFT: owner native sign-off pending -->
+    <string name="refund_chip_purchase_format">Επιστράφηκαν %1$s</string>
+    <!-- refund_chip_net_format: DRAFT: owner native sign-off pending -->
+    <string name="refund_chip_net_format">Καθαρό: %1$s</string>
+    <!-- refund_chip_deposit_format: DRAFT: owner native sign-off pending -->
+    <string name="refund_chip_deposit_format">Εφαρμόστηκε σε αγορά: %1$s</string>
+    <!-- refund_chip_deposit_left_format: DRAFT: owner native sign-off pending -->
+    <string name="refund_chip_deposit_left_format">%1$s εξακολουθεί να μετρά ως εισόδημα</string>
+    <!-- refund_chip_purchase_cd_format: DRAFT: owner native sign-off pending -->
+    <string name="refund_chip_purchase_cd_format">Επιστράφηκαν %1$s από %2$s, καθαρό %3$s</string>
+    <!-- refund_chip_deposit_cd_format: DRAFT: owner native sign-off pending -->
+    <string name="refund_chip_deposit_cd_format">Η επιστροφή εφαρμόστηκε σε αγορά: %1$s από %2$s</string>
+    <!-- refund_picker_title: DRAFT: owner native sign-off pending -->
+    <string name="refund_picker_title">Ποια αγορά επιστράφηκε;</string>
+    <!-- refund_picker_subtitle_format: DRAFT: owner native sign-off pending -->
+    <string name="refund_picker_subtitle_format">Επιστροφή %1$s στις %2$s</string>
+    <!-- refund_picker_loading_cd: DRAFT: owner native sign-off pending -->
+    <string name="refund_picker_loading_cd">Αναζήτηση αντίστοιχων αγορών</string>
+    <!-- refund_picker_none_format: DRAFT: owner native sign-off pending -->
+    <string name="refund_picker_none_format">Δεν βρέθηκαν αντίστοιχες αγορές. Αντιστοιχίζονται μόνο αγορές σε %1$s από τις %2$d ημέρες πριν από αυτή την επιστροφή.</string>
+    <!-- refund_picker_unavailable: DRAFT: owner native sign-off pending -->
+    <string name="refund_picker_unavailable">Οι αντίστοιχες αγορές δεν είναι διαθέσιμες αυτή τη στιγμή.</string>
+    <!-- refund_candidate_remaining_format: DRAFT: owner native sign-off pending -->
+    <string name="refund_candidate_remaining_format">%1$s δεν έχουν επιστραφεί ακόμη</string>
+    <!-- refund_candidate_select_cd_format: DRAFT: owner native sign-off pending -->
+    <string name="refund_candidate_select_cd_format">Εφαρμογή της επιστροφής στην αγορά %1$s</string>
+    <!-- refund_confirm_title: DRAFT: owner native sign-off pending -->
+    <string name="refund_confirm_title">Να εφαρμοστεί αυτή η επιστροφή;</string>
+    <!-- refund_label_purchase: DRAFT: owner native sign-off pending -->
+    <string name="refund_label_purchase">Αγορά</string>
+    <!-- refund_label_refunded: DRAFT: owner native sign-off pending -->
+    <string name="refund_label_refunded">Επιστράφηκαν</string>
+    <!-- refund_label_net: DRAFT: owner native sign-off pending -->
+    <string name="refund_label_net">Καθαρό</string>
+    <!-- refund_confirm_effect_format: DRAFT: owner native sign-off pending -->
+    <string name="refund_confirm_effect_format">Αυτό μειώνει τις δαπάνες του %1$s (%2$s) κατά %3$s, ακόμη κι αν ο μήνας έχει περάσει. Επίσης, %3$s από αυτή την κατάθεση παύουν να μετρούν ως εισόδημα.</string>
+    <!-- refund_confirm_partial_format: DRAFT: owner native sign-off pending -->
+    <string name="refund_confirm_partial_format">Μπορούν να εφαρμοστούν μόνο %1$s από αυτή την κατάθεση των %2$s. Το υπόλοιπο εξακολουθεί να μετρά ως εισόδημα.</string>
+    <!-- refund_confirm_action: DRAFT: owner native sign-off pending -->
+    <string name="refund_confirm_action">Εφαρμογή</string>
+    <!-- refund_done_format: DRAFT: owner native sign-off pending -->
+    <string name="refund_done_format">Η επιστροφή εφαρμόστηκε στο %1$s. Καθαρό: %2$s.</string>
+    <!-- refund_done_plain_format: DRAFT: owner native sign-off pending -->
+    <string name="refund_done_plain_format">Η επιστροφή εφαρμόστηκε στο %1$s.</string>
+    <!-- refund_already_applied: DRAFT: owner native sign-off pending -->
+    <string name="refund_already_applied">Αυτή η επιστροφή έχει ήδη εφαρμοστεί σε αυτή την αγορά.</string>
+    <!-- refund_refused_nothing_to_apply: DRAFT: owner native sign-off pending -->
+    <string name="refund_refused_nothing_to_apply">Αυτή η αγορά δεν έχει άλλο ποσό προς επιστροφή.</string>
+    <!-- refund_refused_linked_elsewhere: DRAFT: owner native sign-off pending -->
+    <string name="refund_refused_linked_elsewhere">Αυτή η επιστροφή έχει ήδη εφαρμοστεί σε άλλη αγορά. Αφαιρέστε πρώτα τη σύνδεση.</string>
+    <!-- refund_refused_before_purchase: DRAFT: owner native sign-off pending -->
+    <string name="refund_refused_before_purchase">Μια επιστροφή δεν μπορεί να έχει ημερομηνία περισσότερο από μία ημέρα πριν από την αγορά.</string>
+    <!-- refund_refused_currency: DRAFT: owner native sign-off pending -->
+    <string name="refund_refused_currency">Μια επιστροφή μπορεί να εφαρμοστεί μόνο σε αγορά στο ίδιο νόμισμα.</string>
+    <!-- refund_refused_installment: DRAFT: owner native sign-off pending -->
+    <string name="refund_refused_installment">Οι αγορές με δόσεις επιστρέφονται από το πλάνο δόσεων.</string>
+    <!-- refund_refused_group: DRAFT: owner native sign-off pending -->
+    <string name="refund_refused_group">Αυτή η συναλλαγή ανήκει σε κοινή ομάδα, επομένως δεν μπορεί να συνδεθεί με επιστροφή.</string>
+    <!-- refund_refused_stale: DRAFT: owner native sign-off pending -->
+    <string name="refund_refused_stale">Αυτή η επιστροφή δεν μπορεί πλέον να εφαρμοστεί σε αυτή την αγορά. Η λίστα ανανεώθηκε.</string>
+    <!-- refund_unlinked: DRAFT: owner native sign-off pending -->
+    <string name="refund_unlinked">Η επιστροφή αφαιρέθηκε από αυτή την αγορά.</string>
+    <!-- refund_details_purchase_header: DRAFT: owner native sign-off pending -->
+    <string name="refund_details_purchase_header">Επιστροφές αυτής της αγοράς</string>
+    <!-- refund_details_deposit_header: DRAFT: owner native sign-off pending -->
+    <string name="refund_details_deposit_header">Εφαρμόστηκε σε</string>
+    <!-- refund_details_unavailable: DRAFT: owner native sign-off pending -->
+    <string name="refund_details_unavailable">Οι λεπτομέρειες επιστροφής δεν είναι διαθέσιμες αυτή τη στιγμή.</string>
+    <!-- refund_details_remove: DRAFT: owner native sign-off pending -->
+    <string name="refund_details_remove">Αφαίρεση σύνδεσης</string>
+    <!-- refund_details_remove_cd_format: DRAFT: owner native sign-off pending -->
+    <string name="refund_details_remove_cd_format">Αφαίρεση της σύνδεσης για την επιστροφή %1$s με ημερομηνία %2$s</string>
+    <!-- refund_unlink_title: DRAFT: owner native sign-off pending -->
+    <string name="refund_unlink_title">Να αφαιρεθεί αυτή η σύνδεση;</string>
+    <!-- refund_unlink_body_format: DRAFT: owner native sign-off pending -->
+    <string name="refund_unlink_body_format">Η επιστροφή %1$s θα μετρά ξανά ως εισόδημα και το %2$s θα επανέλθει στα %3$s στον μήνα και την κατηγορία του.</string>
+    <!-- refund_unlink_body_remaining_format: DRAFT: owner native sign-off pending -->
+    <string name="refund_unlink_body_remaining_format">Η επιστροφή %1$s θα μετρά ξανά ως εισόδημα και το %2$s θα εμφανίζει %3$s στον μήνα και την κατηγορία του.</string>
+    <!-- transactions_refund_linked_locked: DRAFT: owner native sign-off pending -->
+    <string name="transactions_refund_linked_locked">Αυτή η συναλλαγή συνδέεται με επιστροφή, επομένως δεν μπορούν να αλλάξουν το ποσό, το νόμισμα και ο τύπος της. Αφαιρέστε πρώτα τη σύνδεση.</string>
+    <!-- transactions_delete_refund_linked_note: DRAFT: owner native sign-off pending -->
+    <string name="transactions_delete_refund_linked_note">Αυτή η συναλλαγή συνδέεται με επιστροφή. Η διαγραφή της αφαιρεί τη σύνδεση και η άλλη συναλλαγή επανέρχεται στο πλήρες ποσό της.</string>
+</resources>

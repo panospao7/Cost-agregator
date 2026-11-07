@@ -213,6 +213,7 @@ Row buttons for both ids disable while the id is in `mutatingExpenseIds`.
 | Domain result | User sees | Then |
 |---|---|---|
 | `Linked(applied)` | `refund_done_format` ("Refund applied to ZARA. Net: 60,00 EUR.") | Dialog and sheet close. Chips update from the next list emission. |
+| `Linked(applied)`, net figure cannot be computed (unknown currency scale) | `refund_done_plain_format` ("Refund applied to ZARA.") | Dialog and sheet close, as for `Linked(applied)` |
 | `AlreadyLinked` | `refund_already_applied` (success tone; a lost-response retry) | Dialog and sheet close |
 | `Refused(NOTHING_TO_APPLY)` (AE-3) | `refund_refused_nothing_to_apply` | Dialog closes; sheet reloads candidates |
 | `Refused(REFUND_LINKED_ELSEWHERE)` (AE-5) | `refund_refused_linked_elsewhere` | Dialog and sheet close; the row now shows its chip |
@@ -300,7 +301,9 @@ Rules: no string contains raw notification, OCR or receipt text. Screens show th
 | `uncategorized_label` | Uncategorized | Candidate category fallback |
 | `a11y_more_options` | More options | Existing overflow |
 
-### 7.2 New keys (42 strings, new file `values/strings_refund_netting.xml`, plus `values-es` and `values-el`)
+Note: `values-el/strings.xml` gained DRAFT Greek translations (owner native sign-off pending) for `action_ok` ("Εντάξει"), `a11y_close` ("Κλείσιμο") and `uncategorized_label` ("Χωρίς κατηγορία"), because the new sheets use them.
+
+### 7.2 New keys (44 strings, new file `values/strings_refund_netting.xml`, plus `values-es` and `values-el`)
 
 es and el values are **DRAFT**: machine-style drafts for the owner to sign off (project rule: es/el need sign-off). Do not ship without that. In en XML, apostrophes are escaped (`can\'t`). Placeholders: `%1$s` amounts are pre-formatted with currency.
 
@@ -338,7 +341,7 @@ es and el values are **DRAFT**: machine-style drafts for the owner to sign off (
 | 30 | `refund_refused_installment` | Installment purchases are refunded from the installment plan. | Las compras a plazos se reembolsan desde el plan de cuotas. | Οι αγορές με δόσεις επιστρέφονται από το πλάνο δόσεων. |
 | 31 | `refund_refused_group` | This transaction is part of a shared group, so it can\'t be linked to a refund. | Esta transacción forma parte de un grupo compartido, por lo que no se puede vincular a un reembolso. | Αυτή η συναλλαγή ανήκει σε κοινή ομάδα, επομένως δεν μπορεί να συνδεθεί με επιστροφή. |
 | 32 | `refund_refused_stale` | That refund can no longer be applied to this purchase. The list was refreshed. | Ese reembolso ya no se puede aplicar a esta compra. Se actualizó la lista. | Αυτή η επιστροφή δεν μπορεί πλέον να εφαρμοστεί σε αυτή την αγορά. Η λίστα ανανεώθηκε. |
-| 33 | `refund_unlinked` | Link removed. Both amounts are back to the original. | Vínculo eliminado. Ambos importes vuelven al original. | Η σύνδεση αφαιρέθηκε. Και τα δύο ποσά επανήλθαν στο αρχικό. |
+| 33 | `refund_unlinked` | Refund removed from this purchase. | Reembolso eliminado de esta compra. | Η επιστροφή αφαιρέθηκε από αυτή την αγορά. |
 | 34 | `refund_details_purchase_header` | Refunds on this purchase | Reembolsos de esta compra | Επιστροφές αυτής της αγοράς |
 | 35 | `refund_details_deposit_header` | Applied to | Aplicado a | Εφαρμόστηκε σε |
 | 36 | `refund_details_unavailable` | Refund details are unavailable right now. | Los detalles del reembolso no están disponibles ahora. | Οι λεπτομέρειες επιστροφής δεν είναι διαθέσιμες αυτή τη στιγμή. |
@@ -349,7 +352,10 @@ es and el values are **DRAFT**: machine-style drafts for the owner to sign off (
 | 41 | `transactions_refund_linked_locked` | This transaction is linked to a refund, so its amount, currency and type can\'t be changed. Remove the link first. | Esta transacción está vinculada a un reembolso, por lo que no se pueden cambiar su importe, moneda ni tipo. Quita primero el vínculo. | Αυτή η συναλλαγή συνδέεται με επιστροφή, επομένως δεν μπορούν να αλλάξουν το ποσό, το νόμισμα και ο τύπος της. Αφαιρέστε πρώτα τη σύνδεση. |
 | 42 | `transactions_delete_refund_linked_note` | This transaction is linked to a refund. Deleting it removes the link, and the other transaction goes back to its full amount. | Esta transacción está vinculada a un reembolso. Al eliminarla se quita el vínculo y la otra transacción vuelve a su importe completo. | Αυτή η συναλλαγή συνδέεται με επιστροφή. Η διαγραφή της αφαιρεί τη σύνδεση και η άλλη συναλλαγή επανέρχεται στο πλήρες ποσό της. |
 
-Keys 41 and 42 live in `strings_refund_netting.xml` too (prefix kept to match the `transactions_` lock-message neighbours).
+| 43 | `refund_unlink_body_remaining_format` (applied, purchase merchant, purchase amount after removal; Q7 variant of key 40) | The %1$s refund will count as income again, and %2$s will show %3$s in its month and category. | El reembolso de %1$s volverá a contar como ingreso y %2$s mostrará %3$s en su mes y categoría. | Η επιστροφή %1$s θα μετρά ξανά ως εισόδημα και το %2$s θα εμφανίζει %3$s στον μήνα και την κατηγορία του. |
+| 44 | `refund_done_plain_format` (merchant; used when the net figure cannot be computed) | Refund applied to %1$s. | Reembolso aplicado a %1$s. | Η επιστροφή εφαρμόστηκε στο %1$s. |
+
+Keys 41 to 44 live in `strings_refund_netting.xml` too (prefix kept to match the `transactions_` lock-message neighbours).
 
 ### 7.3 Changed key
 
@@ -395,7 +401,7 @@ Notes: the old text advised deleting the deposit; keeping it would contradict th
   - Unlink: confirm text uses the link's applied amount; `Unlinked` and `NotLinked` both show `refund_unlinked`.
   - Touch targets at least 48dp; font scale 1.3 and 2.0 render with no clipped text and stacked buttons.
 - **ViewModel tests**: the VM calls only `RefundLinkUseCase` (architecture test, INV-16); a candidate read that blocks gives `Unavailable(READ_BLOCKED)`; cancellation is rethrown; `mutatingExpenseIds` is released on every result.
-- **Strings**: each of the 42 new keys present in en, es and el; es and el flagged DRAFT in the review note; `transactions_refund_likelihood_notice` changed in all three files; no hardcoded user text; no string built from a raw expense note.
+- **Strings**: each of the 44 new keys present in en, es and el; es and el flagged DRAFT in the review note; `transactions_refund_likelihood_notice` changed in all three files; no hardcoded user text; no string built from a raw expense note.
 - **Privacy**: log and diagnostic output in these flows contains only the bounded codes; no merchant, amount or note (AE-27).
 - **Acceptance mapping**: AE-1 (apply), AE-2 (second refund), AE-3 (nothing to apply), AE-4 (excess), AE-5 (linked elsewhere, already linked), AE-6 (currency), AE-11 (installment, group), AE-12 (date), AE-13 (unlink), AE-14 and AE-15 (delete note), AE-16 (lock), AE-21 (candidate order), AE-22 (restore), AE-26 (no link without a tap), AE-28 (empty and not-eligible).
 

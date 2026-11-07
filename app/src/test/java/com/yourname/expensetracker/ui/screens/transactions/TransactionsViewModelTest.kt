@@ -367,6 +367,63 @@ class TransactionsViewModelTest : ViewModelTestUtils() {
         collection.cancel()
     }
 
+    private val refundLockedLog =
+        "Transactions: TRANSACTION_UPDATE_BLOCKED code=EXPENSE_LOCKED_BY_REFUND_LINK"
+
+    @Test fun `INV-12 updateExpenseType on a refund-linked row shows the fixed locked message`() = runTest(testDispatcher) {
+        val expense = Expense(
+            id = 31L, amount = 10.0, currency = "EUR", merchant = "Synthetic Refund Shop", date = 1L,
+            transactionType = TransactionType.DEPOSIT, refundNettedAmount = 4.0
+        )
+        coEvery {
+            expenses.updateExpenseTypeAndTransfer(expense, TransactionType.PURCHASE, null, null)
+        } throws com.yourname.expensetracker.domain.transaction.lifecycle.RefundLinkedExpenseException()
+        val received = mutableListOf<UiText>()
+        val collection = backgroundScope.launch { model.error.collect { received += it } }
+        runCurrent()
+        model.updateExpenseType(expense, TransactionType.PURCHASE)
+        advanceUntilIdle()
+        val shown = received.single()
+        assertEquals(UiText.from(com.yourname.expensetracker.R.string.transactions_refund_linked_locked), shown)
+        assertFalse(shown is UiText.DynamicString)
+        assertEquals(listOf(null to refundLockedLog), logs)
+        assertTrue(model.mutatingExpenseIds.value.isEmpty())
+        collection.cancel()
+    }
+
+    @Test fun `INV-12 refund lock with hostile code never shows or logs exception text`() = runTest(testDispatcher) {
+        val expense = Expense(
+            id = 32L, amount = 10.0, currency = "EUR", merchant = "Synthetic Refund Shop", date = 1L,
+            transactionType = TransactionType.DEPOSIT, refundNettedAmount = 4.0
+        )
+        coEvery { expenses.updateExpenseTypeAndTransfer(expense, TransactionType.PURCHASE, null, null) } throws
+            com.yourname.expensetracker.domain.transaction.lifecycle.RefundLinkedExpenseException("secret merchant=private sql=/data/918")
+        val received = mutableListOf<UiText>()
+        val collection = backgroundScope.launch { model.error.collect { received += it } }
+        runCurrent()
+        model.updateExpenseType(expense, TransactionType.PURCHASE)
+        advanceUntilIdle()
+        assertTrue(received.none { it is UiText.DynamicString })
+        assertEquals(listOf(null to refundLockedLog), logs)
+        collection.cancel()
+    }
+
+    @Test fun `INV-12 cancellation in updateExpenseType is not mapped to the refund locked message`() = runTest(testDispatcher) {
+        val expense = Expense(
+            id = 33L, amount = 10.0, currency = "EUR", merchant = "Synthetic Refund Shop", date = 1L,
+            transactionType = TransactionType.DEPOSIT, refundNettedAmount = 4.0
+        )
+        coEvery { expenses.updateExpenseTypeAndTransfer(expense, TransactionType.PURCHASE, null, null) } throws CancellationException("cancelled")
+        val received = mutableListOf<UiText>()
+        val collection = backgroundScope.launch { model.error.collect { received += it } }
+        runCurrent()
+        model.updateExpenseType(expense, TransactionType.PURCHASE)
+        advanceUntilIdle()
+        assertTrue(received.isEmpty())
+        assertTrue(logs.none { it.second.contains("REFUND_LINK") })
+        collection.cancel()
+    }
+
     @Test fun `INV-22 AE-20 updateOwnership installment lock shows fixed resource message`() = runTest(testDispatcher) {
         val expense = Expense(id = 8L, amount = 10.0, currency = "EUR", merchant = "Synthetic Shop", date = 1L, transactionType = TransactionType.PURCHASE)
         coEvery {
