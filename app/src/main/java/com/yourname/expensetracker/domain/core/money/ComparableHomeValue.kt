@@ -56,11 +56,20 @@ object ComparableHomeValue {
      *
      * Returns 0.0 for a neutralised or not-mine row, null when there is no usable snapshot
      * (`baseAmount <= 0` or `exchangeRateUsed <= 0`). Never falls back to the raw amount.
+     *
+     * Refund netting (refund-netting INV-7): when `refundNettedAmount > 0` the snapshot value is
+     * scaled by the net/gross factor of the row's OWN snapshot (the purchase date's rate, never
+     * the refund's), and is 0.0 once the refund covers the whole amount. Rows with
+     * `refundNettedAmount == 0.0` take the unchanged expression.
      */
     fun snapshotValue(e: Expense): Double? {
         if (e.isSpendingNeutralised) return 0.0
         if (e.isNotMine) return 0.0
         if (!(e.baseAmount > 0.0) || !(e.exchangeRateUsed > 0.0)) return null
+        if (e.refundNettedAmount > 0.0) {
+            if (e.refundNettedAmount >= e.amount) return 0.0
+            return normalizeZero(snapshotAmount(e) * (e.amount - e.refundNettedAmount) / e.amount)
+        }
         return normalizeZero(snapshotAmount(e))
     }
 

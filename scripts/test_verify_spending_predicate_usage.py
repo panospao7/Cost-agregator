@@ -61,6 +61,7 @@ R1 = "G-SPENDING-PREDICATE-01"
 R2 = "G-SPENDING-PREDICATE-02"
 R3 = "G-SPENDING-PREDICATE-03"
 R4 = "G-SPENDING-PREDICATE-04"
+R5 = "G-SPENDING-PREDICATE-05"
 
 _PKG = "com/yourname/expensetracker"
 _JAVA = "app/src/main/java"
@@ -759,13 +760,14 @@ def _load_module(name: str, relative: str):
 def test_registry_entry_agrees_with_script_constants():
     registry = _load_module("guard_registry_spending_predicate_test", "ci/guard_registry.py")
     entry = registry.GUARD_REGISTRY["spending_predicate_usage"]
-    assert tuple(entry["execution"]["ruleIds"]) == (R1, R2, R3, R4)
+    assert tuple(entry["execution"]["ruleIds"]) == (R1, R2, R3, R4, R5)
     assert (
         guard.RULE_UNCOVERED,
         guard.RULE_MARKER,
         guard.RULE_DEDUPE,
         guard.RULE_RAW_BUILDER,
-    ) == (R1, R2, R3, R4)
+        guard.RULE_INNER_AGG,
+    ) == (R1, R2, R3, R4, R5)
     assert tuple(entry["execution"]["requiredInputs"]) == (guard.PIN_RELATIVE_PATH,)
     assert (_REPO_ROOT / guard.PIN_RELATIVE_PATH).is_file()
     assert entry["script"] == "scripts/verify_spending_predicate_usage.py"
@@ -838,16 +840,13 @@ EXPECTED_EXEMPT = {
     # 1.0.4 category delete (owner item 144): CategoryDao.countExpensesForCategory is a read-only COUNT(*) for the delete preview, not a spending aggregate (35 -> 36).
     ("CategoryDao.kt", "countExpensesForCategory", "ROW_COUNT"),
     # 1.0.4 B2 S4: countLocated and countUnlocated now enforce SPENDING_PREDICATE directly (-2 ROW_COUNT exemptions, 35 -> 33)
-    ("ExpenseDao.kt", "getDepositTotalsBetweenByCurrency", "NON_SPENDING_INCOME"),
-    ("ExpenseDao.kt", "getTotalDepositsForPeriod", "NON_SPENDING_INCOME"),
-    ("ExpenseDao.kt", "getMonthlyDeposits", "NON_SPENDING_INCOME"),
-    ("ExpenseDao.kt", "getTotalDeposits", "NON_SPENDING_INCOME"),
+    # 1.0.4 refund-netting S2a (INV-9): the four deposit totals and searchMerchants now reference the
+    # netted SpendingInclusionSql.EFFECTIVE_AMOUNT, so their exemption markers were removed (36 -> 31).
     ("ExpenseDao.kt", "getOldestExpenseDate", "NON_MONEY"),
     ("ExpenseDao.kt", "getMerchantLocationClusters", "NON_MONEY"),
     # FIX-104 AJ: id-only DR-01 probes in GroupExpenseDao (33 -> 35).
     ("GroupExpenseDao.kt", "getNonPayerLinkedExpenseIdsBetween", "NON_MONEY"),
     ("GroupExpenseDao.kt", "getPayerLinkedExpenseIdsBetween", "NON_MONEY"),
-    ("ExpenseDao.kt", "searchMerchants", "SUGGESTION"),
     # 1.0.4 S7b: +2 merchant-context readers classified as SUGGESTION-exempt.
     ("ExpenseDao.kt", "getRecentExpensesForMerchant", "SUGGESTION"),
     # 1.0.4 closure: getRecentExpensesWithCategoryForMerchant now applies the predicate (36 -> 35)
@@ -859,11 +858,12 @@ EXPECTED_REASON_COUNTS = {
     "DEDUPE_BLOCKING": 11,
     "DEDUPE_RESOLVER": 7,
     "ROW_COUNT": 6,  # +1 CategoryDao.countExpensesForCategory (item 144)
-    "NON_SPENDING_INCOME": 4,
+    # 1.0.4 refund-netting S2a: NON_SPENDING_INCOME 4 -> 0 (deposit totals now use the netted constant).
     "NON_MONEY": 4,
     # 1.0.4 S7b: +2 merchant-context readers in ExpenseDao marked as SUGGESTION-exempt (1 -> 3).
     # 1.0.4 closure: getRecentExpensesWithCategoryForMerchant now applies the predicate (36 -> 35)
-    "SUGGESTION": 2,
+    # 1.0.4 refund-netting S2a: searchMerchants uses the netted constant, marker removed (2 -> 1).
+    "SUGGESTION": 1,
     "ASSET_VALUE": 2,
 }
 
@@ -916,7 +916,8 @@ def test_real_tree_report_exemption_set_equals_recorded_a12_6_set(real_tree_repo
     # 1.0.4 N-02 neutralisation (other session's B2, item 129): two exemptions removed (35 -> 33).
     # FIX-104 AJ: +2 NON_MONEY id-only probes in GroupExpenseDao (33 -> 35).
     # 1.0.4 category delete (owner item 144): +1 ROW_COUNT CategoryDao.countExpensesForCategory (35 -> 36).
-    assert len(exempt) == len(set(exempt)) == 36
+    # 1.0.4 refund-netting S2a: -4 NON_SPENDING_INCOME deposit totals, -1 SUGGESTION searchMerchants (36 -> 31).
+    assert len(exempt) == len(set(exempt)) == 31
     assert set(exempt) == EXPECTED_EXEMPT
 
 
@@ -934,13 +935,104 @@ def test_real_tree_report_reason_counts_and_no_unclassified(real_tree_report):
     # 1.0.4 N-02 neutralisation (other session's B2, item 129): two exemptions removed (35 -> 33).
     # FIX-104 AJ: +2 NON_MONEY id-only probes in GroupExpenseDao (33 -> 35).
     # 1.0.4 category delete (owner item 144): +1 ROW_COUNT CategoryDao.countExpensesForCategory (35 -> 36).
-    assert "SUMMARY: exempt=36 " in proc.stdout and "unclassified=0" in proc.stdout
+    # 1.0.4 refund-netting S2a: -5 exemptions (36 -> 31).
+    assert "SUMMARY: exempt=31 " in proc.stdout and "unclassified=0" in proc.stdout
 
 
 def test_real_tree_converted_samples_are_classified_as_predicate(real_tree_report):
     _proc, rows = real_tree_report
     predicate = {fn for _f, fn, cls in rows if cls == "predicate"}
     assert EXPECTED_PREDICATE_SAMPLE <= predicate
+
+
+# ── Rule 05 (refund-netting INV-9): no aggregate over the inner constant ──────
+
+
+@pytest.mark.parametrize("aggregate", ["SUM", "AVG", "TOTAL", "MIN", "MAX", "sum"])
+@pytest.mark.parametrize("constant", ["EFFECTIVE_AMOUNT_SQL", "EFFECTIVE_AMOUNT_E_SQL"])
+def test_aggregate_over_inner_constant_is_rule_05(aggregate, constant):
+    text = _dao_text(
+        _q(
+            "SELECT " + aggregate + "(${" + constant + "}) FROM expenses WHERE ${SpendingInclusionSql.SPENDING_PREDICATE}",
+            name="inner",
+        )
+    )
+    result = _scan(text)
+    assert _triples(result) == [(R5, guard.CODE_INNER_AGG, "inner")]
+    assert result.violations[0].line == _line_of(text, "@Query")
+
+
+@pytest.mark.parametrize(
+    "argument",
+    [
+        "COALESCE(${EFFECTIVE_AMOUNT_SQL}, 0)",
+        "COALESCE( ${EFFECTIVE_AMOUNT_E_SQL}, 0.0)",
+        "$EFFECTIVE_AMOUNT_SQL",
+        "${ExpenseDao.EFFECTIVE_AMOUNT_SQL}",
+        "${ExpenseDao.Companion.EFFECTIVE_AMOUNT_E_SQL}",
+        "${ EFFECTIVE_AMOUNT_SQL }",
+    ],
+)
+def test_inner_constant_forms_are_rule_05(argument):
+    text = _dao_text(
+        _q(
+            "SELECT SUM(" + argument + ") FROM expenses WHERE ${SpendingInclusionSql.SPENDING_PREDICATE}",
+            name="inner",
+        )
+    )
+    assert [t[:2] for t in _triples(_scan(text))] == [(R5, guard.CODE_INNER_AGG)]
+
+
+def test_inner_constant_in_concatenated_query_is_rule_05():
+    text = _dao_text(
+        '    @Query("SELECT SUM(" + EFFECTIVE_AMOUNT_SQL + ") FROM expenses WHERE " + '
+        'SpendingInclusionSql.SPENDING_PREDICATE)\n    fun inner(): Double'
+    )
+    assert [t[:2] for t in _triples(_scan(text))] == [(R5, guard.CODE_INNER_AGG)]
+
+
+@pytest.mark.parametrize("constant", ["EFFECTIVE_AMOUNT", "EFFECTIVE_AMOUNT_E"])
+def test_aggregate_over_outer_netted_constant_is_not_rule_05(constant):
+    text = _dao_text(
+        _q("SELECT SUM(${SpendingInclusionSql." + constant + "}) FROM expenses e")
+    )
+    assert _scan(text).violations == []
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT ${EFFECTIVE_AMOUNT_SQL} FROM expenses WHERE ${SpendingInclusionSql.SPENDING_PREDICATE} ORDER BY ${EFFECTIVE_AMOUNT_SQL} DESC",
+        "SELECT * FROM expenses WHERE ${SpendingInclusionSql.SPENDING_PREDICATE} ORDER BY ${EFFECTIVE_AMOUNT_E_SQL} ASC",
+        "SELECT AVG(CASE WHEN spendingExclusionReason IS NULL THEN ${SpendingInclusionSql.EFFECTIVE_AMOUNT} ELSE ${EFFECTIVE_AMOUNT_SQL} END) FROM expenses",
+    ],
+)
+def test_inner_constant_outside_an_aggregate_argument_is_not_rule_05(sql):
+    result = _scan(_dao_text(_q(sql, name="listing")))
+    assert all(v.rule_id != R5 for v in result.violations)
+
+
+def test_rule_05_has_no_marker_escape_hatch():
+    text = _dao_text(
+        _marked(
+            "NON_SPENDING_INCOME",
+            "SELECT SUM(${EFFECTIVE_AMOUNT_SQL}) FROM expenses",
+            name="inner",
+        )
+    )
+    assert R5 in {v.rule_id for v in _scan(text).violations}
+
+
+def test_rule_05_applies_without_the_expenses_table_being_named():
+    text = _dao_text(_q("SELECT SUM(${EFFECTIVE_AMOUNT_SQL}) FROM expenses_view", name="inner"))
+    assert [(v.rule_id, v.code) for v in _scan(text).violations] == [(R5, guard.CODE_INNER_AGG)]
+
+
+def test_rule_05_output_is_bounded_and_does_not_echo_sql():
+    with_root = _dao_text(_q("SELECT MAX(${EFFECTIVE_AMOUNT_SQL}) FROM expenses", name="inner"))
+    violation = _scan(with_root).violations[0]
+    assert violation.code in guard._DESCRIPTIONS
+    assert "EFFECTIVE_AMOUNT_SQL}" not in violation.code
 
 
 # ── S6 (I-04-5): non-aggregate SELECT coverage ───────────────────────────────
