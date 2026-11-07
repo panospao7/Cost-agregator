@@ -297,7 +297,7 @@ class RoundtripContractTest {
         assertFalse(result.success)
         assertEquals(1, result.errorCount)
         assertEquals(
-            "Row 0: ${ImportContractErrorCodes.INVALID_AMOUNT}",
+            "Row 1: ${ImportContractErrorCodes.INVALID_AMOUNT}",
             result.errors.single()
         )
         assertEquals("the good row still imports", 1, result.importedCount)
@@ -321,7 +321,7 @@ class RoundtripContractTest {
         assertFalse(result.success)
         assertEquals(1, result.errorCount)
         assertEquals(
-            "Row 0: ${ImportContractErrorCodes.UNKNOWN_TRANSACTION_TYPE}",
+            "Row 1: ${ImportContractErrorCodes.UNKNOWN_TRANSACTION_TYPE}",
             result.errors.single()
         )
         assertEquals(1, result.importedCount)

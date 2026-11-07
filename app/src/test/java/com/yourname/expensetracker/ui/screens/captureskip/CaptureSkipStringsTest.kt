@@ -15,7 +15,7 @@ import java.util.Locale
 import javax.xml.parsers.DocumentBuilderFactory
 
 /**
- * P-01-3: the 14 "Apps to skip" keys exist in values, values-es and values-el; every es and el entry
+ * P-01-3: the 18 "Apps to skip" keys (14 original + 4 capture_skip_confirm_* warning keys) exist in values, values-es and values-el; every es and el entry
  * is flagged DRAFT directly above it (owner native sign-off pending); the format placeholders are
  * identical across the locales; every key is referenced by the screens.
  */
@@ -35,11 +35,27 @@ class CaptureSkipStringsTest {
         "capture_skip_cd_skip_format",
         "capture_skip_cd_resume_format",
         "capture_skip_error_generic",
-        "capture_skip_load_failed"
+        "capture_skip_load_failed",
+        "capture_skip_confirm_title",
+        "capture_skip_confirm_message_format",
+        "capture_skip_confirm_action",
+        "capture_skip_confirm_cancel"
     )
 
-    /** The two content-description formats take the app label as their only argument. */
-    private val formatKeys = listOf("capture_skip_cd_skip_format", "capture_skip_cd_resume_format")
+    /** The four confirm-dialog keys added with the bank-parser skip warning. */
+    private val confirmKeys = listOf(
+        "capture_skip_confirm_title",
+        "capture_skip_confirm_message_format",
+        "capture_skip_confirm_action",
+        "capture_skip_confirm_cancel"
+    )
+
+    /** The content-description formats and the confirm message take the app label as their only argument. */
+    private val formatKeys = listOf(
+        "capture_skip_cd_skip_format",
+        "capture_skip_cd_resume_format",
+        "capture_skip_confirm_message_format"
+    )
 
     private val placeholder = Regex("%(\\d+)\\$([a-z])")
     private val translatedFolders = listOf("values-es", "values-el")
@@ -87,8 +103,8 @@ class CaptureSkipStringsTest {
     // ---- presence ------------------------------------------------------------------------------
 
     @Test
-    fun `all 14 keys are present in values values-es and values-el`() {
-        assertEquals(14, keys.size)
+    fun `all 18 keys are present in values values-es and values-el`() {
+        assertEquals(18, keys.size)
         for (folder in allFolders) {
             val doc = parse(folder)
             for (key in keys) {
@@ -98,7 +114,7 @@ class CaptureSkipStringsTest {
     }
 
     @Test
-    fun `each locale file defines exactly the 14 keys and no duplicates`() {
+    fun `each locale file defines exactly the 18 keys and no duplicates`() {
         for (folder in allFolders) {
             val names = strings(parse(folder)).map { it.getAttribute("name") }
             assertEquals("$folder defines duplicate or extra keys: $names", keys.sorted(), names.sorted())
@@ -153,10 +169,32 @@ class CaptureSkipStringsTest {
         }
     }
 
+    @Test
+    fun `the four confirm keys exist in all locales and the translated ones carry a DRAFT comment`() {
+        assertEquals(4, confirmKeys.size)
+        for (folder in allFolders) {
+            val doc = parse(folder)
+            for (key in confirmKeys) {
+                assertNotNull("$folder is missing $key", value(doc, key))
+            }
+        }
+        for (folder in translatedFolders) {
+            val doc = parse(folder)
+            for (key in confirmKeys) {
+                val element = strings(doc).first { it.getAttribute("name") == key }
+                val comment = precedingComment(element)
+                assertTrue(
+                    "$folder/$key must be directly preceded by a DRAFT comment",
+                    comment != null && comment.data.contains("DRAFT")
+                )
+            }
+        }
+    }
+
     // ---- placeholders ---------------------------------------------------------------------------
 
     @Test
-    fun `the two content-description formats take exactly the app label as one string argument in every locale`() {
+    fun `the label formats take exactly the app label as one string argument in every locale`() {
         for (folder in allFolders) {
             val doc = parse(folder)
             for (key in formatKeys) {

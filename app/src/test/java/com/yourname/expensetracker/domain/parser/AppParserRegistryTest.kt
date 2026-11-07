@@ -224,6 +224,40 @@ class AppParserRegistryTest {
         }
 
     @Test
+    fun `hasParserFor is true for every package of a registered dedicated parser`() {
+        val registered = listOf(
+            "com.revolut.revolut",
+            "gr.nbg.mobilebanking",
+            "gr.alpha.mobile",
+            "com.google.android.apps.walletnfcrel"
+        ) + SmsParser.SMS_PACKAGES
+        for (pkg in registered) {
+            assertEquals("package=$pkg", true, registry.hasParserFor(pkg))
+        }
+    }
+
+    @Test
+    fun `hasParserFor is false for unknown and malformed package names`() {
+        for (pkg in listOf("com.synthetic.unknown", "", " ", "COM.REVOLUT.REVOLUT", "com.revolut")) {
+            assertEquals("package='$pkg'", false, registry.hasParserFor(pkg))
+        }
+    }
+
+    @Test
+    fun `hasParserFor is false for a package only the generic parser handles`() {
+        // Control: the generic fallback does parse this package, yet it is not a dedicated parser.
+        val parsed = registry.parse(
+            title = "Transaction Alert",
+            text = "You paid 50.00 EUR at Netflix",
+            bigText = null,
+            subText = null,
+            packageName = "com.unknown.app"
+        )
+        assertNotNull(parsed)
+        assertEquals(false, registry.hasParserFor("com.unknown.app"))
+    }
+
+    @Test
     fun `I-03-1 cancellation during home currency resolution propagates`() =
         kotlinx.coroutines.runBlocking {
             val repo = io.mockk.mockk<com.yourname.expensetracker.domain.currency.CurrencySettingsRepository>()

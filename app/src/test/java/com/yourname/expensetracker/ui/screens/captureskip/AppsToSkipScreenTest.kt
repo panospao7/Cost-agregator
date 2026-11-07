@@ -167,6 +167,51 @@ class AppsToSkipScreenTest {
         org.junit.Assert.assertEquals(1, backClicks)
     }
 
+    // ── Parser-app warning dialog ────────────────────────────────────────────────────
+
+    @Test
+    fun `no warning dialog is shown without a pending confirm`() {
+        state.value = AppsToSkipUiState(isLoading = false, candidates = listOf(beta))
+        show()
+
+        composeRule.onAllNodesWithText(str(R.string.capture_skip_confirm_title)).assertCountEquals(0)
+        composeRule.onAllNodesWithText(str(R.string.capture_skip_confirm_action)).assertCountEquals(0)
+    }
+
+    @Test
+    fun `a pending confirm shows the warning dialog with the app label and both buttons`() {
+        state.value = AppsToSkipUiState(isLoading = false, candidates = listOf(beta), pendingBlockConfirm = beta)
+        show()
+
+        composeRule.onNodeWithText(str(R.string.capture_skip_confirm_title)).assertExists()
+        composeRule.onNodeWithText(str(R.string.capture_skip_confirm_message_format, "Beta Wallet")).assertExists()
+        composeRule.onNodeWithText(str(R.string.capture_skip_confirm_action)).assertExists()
+        composeRule.onNodeWithText(str(R.string.capture_skip_confirm_cancel)).assertExists()
+    }
+
+    @Test
+    fun `tapping the confirm button confirms the pending block only`() {
+        state.value = AppsToSkipUiState(isLoading = false, candidates = listOf(beta), pendingBlockConfirm = beta)
+        show()
+
+        composeRule.onNodeWithText(str(R.string.capture_skip_confirm_action)).performClick()
+
+        verify(exactly = 1) { viewModel.confirmPendingBlock() }
+        verify(exactly = 0) { viewModel.dismissPendingBlock() }
+        verify(exactly = 0) { viewModel.block(any()) }
+    }
+
+    @Test
+    fun `tapping the cancel button dismisses the pending block only`() {
+        state.value = AppsToSkipUiState(isLoading = false, candidates = listOf(beta), pendingBlockConfirm = beta)
+        show()
+
+        composeRule.onNodeWithText(str(R.string.capture_skip_confirm_cancel)).performClick()
+
+        verify(exactly = 1) { viewModel.dismissPendingBlock() }
+        verify(exactly = 0) { viewModel.confirmPendingBlock() }
+    }
+
     // ── Accessibility ────────────────────────────────────────────────────────────────
 
     @Test

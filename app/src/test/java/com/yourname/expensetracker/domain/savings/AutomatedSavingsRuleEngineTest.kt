@@ -335,6 +335,100 @@ class AutomatedSavingsRuleEngineTest {
         assertTrue(executions.isEmpty())
     }
 
+    @Test
+    fun `round up digits spare change in EUR rounds 12 30 up to 0 70`() = runTest {
+        val executions = engine.evaluateRules(purchase(amount = 12.30), listOf(spareChangeRule()))
+
+        assertEquals(1, executions.size)
+        assertEquals(0.70, executions.single().amount, 0.0000001)
+    }
+
+    @Test
+    fun `round up digits spare change in EUR skips an exact whole unit`() = runTest {
+        val executions = engine.evaluateRules(purchase(amount = 12.00), listOf(spareChangeRule()))
+
+        assertTrue(executions.isEmpty())
+    }
+
+    @Test
+    fun `round up digits spare change in JPY skips a whole yen amount`() = runTest {
+        val executions = engine.evaluateRules(
+            purchase(amount = 1234.0).copy(currency = "JPY"),
+            listOf(spareChangeRule())
+        )
+
+        assertTrue(executions.isEmpty())
+    }
+
+    @Test
+    fun `round up digits JPY rule uses zero fraction digits`() = runTest {
+        val executions = engine.evaluateRules(
+            purchase(amount = 1234.0).copy(currency = "JPY"),
+            listOf(roundUpRule(roundUpTo = 10.0))
+        )
+
+        assertEquals(1, executions.size)
+        assertEquals(6.0, executions.single().amount, 0.0000001)
+        assertTrue(executions.single().reason.contains(CurrencyFormatter.formatMoney(1240.0, "JPY")))
+    }
+
+    @Test
+    fun `round up digits JPY already on increment yields no round up`() = runTest {
+        val executions = engine.evaluateRules(
+            purchase(amount = 1240.0).copy(currency = "JPY"),
+            listOf(roundUpRule(roundUpTo = 10.0))
+        )
+
+        assertTrue(executions.isEmpty())
+    }
+
+    @Test
+    fun `round up digits spare change in BHD uses three fraction digits`() = runTest {
+        val executions = engine.evaluateRules(
+            purchase(amount = 1.234).copy(currency = "BHD"),
+            listOf(spareChangeRule())
+        )
+
+        assertEquals(1, executions.size)
+        assertEquals(0.766, executions.single().amount, 0.0000001)
+    }
+
+    @Test
+    fun `round up digits unavailable or malformed currency fails closed`() = runTest {
+        for (code in listOf("ZZZ", "XXX", "EU", "EURO", "e1r", "", "  ")) {
+            val spare = engine.evaluateRules(
+                purchase(amount = 12.30).copy(currency = code),
+                listOf(spareChangeRule())
+            )
+            val roundUp = engine.evaluateRules(
+                purchase(amount = 12.30).copy(currency = code),
+                listOf(roundUpRule(roundUpTo = null))
+            )
+
+            assertTrue("spare change currency='$code'", spare.isEmpty())
+            assertTrue("round up currency='$code'", roundUp.isEmpty())
+        }
+    }
+
+    @Test
+    fun `round up digits reason is formatted in the expense currency not the home currency`() = runTest {
+        // Home/display currency is EUR (setup); the expense is in USD.
+        val spare = engine.evaluateRules(
+            purchase(amount = 12.30).copy(currency = "USD"),
+            listOf(spareChangeRule())
+        ).single()
+        val roundUp = engine.evaluateRules(
+            purchase(amount = 12.30).copy(currency = "USD"),
+            listOf(roundUpRule(roundUpTo = null))
+        ).single()
+
+        assertTrue(spare.reason.contains(CurrencyFormatter.formatMoney(0.70, "USD")))
+        assertFalse(spare.reason.contains(CurrencyFormatter.formatMoney(0.70, "EUR")))
+        assertTrue(roundUp.reason.contains(CurrencyFormatter.formatMoney(12.30, "USD")))
+        assertTrue(roundUp.reason.contains(CurrencyFormatter.formatMoney(15.0, "USD")))
+        assertFalse(roundUp.reason.contains(CurrencyFormatter.formatMoney(12.30, "EUR")))
+    }
+
     private fun spareChangeRule(maximumPerMonth: Double? = null): AutomatedSavingsRule {
         return AutomatedSavingsRule(
             id = 4L,

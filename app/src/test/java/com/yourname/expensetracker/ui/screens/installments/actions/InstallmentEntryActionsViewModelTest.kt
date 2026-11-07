@@ -311,11 +311,30 @@ class InstallmentEntryActionsViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `a refund-linked failure maps to the bounded UNEXPECTED code`() {
+    fun `a refund-linked failure maps to the specific REFUND_LINKED code and its own message`() {
+        val code = InstallmentActionMessages.failureCode(InstallmentOpFailure.REFUND_LINKED)
+
+        assertEquals(InstallmentActionFailureCode.REFUND_LINKED, code)
         assertEquals(
-            InstallmentActionFailureCode.UNEXPECTED,
-            InstallmentActionMessages.failureCode(InstallmentOpFailure.REFUND_LINKED)
+            com.yourname.expensetracker.R.string.installments_action_failed_refund_linked,
+            InstallmentActionMessages.failureText(code)
         )
+        // Control: the generic bucket keeps its own message.
+        assertEquals(
+            com.yourname.expensetracker.R.string.installments_action_failed_unexpected,
+            InstallmentActionMessages.failureText(InstallmentActionFailureCode.UNEXPECTED)
+        )
+    }
+
+    @Test
+    fun `only REFUND_LINKED maps to the refund-linked message among coordinator failures`() {
+        InstallmentOpFailure.entries.filter { it != InstallmentOpFailure.REFUND_LINKED }.forEach { failure ->
+            assertNotEquals(
+                "$failure must not use the refund-linked message",
+                InstallmentActionFailureCode.REFUND_LINKED,
+                InstallmentActionMessages.failureCode(failure)
+            )
+        }
     }
 
     @Test
@@ -352,6 +371,22 @@ class InstallmentEntryActionsViewModelTest : ViewModelTestUtils() {
 
         assertEquals(
             InstallmentMutationState.Failed(InstallmentOperation.RECORD, InstallmentActionFailureCode.CONFLICT),
+            vm.state.value.mutation
+        )
+        assertNotNull(vm.state.value.sheet)
+    }
+
+    @Test
+    fun `a refund-linked coordinator failure surfaces as the specific REFUND_LINKED failed state`() = runTest(testDispatcher) {
+        coEvery { coordinator.confirmEntry(any(), any(), any()) } returns
+            InstallmentOpResult.Failed(InstallmentOpFailure.REFUND_LINKED)
+        val vm = viewModel()
+        vm.open(InstallmentEntryActionKind.RECORD, target())
+        vm.submit()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(
+            InstallmentMutationState.Failed(InstallmentOperation.RECORD, InstallmentActionFailureCode.REFUND_LINKED),
             vm.state.value.mutation
         )
         assertNotNull(vm.state.value.sheet)

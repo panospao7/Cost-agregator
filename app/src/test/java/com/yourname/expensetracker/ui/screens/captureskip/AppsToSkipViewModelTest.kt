@@ -24,6 +24,7 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -258,6 +259,99 @@ class AppsToSkipViewModelTest {
 
         assertTrue("cancellation must not surface as a message: $messages", messages.isEmpty())
         assertTrue(vm.uiState.value.inFlight.isEmpty())
+    }
+
+    // ── Parser-app warning ────────────────────────────────────────────────────────
+
+    @Test
+    fun `block on a parser app holds a pending confirm and does not block yet`() = runTest(dispatcher) {
+        every { parserRegistry.hasParserFor("com.synthetic.alpha") } returns true
+        val vm = viewModel()
+        backgroundScope.launch { vm.uiState.collect { } }
+
+        vm.block("com.synthetic.alpha")
+
+        assertEquals(SkipAppItem("com.synthetic.alpha", "alpha bank"), vm.uiState.value.pendingBlockConfirm)
+        coVerify(exactly = 0) { repository.blockPackage(any()) }
+        assertTrue(vm.uiState.value.inFlight.isEmpty())
+    }
+
+    @Test
+    fun `confirmPendingBlock blocks the pending app once and clears the pending state`() = runTest(dispatcher) {
+        every { parserRegistry.hasParserFor("com.synthetic.alpha") } returns true
+        val vm = viewModel()
+        backgroundScope.launch { vm.uiState.collect { } }
+        vm.block("com.synthetic.alpha")
+
+        vm.confirmPendingBlock()
+
+        coVerify(exactly = 1) { repository.blockPackage("com.synthetic.alpha") }
+        assertNull(vm.uiState.value.pendingBlockConfirm)
+    }
+
+    @Test
+    fun `dismissPendingBlock clears the pending state without blocking`() = runTest(dispatcher) {
+        every { parserRegistry.hasParserFor("com.synthetic.alpha") } returns true
+        val vm = viewModel()
+        backgroundScope.launch { vm.uiState.collect { } }
+        vm.block("com.synthetic.alpha")
+
+        vm.dismissPendingBlock()
+
+        assertNull(vm.uiState.value.pendingBlockConfirm)
+        coVerify(exactly = 0) { repository.blockPackage(any()) }
+    }
+
+    @Test
+    fun `confirmPendingBlock without a pending app writes nothing`() = runTest(dispatcher) {
+        val vm = viewModel()
+        backgroundScope.launch { vm.uiState.collect { } }
+
+        vm.confirmPendingBlock()
+
+        coVerify(exactly = 0) { repository.blockPackage(any()) }
+        assertNull(vm.uiState.value.pendingBlockConfirm)
+    }
+
+    @Test
+    fun `confirm after dismiss does not block`() = runTest(dispatcher) {
+        every { parserRegistry.hasParserFor("com.synthetic.alpha") } returns true
+        val vm = viewModel()
+        backgroundScope.launch { vm.uiState.collect { } }
+        vm.block("com.synthetic.alpha")
+        vm.dismissPendingBlock()
+
+        vm.confirmPendingBlock()
+
+        coVerify(exactly = 0) { repository.blockPackage(any()) }
+    }
+
+    @Test
+    fun `block on a non parser app blocks directly with no pending confirm`() = runTest(dispatcher) {
+        every { parserRegistry.hasParserFor("com.synthetic.alpha") } returns false
+        val vm = viewModel()
+        backgroundScope.launch { vm.uiState.collect { } }
+
+        vm.block("com.synthetic.alpha")
+
+        coVerify(exactly = 1) { repository.blockPackage("com.synthetic.alpha") }
+        assertNull(vm.uiState.value.pendingBlockConfirm)
+    }
+
+    @Test
+    fun `block of a parser app is ignored while its write is running`() = runTest(dispatcher) {
+        val gate = CompletableDeferred<Unit>()
+        coEvery { repository.blockPackage("com.synthetic.alpha") } coAnswers { gate.await() }
+        val vm = viewModel()
+        backgroundScope.launch { vm.uiState.collect { } }
+        vm.block("com.synthetic.alpha")
+        every { parserRegistry.hasParserFor("com.synthetic.alpha") } returns true
+
+        vm.block("com.synthetic.alpha")
+
+        assertNull(vm.uiState.value.pendingBlockConfirm)
+        coVerify(exactly = 1) { repository.blockPackage("com.synthetic.alpha") }
+        gate.complete(Unit)
     }
 
     // ── Double tap ────────────────────────────────────────────────────────────────

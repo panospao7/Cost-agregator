@@ -76,8 +76,71 @@ class ImportCoordinatorTest {
         assertThat(result.success).isFalse()
         assertThat(result.importedCount).isEqualTo(1)
         assertThat(result.errorCount).isEqualTo(1)
-        assertThat(result.errors).containsExactly("Row 1: ${CsvImportFailureCode.ROW_REJECTED.name}")
+        // The failing line is the second data row; row numbers are 1-based.
+        assertThat(result.errors).containsExactly("Row 2: ${CsvImportFailureCode.ROW_REJECTED.name}")
         assertThat(result.expenseIds).containsExactly(101L)
+    }
+
+    @Test
+    fun `csv first failing data row is reported as Row 1 not Row 0`() = runTest {
+        coEvery { coordinator.createExpense(any()) } returns
+            CreateExpenseResult.ValidationFailed(listOf("amount must be positive")) andThen
+            CreateExpenseResult.Created(7L)
+
+        val csv = "date,amount,merchant,category,notes\n" +
+            "2024-01-15,0.00,Bad,Food,x\n" +
+            "2024-01-16,10.00,Good,Food,x"
+
+        val result = importCoordinator.importFromContent(csv)
+
+        assertThat(result.errors).containsExactly("Row 1: ${CsvImportFailureCode.ROW_REJECTED.name}")
+        assertThat(result.errors.none { it.startsWith("Row 0:") }).isTrue()
+    }
+
+    @Test
+    fun `csv Row N message equals the CSV_IMPORT csvRowNumber of the same row`() = runTest {
+        val requests = mutableListOf<com.yourname.expensetracker.domain.transaction.CreateExpenseRequest>()
+        coEvery { coordinator.createExpense(capture(requests)) } answers {
+            if (requests.last().csvRowNumber == 3) {
+                CreateExpenseResult.ValidationFailed(listOf("amount must be positive"))
+            } else {
+                CreateExpenseResult.Created(requests.last().csvRowNumber!!.toLong())
+            }
+        }
+
+        // A comment line and the header precede the data and must not shift the numbering.
+        val csv = "# ExpenseTracker Export v2, rowCount=4\n" +
+            "ID,Date,CreatedAt,Merchant,Amount,EffectiveAmount,Currency,TransactionType,Category,Notes,Source,PaymentMethod,SourceAccountName,OriginalCurrency,OriginalAmount,HomeCurrency,BaseAmount,BaseCurrency,ExchangeRateUsed,ConversionRateUsed,IsBusinessExpense,BusinessPurpose,BusinessCategory,BusinessProject,RequiresReceipt,SourceLinks\n" +
+            "1,2024-01-15,2024-01-15,One,10.00,10.00,EUR,PURCHASE,Food,,,,\n" +
+            "2,2024-01-16,2024-01-16,Two,11.00,11.00,EUR,PURCHASE,Food,,,,\n" +
+            "3,2024-01-17,2024-01-17,Three,12.00,12.00,EUR,PURCHASE,Food,,,,\n" +
+            "4,2024-01-18,2024-01-18,Four,13.00,13.00,EUR,PURCHASE,Food,,,,"
+
+        val result = importCoordinator.importFromContent(csv)
+
+        assertThat(requests.map { it.csvRowNumber }).containsExactly(1, 2, 3, 4).inOrder()
+        assertThat(result.errors).containsExactly("Row 3: ${CsvImportFailureCode.ROW_REJECTED.name}")
+        val failedRowNumber = requests.first { it.merchant == "Three" }.csvRowNumber
+        assertThat(result.errors.single()).startsWith("Row $failedRowNumber:")
+        assertThat(result.importedCount).isEqualTo(3)
+    }
+
+    @Test
+    fun `json Row N message is 1-based and equals the csvRowNumber of the same row`() = runTest {
+        val requests = mutableListOf<com.yourname.expensetracker.domain.transaction.CreateExpenseRequest>()
+        coEvery { coordinator.createExpense(capture(requests)) } returns CreateExpenseResult.Created(5L)
+
+        val result = importCoordinator.importFromContent(
+            """{"schemaVersion":2,"rows":[
+                 {"merchant":"A","amount":1.0,"date":1705276800000},
+                 {"merchant":"Bad","amount":"abc","effectiveAmount":"def","date":1705276800000},
+                 {"merchant":"C","amount":3.0,"date":1705276800000}
+               ]}"""
+        )
+
+        assertThat(result.errors).containsExactly("Row 2: ${ImportContractErrorCodes.INVALID_AMOUNT}")
+        // The failed row never reaches the coordinator, but the surviving rows keep their own positions.
+        assertThat(requests.map { it.merchant to it.csvRowNumber }).containsExactly("A" to 1, "C" to 3).inOrder()
     }
 
     @Test
@@ -89,7 +152,7 @@ class ImportCoordinatorTest {
         val result = importCoordinator.importFromContent(csv)
 
         assertThat(result.success).isFalse()
-        assertThat(result.errors).containsExactly("Row 0: ${ImportContractErrorCodes.UNKNOWN_TRANSACTION_TYPE}")
+        assertThat(result.errors).containsExactly("Row 1: ${ImportContractErrorCodes.UNKNOWN_TRANSACTION_TYPE}")
         assertThat(result.importedCount).isEqualTo(0)
     }
 

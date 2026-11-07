@@ -244,6 +244,41 @@ class SharedExpenseGroupsViewModelErrorTest : ViewModelTestUtils() {
         assertSanitizedResultFailure(viewModel, "Failed to add expense")
     }
 
+    @Test
+    fun `add expense Error REFUND_LINKED shows the fixed refund-linked message`() = runTest(testDispatcher) {
+        coEvery {
+            addGroupExpenseUseCase.invokeAtomic(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        } returns GroupExpenseCreationResult.Error(GroupExpenseCreationResult.Error.REFUND_LINKED)
+        val viewModel = createViewModel()
+        advanceUntilIdle()
+
+        viewModel.addExpense(1L, "Dinner", 10.0, 11L, SplitType.EQUAL)
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertEquals(
+            "This expense is linked to a refund, so it can't be added to a group. Remove the refund link first.",
+            state.error
+        )
+        assertFalse(state.loadFailed)
+        assertFalse(state.error.orEmpty().contains("REFUND_LINKED"))
+        assertEquals(1, state.groups.size)
+    }
+
+    @Test
+    fun `add expense Error that merely contains REFUND_LINKED stays the generic message`() = runTest(testDispatcher) {
+        coEvery {
+            addGroupExpenseUseCase.invokeAtomic(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        } returns GroupExpenseCreationResult.Error("REFUND_LINKED database $sentinel")
+        val viewModel = createViewModel()
+        advanceUntilIdle()
+
+        viewModel.addExpense(1L, "Dinner", 10.0, 11L, SplitType.EQUAL)
+        advanceUntilIdle()
+
+        assertSanitizedResultFailure(viewModel, "Failed to add expense")
+    }
+
     private fun assertSanitizedResultFailure(viewModel: SharedExpenseGroupsViewModel, expected: String) {
         val state = viewModel.uiState.value
         assertEquals(expected, state.error)

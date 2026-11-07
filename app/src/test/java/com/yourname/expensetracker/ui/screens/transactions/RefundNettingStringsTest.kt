@@ -14,7 +14,7 @@ import java.util.Locale
 import javax.xml.parsers.DocumentBuilderFactory
 
 /**
- * Refund netting S4 (ux-flows sections 7 and 9): the 44 new keys exist in values, values-es and values-el;
+ * Refund netting S4 (ux-flows sections 7 and 9): the 45 new keys exist in values, values-es and values-el;
  * every es and el entry is flagged DRAFT directly above it (owner native sign-off pending); format
  * placeholders are identical across the locales; the reworded likelihood notice (strings.xml) exists in all
  * three locales with a DRAFT flag on es and el.
@@ -65,7 +65,8 @@ class RefundNettingStringsTest {
         "refund_unlink_body_format",
         "refund_unlink_body_remaining_format",
         "transactions_refund_linked_locked",
-        "transactions_delete_refund_linked_note"
+        "transactions_delete_refund_linked_note",
+        "installments_action_failed_refund_linked"
     )
 
     private val noticeKey = "transactions_refund_likelihood_notice"
@@ -129,13 +130,24 @@ class RefundNettingStringsTest {
     // ---- presence ------------------------------------------------------------------------------
 
     @Test
-    fun `there are 44 distinct new keys`() {
-        assertEquals(44, keys.size)
-        assertEquals(44, keys.toSet().size)
+    fun `there are 45 distinct new keys`() {
+        assertEquals(45, keys.size)
+        assertEquals(45, keys.toSet().size)
     }
 
     @Test
-    fun `all 44 keys are present in values values-es and values-el`() {
+    fun `installments_action_failed_refund_linked is present non blank and argument free in all three locales`() {
+        val key = "installments_action_failed_refund_linked"
+        for (folder in allFolders) {
+            val element = stringElement(parse(folder), key)
+            assertNotNull("$folder is missing $key", element)
+            assertTrue("$folder/$key is blank", element!!.textContent.isNotBlank())
+            assertTrue("$folder/$key must not have placeholders", placeholders(element.textContent).isEmpty())
+        }
+    }
+
+    @Test
+    fun `all 45 keys are present in values values-es and values-el`() {
         for (folder in allFolders) {
             val doc = parse(folder)
             for (key in keys) {
@@ -145,7 +157,7 @@ class RefundNettingStringsTest {
     }
 
     @Test
-    fun `each locale file defines exactly the 44 keys and no duplicates`() {
+    fun `each locale file defines exactly the 45 keys and no duplicates`() {
         for (folder in allFolders) {
             val names = elements(parse(folder), "string").map { it.getAttribute("name") }
             assertEquals("$folder defines duplicate or extra keys", keys.sorted(), names.sorted())
