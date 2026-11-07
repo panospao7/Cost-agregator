@@ -132,6 +132,7 @@ class TransactionLifecycleCoordinatorUpdateTest {
             database = database,
             expenseDao = expenseDao,
             transactionEventDao = transactionEventDao,
+            expenseRefundLinkDao = mockk(relaxed = true),
             timeProvider = timeProvider,
             currencyConverter = currencyConverter,
             sideEffectDispatcher = mockk(relaxed = true),

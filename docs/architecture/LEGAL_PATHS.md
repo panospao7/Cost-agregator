@@ -207,14 +207,29 @@ FORBIDDEN:
 ```
 
 ```
-REFUNDS (1.0.x limitation — DR-05):
-  → There is no dedicated REFUND transaction type in 1.0.x; negative amounts are rejected by
-    TransactionValidator and parsers map refund/reversal/cashback credits to TransactionType.DEPOSIT.
-  → Because DEPOSIT rows are excluded from spending aggregates, a refund does NOT reduce the original
-    purchase's category spend or budget totals.
-  → Supported workaround: edit or delete the original purchase (RefundLikelihoodDetector surfaces an
-    informational notice on DEPOSIT rows that match a PURCHASE in the preceding 90 days by amount and
-    canonical merchant key).
+REFUNDS (DR-05 refund netting, schema 153):
+  → Refunds stay TransactionType.DEPOSIT (parsers unchanged; negative amounts are still rejected by
+    TransactionValidator). A user links one refund to one purchase:
+    UI → RefundLinkUseCase.link(refundId, purchaseId) → TransactionLifecycleCoordinator.linkRefund()
+    (write barrier, one transaction: re-read, RefundNettingPolicy check, insert expense_refund_links row,
+     set expenses.refundNettedAmount on both rows, two UPDATED events with TransactionUpdateKind.REFUND_NETTING)
+  → Unlink: RefundLinkUseCase.unlink(refundId) → TLC.unlinkRefund(). Delete of either side: TLC.deleteExpense
+    removes the links and recomputes the counterpart in the same transaction (rollback on any failure).
+  → Netting: Expense.effectiveAmount / SpendingInclusionSql.EFFECTIVE_AMOUNT(_E) subtract refundNettedAmount
+    (purchase spend and deposit income both drop by the applied amount); all SQL totals use the outer constant.
+  → Suggestions: RefundLinkUseCase.findCandidates (read-only, read barrier, Available | Unavailable);
+    RefundLikelihoodDetector notice only. No automatic link.
+  → Edit lock (INV-12): while refundNettedAmount > 0, TLC updateExpense / updateType /
+    updateTypeAndTransferDetails refuse amount, currency and type changes with RefundLinkedExpenseException
+    (code EXPENSE_LOCKED_BY_REFUND_LINK) before any write or event. updateExpense and every full-row writer
+    keep the column read inside their transaction; every create path stores 0.0.
+  → Group: GroupTransactionCoordinator refuses to group-link an expense with refundNettedAmount > 0 (REFUND_LINKED).
+FORBIDDEN:
+  ❌ Writing expense_refund_links or expenses.refundNettedAmount outside TLC linkRefund / unlinkRefund / deleteExpense
+  ❌ Calling TLC.linkRefund / unlinkRefund from anywhere except RefundLinkUseCase
+  ❌ SUM over ExpenseDao.EFFECTIVE_AMOUNT_SQL / _E_SQL in any total
+  ❌ Linking installment-flagged, group-linked, cross-currency or non-PURCHASE/DEPOSIT rows
+  ❌ Amount / currency / type edits on a linked row
 ```
 
 ```

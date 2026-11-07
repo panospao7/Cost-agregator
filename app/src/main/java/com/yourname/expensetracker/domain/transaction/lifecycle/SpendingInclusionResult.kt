@@ -14,4 +14,11 @@ sealed interface SpendingInclusionResult {
 
     /** The expense does not exist; nothing was written. */
     data object NotFound : SpendingInclusionResult
+
+    /**
+     * A flag was requested on an expense that carries a refund netting (`refundNettedAmount > 0`);
+     * nothing was written (D-19: installments and refund links are mutually exclusive). Clearing a
+     * flag is never refused.
+     */
+    data object RefundLinked : SpendingInclusionResult
 }

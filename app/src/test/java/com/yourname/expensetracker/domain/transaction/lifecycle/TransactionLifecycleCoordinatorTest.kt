@@ -6,6 +6,7 @@ import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
+import com.yourname.expensetracker.data.database.dao.ExpenseRefundLinkDao
 import com.yourname.expensetracker.data.database.dao.TransactionEventDao
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
@@ -121,6 +122,13 @@ class TransactionLifecycleCoordinatorTest {
         coEvery { expenseDao.insertAtomic(any()) } returns 42L
         // Simulate successful event insert
         coEvery { transactionEventDao.insert(any()) } returns 1L
+        // Refund netting INV-13: deleteExpense reads the row's refund links inside the transaction.
+        // Fixture-only stub: an unlinked row has no links.
+        val refundLinkDao = mockk<ExpenseRefundLinkDao>(relaxed = true)
+        coEvery { refundLinkDao.getForExpense(any()) } returns emptyList()
+        coEvery { refundLinkDao.getByPurchase(any()) } returns emptyList()
+        coEvery { refundLinkDao.getByRefund(any()) } returns emptyList()
+        every { database.expenseRefundLinkDao() } returns refundLinkDao
 
         runner = mockk(relaxed = true)
         planner = mockk(relaxed = true)
@@ -132,6 +140,7 @@ class TransactionLifecycleCoordinatorTest {
             database = database,
             expenseDao = expenseDao,
             transactionEventDao = transactionEventDao,
+            expenseRefundLinkDao = refundLinkDao,
             timeProvider = timeProvider,
             currencyConverter = currencyConverter,
             sideEffectDispatcher = sideEffectDispatcher,
@@ -565,6 +574,7 @@ class TransactionLifecycleCoordinatorTest {
                 database = database,
                 expenseDao = expenseDao,
                 transactionEventDao = transactionEventDao,
+                expenseRefundLinkDao = database.expenseRefundLinkDao(),
                 timeProvider = timeProvider,
                 currencyConverter = currencyConverter,
                 sideEffectDispatcher = sideEffectDispatcher,
@@ -863,6 +873,7 @@ class TransactionLifecycleCoordinatorTest {
             database = database,
             expenseDao = expenseDao,
             transactionEventDao = transactionEventDao,
+            expenseRefundLinkDao = database.expenseRefundLinkDao(),
             timeProvider = timeProvider,
             currencyConverter = currencyConverter,
             sideEffectDispatcher = sideEffectDispatcher,

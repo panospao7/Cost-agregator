@@ -30,6 +30,8 @@ object RefundLikelihoodDetector {
      */
     fun isLikelyRefund(deposit: Expense, candidates: Iterable<Expense>): Boolean {
         if (deposit.transactionType != TransactionType.DEPOSIT) return false
+        // Refund-netting INV-18: a deposit that already carries a refund link raises no notice.
+        if (deposit.refundNettedAmount > 0.0) return false
         return isLikelyRefund(
             depositAmount = deposit.amount,
             depositMerchant = deposit.merchant,
@@ -60,6 +62,8 @@ object RefundLikelihoodDetector {
 
         return candidates.any { candidate ->
             candidate.transactionType == TransactionType.PURCHASE &&
+                // Refund-netting INV-18: a fully refunded purchase is not a candidate any more.
+                !(candidate.refundNettedAmount >= candidate.amount) &&
                 isWithinPrecedingWindow(depositDateMs = depositDateMs, purchaseDateMs = candidate.date) &&
                 DuplicateDetectionPolicy.areAmountsEqual(depositAmount, candidate.amount) &&
                 (normalizedDepositCurrency == null ||
@@ -73,7 +77,18 @@ object RefundLikelihoodDetector {
         return deltaMs in 0L..WINDOW_MS
     }
 
-    private fun canonicalMerchantKey(merchant: String, storedKey: String?): String? {
+    /**
+     * Refund-netting INV-18: the amount-equality rule shared with `RefundNettingPolicy` ranking,
+     * so the 0.01 tolerance is not duplicated.
+     */
+    internal fun amountsMatch(a: Double, b: Double): Boolean =
+        DuplicateDetectionPolicy.areAmountsEqual(a, b)
+
+    /**
+     * Refund-netting INV-18: the canonical merchant key rule shared with `RefundNettingPolicy`
+     * ranking, so the merchant-identity rule is not duplicated.
+     */
+    internal fun canonicalMerchantKey(merchant: String, storedKey: String?): String? {
         return storedKey?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }
             ?: MerchantKeyGenerator.generate(merchant).takeIf { it.isNotBlank() }
             ?: merchant.trim().lowercase().takeIf { it.isNotEmpty() }

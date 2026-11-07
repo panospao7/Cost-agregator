@@ -38,7 +38,13 @@ enum class InstallmentOpFailure {
     RECORD_DUPLICATE_NOT_ADOPTABLE,
 
     /** confirm: the installment expense insert conflicted on a unique key. */
-    RECORD_INSERT_CONFLICT
+    RECORD_INSERT_CONFLICT,
+
+    /**
+     * The purchase expense carries a refund netting, so the plan cannot exclude it from spending
+     * (D-19, installments and refund links are mutually exclusive). The transaction rolled back.
+     */
+    REFUND_LINKED
 }
 
 /**
