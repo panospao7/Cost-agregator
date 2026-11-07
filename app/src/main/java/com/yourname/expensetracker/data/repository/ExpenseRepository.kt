@@ -1269,7 +1269,8 @@ class ExpenseRepository @Inject constructor(
             isNotMine = isNotMine,
             transferDirection = transferDirection?.toDomainTransferDirection(),
             notes = notes,
-            spendingExclusionReason = spendingExclusionReason
+            spendingExclusionReason = spendingExclusionReason,
+            refundNettedAmount = refundNettedAmount
         )
     }
 

@@ -54,7 +54,8 @@ class AnalyticsCurrencyNormalizer @Inject constructor(
                         null -> null
                     },
                     notes = it.notes,
-                    spendingExclusionReason = it.spendingExclusionReason
+                    spendingExclusionReason = it.spendingExclusionReason,
+                    refundNettedAmount = it.refundNettedAmount
                 )
             },
             homeCurrencyCode = homeCurrencyCode
@@ -80,7 +81,8 @@ class AnalyticsCurrencyNormalizer @Inject constructor(
                     isNotMine = it.isNotMine,
                     transferDirection = it.transferDirection,
                     notes = it.notes,
-                    spendingExclusionReason = it.spendingExclusionReason
+                    spendingExclusionReason = it.spendingExclusionReason,
+                    refundNettedAmount = it.refundNettedAmount
                 )
             },
             homeCurrencyCode = homeCurrencyCode
@@ -428,7 +430,9 @@ private data class NormalizableAnalyticsExpense(
     val isNotMine: Boolean,
     val transferDirection: DomainTransferDirection?,
     val notes: String?,
-    val spendingExclusionReason: String? = null
+    val spendingExclusionReason: String? = null,
+    /** Original-currency Expense.refundNettedAmount; [effectiveAmount] is already net of it. */
+    val refundNettedAmount: Double = 0.0
 )
 
 private fun NormalizableAnalyticsExpense.toExpenseSnapshot(
@@ -448,6 +452,7 @@ private fun NormalizableAnalyticsExpense.toExpenseSnapshot(
         isNotMine = isNotMine,
         transferDirection = transferDirection,
         notes = notes,
-        spendingExclusionReason = spendingExclusionReason
+        spendingExclusionReason = spendingExclusionReason,
+        refundNettedAmount = refundNettedAmount
     )
 }

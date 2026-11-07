@@ -37,7 +37,9 @@ data class NormalizedExpense(
     val rateSource: String? = null,
     val conversionPath: String? = null,
     val qualityWarning: AnalyticsConversionWarningType? = null,
-    val spendingExclusionReason: String? = null
+    val spendingExclusionReason: String? = null,
+    /** Original-currency Expense.refundNettedAmount (INV-6); [originalEffectiveAmount] is already net of it. */
+    val refundNettedAmount: Double = 0.0
 )
 
 /**
@@ -100,6 +102,7 @@ fun NormalizedExpense.toExpenseSnapshot(): com.yourname.expensetracker.domain.mo
         isNotMine = isNotMine,
         transferDirection = null,
         notes = null,
-        spendingExclusionReason = spendingExclusionReason
+        spendingExclusionReason = spendingExclusionReason,
+        refundNettedAmount = refundNettedAmount
     )
 }

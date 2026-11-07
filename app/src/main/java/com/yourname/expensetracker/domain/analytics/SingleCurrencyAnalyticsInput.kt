@@ -40,7 +40,8 @@ internal object SingleCurrencyAnalyticsInput {
                     isSharedExpense = false,
                     ownershipMode = null,
                     source = null,
-                    spendingExclusionReason = expense.spendingExclusionReason
+                    spendingExclusionReason = expense.spendingExclusionReason,
+                    refundNettedAmount = expense.refundNettedAmount
                 )
             }
         )
