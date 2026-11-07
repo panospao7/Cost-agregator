@@ -155,7 +155,7 @@ The rule: a refund reduces the gross amount, and the user's share is taken from 
   - `TimePeriodUtils.daysBetween(P.date, D.date) >= -1`. The refund may be at most one calendar day before the purchase, in the device zone, to allow for posting lag.
 
   `isNotMine` and the share fields never affect eligibility, because the formula handles them.
-- **Candidate scope for D:** PURCHASE rows read with the existing `expenseDao.getExpensesBetween(D.date − RefundLikelihoodDetector.WINDOW_MS, D.date + 1 day)`, filtered to eligible pairs. Rank, from first to last key:
+- **Candidate scope for D:** PURCHASE rows read with the read-only `expenseDao.getRefundCandidatePurchasesBetween(D.date − RefundLikelihoodDetector.WINDOW_MS, D.date + 1 day)`, filtered to eligible pairs. This query has no `isNotMine` filter (the shared `getExpensesBetween` family filters `isNotMine = 0`, which would hide not-mine purchases that 1.6 and D-11 make eligible); it also skips rows with `spendingExclusionReason` set. Rank, from first to last key:
   1. `exactAmountMatch` first (`DuplicateDetectionPolicy.areAmountsEqual(D.amount, P.amount)`);
   2. then `merchantMatch` first (the detector's canonical merchant key is equal);
   3. then `|dayDelta|` ascending;
@@ -238,7 +238,8 @@ The invariants:
   Owner: the use case.
 - **INV-18 Notice.** `RefundLikelihoodDetector.isLikelyRefund` returns false for a deposit with `refundNettedAmount > 0`, and it skips candidate purchases with `refundNettedAmount >= amount`. Otherwise its semantics are unchanged. Owner: `RefundLikelihoodDetector`.
 - **INV-19 Installment and group exclusions.**
-  - Rows with `spendingExclusionReason` set are refused (`INSTALLMENT_MANAGED`). The installment plan's REFUNDED flow owns refunds of installment purchases.
+  - Rows with `spendingExclusionReason` set are refused (`INSTALLMENT_MANAGED`). The installment plan's REFUNDED flow owns refunds of installment purchases. A row that is an installment plan purchase record (`getPlanByPurchaseExpenseId`) or the linked expense of a plan entry (`getEntryByLinkedExpenseId`) is refused the same way; TLC reads both facts in the link transaction and passes them to `decideLink`.
+  - Installments and refund links are mutually exclusive in the other direction too (D-19): `setSpendingExclusionDbOnly` refuses to set any exclusion flag on a row with `refundNettedAmount > 0` (`SpendingInclusionResult.RefundLinked`, nothing written, no event). Installment declare (`declareOnExpense`, `declareWithNewExpense`) and the REFUNDED plan path then return `Failed(REFUND_LINKED)` and roll back; reconcile repairs skip the flag. Clearing a flag is never refused. Owner: `TransactionLifecycleCoordinator` (single choke point), with `InstallmentPlanLifecycleCoordinator.setPurchaseFlag` mapping the result.
   - Group-linked rows are refused (`GROUP_LINKED`).
   - The group link writer (`GroupTransactionCoordinator`, reached through `SharedExpenseDataPortAdapter`) refuses to link an expense with `refundNettedAmount > 0`, using a bounded code `REFUND_LINKED`.
 
@@ -315,7 +316,8 @@ In this table, home is EUR and the device zone is Europe/Athens unless stated ot
 | Shared, percentage share | Share of the net gross (AE-7). |
 | Shared, fixed share | Scaled by net/gross (AE-8). |
 | Not-mine purchase | Allowed. The purchase stays at 0, and the deposit leaves income (AE-9). |
-| Installment purchase, or an installment expense | Refused, `INSTALLMENT_MANAGED` (AE-11). |
+| Installment purchase, or an installment expense (flagged, plan purchase record, or plan entry's linked expense) | Refused, `INSTALLMENT_MANAGED` (AE-11). |
+| Declaring an installment plan on, or REFUNDED-flagging, a row with `refundNettedAmount > 0` | Refused by TLC, `Failed(REFUND_LINKED)`, rolled back (D-19). Unlink first. |
 | Group-linked row | Refused. The group writer also refuses a linked row (AE-11). |
 | Recurring-generated or recurring-linked purchase | Allowed. Occurrence status and `paidAmount` stay gross. Recurring matching uses raw `amount`. |
 | Receipt-linked purchase | Allowed. Receipt, warranty and return-window rows are unchanged. |

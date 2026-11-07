@@ -44,7 +44,8 @@ class RefundLinkUseCase @Inject constructor(
 
     /**
      * Ranked purchases the DEPOSIT [refundId] could be applied to (spec 1.6): one range read of
-     * `getExpensesBetween(refund.date - WINDOW_MS, refund.date + 1 day)`, the pair rule and ranking
+     * `getRefundCandidatePurchasesBetween(refund.date - WINDOW_MS, refund.date + 1 day)` (PURCHASE
+     * rows, no ownership filter: `isNotMine` never affects eligibility), the pair rule and ranking
      * from [RefundNettingPolicy], group-linked purchases skipped, at most
      * [RefundNettingPolicy.MAX_CANDIDATES] items. A missing, ineligible, group-linked or already
      * linked refund gives `Available(emptyList())` (nothing to offer), which is a real empty result
@@ -92,7 +93,8 @@ class RefundLinkUseCase @Inject constructor(
     private suspend fun computeCandidates(refundId: Long): List<RefundCandidate> {
         val refund = expenseDao.getById(refundId) ?: return emptyList()
         if (groupExpenseDao.existsForExpense(refundId)) return emptyList()
-        val purchases = expenseDao.getExpensesBetween(
+        // D-11: not-mine purchases are valid candidates, so this read has no ownership filter.
+        val purchases = expenseDao.getRefundCandidatePurchasesBetween(
             refund.date - RefundLikelihoodDetector.WINDOW_MS,
             refund.date + RefundNettingPolicy.CANDIDATE_LOOKAHEAD_MS
         )

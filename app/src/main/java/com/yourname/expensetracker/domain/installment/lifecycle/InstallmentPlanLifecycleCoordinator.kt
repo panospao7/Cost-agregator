@@ -1663,6 +1663,15 @@ class InstallmentPlanLifecycleCoordinator @Inject constructor(
                 null
             }
             SpendingInclusionResult.NoOp -> null
+            // D-19: installments and refund links are mutually exclusive. TLC refused before any
+            // write. Declare and refund-path callers (abortIfMissing) abort the whole transaction
+            // with a bounded failure; repair callers skip the flag (it is retried on the next run).
+            SpendingInclusionResult.RefundLinked -> {
+                if (abortIfMissing) {
+                    throw AbortSignal(InstallmentOpResult.Failed(InstallmentOpFailure.REFUND_LINKED))
+                }
+                null
+            }
             is SpendingInclusionResult.Updated -> result.postCommitActions
         }
     }

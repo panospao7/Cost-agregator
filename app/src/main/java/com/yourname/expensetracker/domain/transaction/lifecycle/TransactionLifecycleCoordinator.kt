@@ -2723,6 +2723,16 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     )
                     return@withTransaction
                 }
+                // D-19: installments and refund links are mutually exclusive. Excluding a row that
+                // carries a refund netting would remove the same money twice, so refuse before any
+                // write or event (clearing the flag is always allowed).
+                if (newValue != null && existing.refundNettedAmount > 0.0) {
+                    result = MutationResult(
+                        SpendingInclusionResult.RefundLinked,
+                        PostCommitActionBatch.empty(corrId)
+                    )
+                    return@withTransaction
+                }
 
                 expenseDao.updateSpendingExclusionReason(expenseId, newValue)
                 transactionEventDao.insert(
@@ -2755,6 +2765,17 @@ class TransactionLifecycleCoordinator @Inject constructor(
             TransactionUpdateKind.SPENDING_INCLUSION
         )
         return MutationResult(SpendingInclusionResult.Updated(expenseId), batch)
+    }
+
+    /**
+     * Read-only probe: [expenseId] is an installment plan purchase record or the linked expense of
+     * a plan entry. Same predicate the installment coordinator uses for its relation facts
+     * (`getPlanByPurchaseExpenseId`, `getEntryByLinkedExpenseId`). Call inside the write transaction.
+     */
+    private suspend fun isInstallmentLinked(expenseId: Long): Boolean {
+        val planDao = database.installmentPlanDao()
+        return planDao.getPlanByPurchaseExpenseId(expenseId) != null ||
+            planDao.getEntryByLinkedExpenseId(expenseId) != null
     }
 
     /** Bounded snapshot of the flag only (no amount, merchant or notes). */
@@ -2798,6 +2819,12 @@ class TransactionLifecycleCoordinator @Inject constructor(
                         refund != null && database.groupExpenseDao().existsForExpense(refundId)
                     val purchaseGroupLinked =
                         purchase != null && database.groupExpenseDao().existsForExpense(purchaseId)
+                    // D-19: installments and refund links are mutually exclusive; a plan purchase
+                    // record or a plan entry's linked expense is installment-managed.
+                    val refundInstallmentLinked =
+                        refund != null && isInstallmentLinked(refundId)
+                    val purchaseInstallmentLinked =
+                        purchase != null && isInstallmentLinked(purchaseId)
 
                     when (
                         val decision = RefundNettingPolicy.decideLink(
@@ -2806,7 +2833,9 @@ class TransactionLifecycleCoordinator @Inject constructor(
                             refundLinks = refundLinks,
                             purchaseLinks = purchaseLinks,
                             refundGroupLinked = refundGroupLinked,
-                            purchaseGroupLinked = purchaseGroupLinked
+                            purchaseGroupLinked = purchaseGroupLinked,
+                            refundInstallmentLinked = refundInstallmentLinked,
+                            purchaseInstallmentLinked = purchaseInstallmentLinked
                         )
                     ) {
                         is RefundNettingPolicy.LinkDecision.AlreadyLinked -> {

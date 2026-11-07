@@ -268,6 +268,24 @@ interface ExpenseDao {
         getExpensesByTypeBetweenUncapped(startDate, endDate, type)
 
     /**
+     * Refund-netting candidate read (DR-05, spec 1.6, D-11): PURCHASE rows in the half-open range
+     * [startDate, endDate) with **no** ownership filter, because `isNotMine` never affects refund
+     * eligibility. Rows that a plan or the installment flag manage (`spendingExclusionReason` set)
+     * are skipped in SQL, which matches `RefundNettingPolicy` (INV-19). Currency, amount, date
+     * tolerance and capacity stay with `RefundNettingPolicy.rankCandidates`. Read-only, no cap
+     * (the caller applies MAX_CANDIDATES after ranking).
+     */
+    @Query("""
+        SELECT * FROM expenses
+        WHERE transactionType = 'PURCHASE'
+          AND date >= :startDate
+          AND date < :endDate
+          AND spendingExclusionReason IS NULL
+        ORDER BY date DESC, id DESC
+    """)
+    suspend fun getRefundCandidatePurchasesBetween(startDate: Long, endDate: Long): List<Expense>
+
+    /**
      * Reactive (Flow) variant of [getExpensesBetweenUncapped].
      * Preserves the same ownership filter and ordering as [getExpensesBetweenFlow].
      */

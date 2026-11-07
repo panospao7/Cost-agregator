@@ -101,9 +101,12 @@ class RefundNettingPolicyTest {
         refundLinks: List<ExpenseRefundLink> = emptyList(),
         purchaseLinks: List<ExpenseRefundLink> = emptyList(),
         refundGroupLinked: Boolean = false,
-        purchaseGroupLinked: Boolean = false
+        purchaseGroupLinked: Boolean = false,
+        refundInstallmentLinked: Boolean = false,
+        purchaseInstallmentLinked: Boolean = false
     ): LinkDecision = RefundNettingPolicy.decideLink(
-        refund, purchase, refundLinks, purchaseLinks, refundGroupLinked, purchaseGroupLinked
+        refund, purchase, refundLinks, purchaseLinks, refundGroupLinked, purchaseGroupLinked,
+        refundInstallmentLinked, purchaseInstallmentLinked
     )
 
     private fun assertApplied(expected: String, scale: Int, decision: LinkDecision) {

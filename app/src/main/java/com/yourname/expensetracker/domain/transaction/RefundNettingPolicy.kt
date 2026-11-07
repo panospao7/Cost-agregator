@@ -53,6 +53,8 @@ object RefundNettingPolicy {
     /**
      * Evaluates INV-3, INV-4 and INV-5 for a pair. [refundLinks] and [purchaseLinks] are the
      * current link rows of each row (either side), re-read by the caller in the same transaction.
+     * [refundInstallmentLinked] and [purchaseInstallmentLinked] say that the row is an installment
+     * plan purchase record or the linked expense of a plan entry (same-transaction reads).
      */
     fun decideLink(
         refund: Expense?,
@@ -60,7 +62,9 @@ object RefundNettingPolicy {
         refundLinks: List<ExpenseRefundLink>,
         purchaseLinks: List<ExpenseRefundLink>,
         refundGroupLinked: Boolean,
-        purchaseGroupLinked: Boolean
+        purchaseGroupLinked: Boolean,
+        refundInstallmentLinked: Boolean,
+        purchaseInstallmentLinked: Boolean
     ): LinkDecision {
         if (refund == null) return refused(RefundLinkRefusal.REFUND_NOT_FOUND)
         if (purchase == null) return refused(RefundLinkRefusal.PURCHASE_NOT_FOUND)
@@ -79,8 +83,13 @@ object RefundNettingPolicy {
         if (!hasUsableAmount(refund) || !hasUsableAmount(purchase)) {
             return refused(RefundLinkRefusal.INVALID_AMOUNT)
         }
-        // INV-19: the installment plan and the group split own these rows.
-        if (refund.spendingExclusionReason != null || purchase.spendingExclusionReason != null) {
+        // INV-19, D-19: the installment plan and the group split own these rows. A row is
+        // installment-managed when it carries the exclusion flag OR is a plan purchase record or the
+        // payment of a plan entry (the caller reads those links in the same transaction). Installments
+        // and refund links are mutually exclusive, so a refund never nets a row the plan also removes.
+        if (refund.spendingExclusionReason != null || purchase.spendingExclusionReason != null ||
+            refundInstallmentLinked || purchaseInstallmentLinked
+        ) {
             return refused(RefundLinkRefusal.INSTALLMENT_MANAGED)
         }
         if (refundGroupLinked || purchaseGroupLinked) return refused(RefundLinkRefusal.GROUP_LINKED)
