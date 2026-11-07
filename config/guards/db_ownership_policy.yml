@@ -7282,7 +7282,7 @@ entries:
   parameterTypes:
   - Long
   - Long
-  daoAccessor: expenseRefundLinkDao
+  daoAccessor: "database.expenseRefundLinkDao()"
   daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseRefundLinkDao
   operation: insert
   barrierMode: helper
@@ -7297,7 +7297,7 @@ entries:
   receiver: null
   parameterTypes:
   - Long
-  daoAccessor: expenseRefundLinkDao
+  daoAccessor: "database.expenseRefundLinkDao()"
   daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseRefundLinkDao
   operation: deleteById
   barrierMode: helper
