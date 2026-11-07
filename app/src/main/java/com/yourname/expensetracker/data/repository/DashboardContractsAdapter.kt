@@ -189,7 +189,8 @@ class DashboardContractsAdapter @Inject constructor(
         // boundary so the deposit exclusion is no longer tautological.
         isSharedExpense = isSharedExpense,
         currency = currency,
-        spendingExclusionReason = spendingExclusionReason
+        spendingExclusionReason = spendingExclusionReason,
+        refundNettedAmount = refundNettedAmount
     )
 
     private fun TransactionType.toDashboardType(): DashboardTransactionType =
