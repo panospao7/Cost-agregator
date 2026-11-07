@@ -305,6 +305,31 @@ class RefundLinkViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
+    fun `confirmLink Linked with an uncomputable net shows the plain success message without a net figure`() = runTest(testDispatcher) {
+        val xxx = CurrencyCode.parse("XXX")!!
+        coEvery { useCase.link(1L, 2L) } returns RefundLinkResult.Linked(linkId = 11L, applied = MoneyAmount(40.0, xxx))
+        val success = mutableListOf<UiText>()
+        collectSuccess(success)
+        runCurrent()
+        openAndSelect()
+        model.confirmLink()
+        advanceUntilIdle()
+        assertEquals(listOf(UiText.from(R.string.refund_done_plain_format, "Synthetic Shop")), success)
+    }
+
+    @Test
+    fun `a refresh request raised while nobody collects is delivered once to the next collector`() = runTest(testDispatcher) {
+        coEvery { useCase.link(1L, 2L) } returns RefundLinkResult.AlreadyLinked(linkId = 11L)
+        openAndSelect()
+        model.confirmLink()
+        advanceUntilIdle()
+        val refresh = mutableListOf<Unit>()
+        collectRefresh(refresh)
+        runCurrent()
+        assertEquals(1, refresh.size)
+    }
+
+    @Test
     fun `selectCandidate in a currency without digits opens no confirm dialog and never previews zero`() = runTest(testDispatcher) {
         val xxx = CurrencyCode.parse("XXX")!!
         val xxxDeposit = deposit.copy(currency = "XXX")
@@ -662,6 +687,27 @@ class RefundLinkViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
+    fun `requestUnlink on a purchase sheet uses the live links even when the list row refunded is stale`() = runTest(testDispatcher) {
+        val secondDeposit = deposit.copy(id = 3L, amount = 30.0, refundNettedAmount = 30.0)
+        coEvery { expenses.getExpenseById(3L) } returns secondDeposit
+        coEvery { useCase.linksOf(2L) } returns RefundLinks.Available(
+            2L,
+            listOf(
+                RefundLinkInfo(70L, 1L, eur(40.0), 5L),
+                RefundLinkInfo(71L, 3L, eur(30.0), 6L)
+            )
+        )
+        // The row says refunded 0 (stale) although two links exist.
+        model.openDetails(purchase.copy(refundNettedAmount = 0.0))
+        advanceUntilIdle()
+        val rows = (model.details.value as RefundDetailsUiState.Content).links
+        model.requestUnlink(rows.first { it.counterpartId == 1L })
+        val unlink = model.unlinkConfirm.value!!
+        assertFalse("the other link remains, so this is not the last link", unlink.lastLink)
+        assertEquals(eur(70.0), unlink.shownAmount) // 100 - 30 remaining refunded
+    }
+
+    @Test
     fun `requestUnlink from a deposit sheet uses the counterpart purchase`() = runTest(testDispatcher) {
         coEvery { useCase.linksOf(1L) } returns linksFor(1L, 2L, 40.0)
         coEvery { expenses.getExpenseById(2L) } returns linkedPurchase
@@ -680,6 +726,24 @@ class RefundLinkViewModelTest : ViewModelTestUtils() {
         val row = RefundLinkRowUi(70L, 1L, "m", 1L, null, eur(40.0), eur(40.0), eur(0.0))
         model.requestUnlink(row)
         assertNull(model.unlinkConfirm.value)
+    }
+
+    @Test
+    fun `requestUnlink with an unusable currency scale emits refund_details_unavailable and opens no confirm`() = runTest(testDispatcher) {
+        val xxx = CurrencyCode.parse("XXX")!!
+        val xxxRow = RefundLinkRowUi(70L, 2L, "m", 1L, null, MoneyAmount(40.0, xxx), MoneyAmount(100.0, xxx), MoneyAmount(40.0, xxx))
+        coEvery { useCase.linksOf(1L) } returns linksFor(1L, 2L, 40.0)
+        coEvery { expenses.getExpenseById(2L) } returns linkedPurchase
+        val errors = mutableListOf<UiText>()
+        collectErrors(errors)
+        runCurrent()
+        model.openDetails(linkedDeposit)
+        advanceUntilIdle()
+        assertTrue(model.details.value is RefundDetailsUiState.Content)
+        // A row whose amounts have no usable scale cannot produce a preview; it must say so, not stay silent.
+        model.requestUnlink(xxxRow)
+        assertNull(model.unlinkConfirm.value)
+        assertEquals(listOf(UiText.from(R.string.refund_details_unavailable)), errors)
     }
 
     // ---- confirmUnlink ----------------------------------------------------------------------------

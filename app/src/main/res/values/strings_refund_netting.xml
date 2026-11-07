@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- refund-netting S4 (DR-05): Transactions refund link UI. 43 keys: ux-flows 7.2 (42) plus refund_unlink_body_remaining_format (Q7). -->
+    <!-- refund-netting S4 (DR-05): Transactions refund link UI. 44 keys: ux-flows 7.2 (42) plus refund_unlink_body_remaining_format (Q7) and refund_done_plain_format. -->
     <string name="refund_notice_action">Apply to purchase</string>
     <string name="refund_menu_apply">This is a refund of...</string>
     <string name="refund_menu_details">Refund details</string>
@@ -25,6 +25,7 @@
     <string name="refund_confirm_partial_format">Only %1$s of this %2$s deposit can be applied. The rest still counts as income.</string>
     <string name="refund_confirm_action">Apply</string>
     <string name="refund_done_format">Refund applied to %1$s. Net: %2$s.</string>
+    <string name="refund_done_plain_format">Refund applied to %1$s.</string>
     <string name="refund_already_applied">This refund is already applied to that purchase.</string>
     <string name="refund_refused_nothing_to_apply">That purchase has nothing left to refund.</string>
     <string name="refund_refused_linked_elsewhere">This refund is already applied to another purchase. Remove that link first.</string>
@@ -33,7 +34,7 @@
     <string name="refund_refused_installment">Installment purchases are refunded from the installment plan.</string>
     <string name="refund_refused_group">This transaction is part of a shared group, so it can\'t be linked to a refund.</string>
     <string name="refund_refused_stale">That refund can no longer be applied to this purchase. The list was refreshed.</string>
-    <string name="refund_unlinked">Link removed. Both amounts are back to the original.</string>
+    <string name="refund_unlinked">Refund removed from this purchase.</string>
     <string name="refund_details_purchase_header">Refunds on this purchase</string>
     <string name="refund_details_deposit_header">Applied to</string>
     <string name="refund_details_unavailable">Refund details are unavailable right now.</string>

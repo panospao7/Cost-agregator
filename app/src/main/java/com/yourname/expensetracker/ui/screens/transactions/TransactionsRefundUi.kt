@@ -35,6 +35,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -58,6 +59,9 @@ import java.util.Locale
 // sheets and dialogs driven by RefundLinkViewModel. Every amount is shown with its own currency;
 // an unavailable figure is omitted, never rendered as zero. No log line here carries text or amounts.
 // ---------------------------------------------------------------------------------------------
+
+/** ux-flows 6/9: dialog actions stack full width from this font scale (same threshold as the other screens). */
+private const val STACK_BUTTONS_FONT_SCALE = 1.3f
 
 private fun money(amount: MoneyAmount): String = CurrencyFormatter.formatMoney(amount.amount, amount.currency.code)
 
@@ -364,6 +368,7 @@ internal fun RefundConfirmDialog(
     onDismiss: () -> Unit
 ) {
     val category = state.candidate.categoryName ?: stringResource(R.string.uncategorized_label)
+    val stackButtons = LocalDensity.current.fontScale >= STACK_BUTTONS_FONT_SCALE
     AlertDialog(
         onDismissRequest = { if (!state.submitting) onDismiss() },
         title = { Text(stringResource(R.string.refund_confirm_title)) },
@@ -412,21 +417,45 @@ internal fun RefundConfirmDialog(
             }
         },
         confirmButton = {
-            TextButton(
-                onClick = onConfirm,
-                enabled = !state.submitting,
-                modifier = Modifier.heightIn(min = Dimens.TouchTargetMin)
-            ) {
-                Text(stringResource(R.string.refund_confirm_action))
+            if (stackButtons) {
+                // ux-flows 6/9: at fontScale >= 1.3 the two actions stack full width, primary first.
+                Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(
+                        onClick = onConfirm,
+                        enabled = !state.submitting,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = Dimens.TouchTargetMin)
+                    ) {
+                        Text(stringResource(R.string.refund_confirm_action))
+                    }
+                    TextButton(
+                        onClick = onDismiss,
+                        enabled = !state.submitting,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = Dimens.TouchTargetMin)
+                    ) {
+                        Text(stringResource(R.string.cancel_button))
+                    }
+                }
+            } else {
+                TextButton(
+                    onClick = onConfirm,
+                    enabled = !state.submitting,
+                    modifier = Modifier.heightIn(min = Dimens.TouchTargetMin)
+                ) {
+                    Text(stringResource(R.string.refund_confirm_action))
+                }
             }
         },
-        dismissButton = {
-            TextButton(
-                onClick = onDismiss,
-                enabled = !state.submitting,
-                modifier = Modifier.heightIn(min = Dimens.TouchTargetMin)
-            ) {
-                Text(stringResource(R.string.cancel_button))
+        dismissButton = if (stackButtons) {
+            null
+        } else {
+            {
+                TextButton(
+                    onClick = onDismiss,
+                    enabled = !state.submitting,
+                    modifier = Modifier.heightIn(min = Dimens.TouchTargetMin)
+                ) {
+                    Text(stringResource(R.string.cancel_button))
+                }
             }
         }
     )
@@ -604,6 +633,7 @@ internal fun RefundUnlinkDialog(
         state.purchaseMerchant,
         money(state.shownAmount)
     )
+    val stackButtons = LocalDensity.current.fontScale >= STACK_BUTTONS_FONT_SCALE
     AlertDialog(
         onDismissRequest = { if (!state.submitting) onDismiss() },
         title = { Text(stringResource(R.string.refund_unlink_title)) },
@@ -619,21 +649,45 @@ internal fun RefundUnlinkDialog(
             }
         },
         confirmButton = {
-            TextButton(
-                onClick = onConfirm,
-                enabled = !state.submitting,
-                modifier = Modifier.heightIn(min = Dimens.TouchTargetMin)
-            ) {
-                Text(stringResource(R.string.refund_details_remove))
+            if (stackButtons) {
+                // ux-flows 6/9: at fontScale >= 1.3 the two actions stack full width, primary first.
+                Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(
+                        onClick = onConfirm,
+                        enabled = !state.submitting,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = Dimens.TouchTargetMin)
+                    ) {
+                        Text(stringResource(R.string.refund_details_remove))
+                    }
+                    TextButton(
+                        onClick = onDismiss,
+                        enabled = !state.submitting,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = Dimens.TouchTargetMin)
+                    ) {
+                        Text(stringResource(R.string.cancel_button))
+                    }
+                }
+            } else {
+                TextButton(
+                    onClick = onConfirm,
+                    enabled = !state.submitting,
+                    modifier = Modifier.heightIn(min = Dimens.TouchTargetMin)
+                ) {
+                    Text(stringResource(R.string.refund_details_remove))
+                }
             }
         },
-        dismissButton = {
-            TextButton(
-                onClick = onDismiss,
-                enabled = !state.submitting,
-                modifier = Modifier.heightIn(min = Dimens.TouchTargetMin)
-            ) {
-                Text(stringResource(R.string.cancel_button))
+        dismissButton = if (stackButtons) {
+            null
+        } else {
+            {
+                TextButton(
+                    onClick = onDismiss,
+                    enabled = !state.submitting,
+                    modifier = Modifier.heightIn(min = Dimens.TouchTargetMin)
+                ) {
+                    Text(stringResource(R.string.cancel_button))
+                }
             }
         }
     )

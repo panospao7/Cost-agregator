@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- refund-netting S4 (all 43 keys below are DRAFT: owner native sign-off pending) -->
+    <!-- refund-netting S4 (all 44 keys below are DRAFT: owner native sign-off pending) -->
     <!-- refund_notice_action: DRAFT: owner native sign-off pending -->
     <string name="refund_notice_action">Aplicar a una compra</string>
     <!-- refund_menu_apply: DRAFT: owner native sign-off pending -->
@@ -49,6 +49,8 @@
     <string name="refund_confirm_action">Aplicar</string>
     <!-- refund_done_format: DRAFT: owner native sign-off pending -->
     <string name="refund_done_format">Reembolso aplicado a %1$s. Neto: %2$s.</string>
+    <!-- refund_done_plain_format: DRAFT: owner native sign-off pending -->
+    <string name="refund_done_plain_format">Reembolso aplicado a %1$s.</string>
     <!-- refund_already_applied: DRAFT: owner native sign-off pending -->
     <string name="refund_already_applied">Este reembolso ya está aplicado a esa compra.</string>
     <!-- refund_refused_nothing_to_apply: DRAFT: owner native sign-off pending -->
@@ -66,7 +68,7 @@
     <!-- refund_refused_stale: DRAFT: owner native sign-off pending -->
     <string name="refund_refused_stale">Ese reembolso ya no se puede aplicar a esta compra. Se actualizó la lista.</string>
     <!-- refund_unlinked: DRAFT: owner native sign-off pending -->
-    <string name="refund_unlinked">Vínculo eliminado. Ambos importes vuelven al original.</string>
+    <string name="refund_unlinked">Reembolso eliminado de esta compra.</string>
     <!-- refund_details_purchase_header: DRAFT: owner native sign-off pending -->
     <string name="refund_details_purchase_header">Reembolsos de esta compra</string>
     <!-- refund_details_deposit_header: DRAFT: owner native sign-off pending -->

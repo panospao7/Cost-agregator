@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- refund-netting S4 (all 43 keys below are DRAFT: owner native sign-off pending) -->
+    <!-- refund-netting S4 (all 44 keys below are DRAFT: owner native sign-off pending) -->
     <!-- refund_notice_action: DRAFT: owner native sign-off pending -->
     <string name="refund_notice_action">Εφαρμογή σε αγορά</string>
     <!-- refund_menu_apply: DRAFT: owner native sign-off pending -->
@@ -49,6 +49,8 @@
     <string name="refund_confirm_action">Εφαρμογή</string>
     <!-- refund_done_format: DRAFT: owner native sign-off pending -->
     <string name="refund_done_format">Η επιστροφή εφαρμόστηκε στο %1$s. Καθαρό: %2$s.</string>
+    <!-- refund_done_plain_format: DRAFT: owner native sign-off pending -->
+    <string name="refund_done_plain_format">Η επιστροφή εφαρμόστηκε στο %1$s.</string>
     <!-- refund_already_applied: DRAFT: owner native sign-off pending -->
     <string name="refund_already_applied">Αυτή η επιστροφή έχει ήδη εφαρμοστεί σε αυτή την αγορά.</string>
     <!-- refund_refused_nothing_to_apply: DRAFT: owner native sign-off pending -->
@@ -66,7 +68,7 @@
     <!-- refund_refused_stale: DRAFT: owner native sign-off pending -->
     <string name="refund_refused_stale">Αυτή η επιστροφή δεν μπορεί πλέον να εφαρμοστεί σε αυτή την αγορά. Η λίστα ανανεώθηκε.</string>
     <!-- refund_unlinked: DRAFT: owner native sign-off pending -->
-    <string name="refund_unlinked">Η σύνδεση αφαιρέθηκε. Και τα δύο ποσά επανήλθαν στο αρχικό.</string>
+    <string name="refund_unlinked">Η επιστροφή αφαιρέθηκε από αυτή την αγορά.</string>
     <!-- refund_details_purchase_header: DRAFT: owner native sign-off pending -->
     <string name="refund_details_purchase_header">Επιστροφές αυτής της αγοράς</string>
     <!-- refund_details_deposit_header: DRAFT: owner native sign-off pending -->

@@ -25,12 +25,15 @@ import java.math.RoundingMode
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import timber.log.Timber
@@ -222,9 +225,12 @@ class RefundLinkViewModel @Inject constructor(
     private val _successMessage = MutableSharedFlow<UiText>(extraBufferCapacity = 8)
     val successMessage: SharedFlow<UiText> = _successMessage.asSharedFlow()
 
-    /** The Transactions list must reload (chips changed). The screen forwards it to TransactionsViewModel. */
-    private val _refreshRequests = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
-    val refreshRequests: SharedFlow<Unit> = _refreshRequests.asSharedFlow()
+    /**
+     * The Transactions list must reload (chips changed). The screen forwards it to TransactionsViewModel.
+     * Conflated channel: a request raised while nobody collects is kept and delivered once, never dropped.
+     */
+    private val _refreshRequests = Channel<Unit>(Channel.CONFLATED)
+    val refreshRequests: Flow<Unit> = _refreshRequests.receiveAsFlow()
 
     private var pickerJob: Job? = null
     private var detailsJob: Job? = null
@@ -362,7 +368,7 @@ class RefundLinkViewModel @Inject constructor(
                                 )
                             )
                         } else {
-                            _successMessage.tryEmit(UiText.from(R.string.refund_already_applied))
+                            _successMessage.tryEmit(UiText.from(R.string.refund_done_plain_format, current.candidate.merchant))
                         }
                         finishLinkAndClose()
                     }
@@ -376,12 +382,12 @@ class RefundLinkViewModel @Inject constructor(
                         when (RefundLinkUiMapper.refusalFollowUp(result.code)) {
                             RefundRefusalFollowUp.RELOAD_CANDIDATES -> loadCandidates(current.deposit)
                             RefundRefusalFollowUp.RELOAD_AND_REFRESH -> {
-                                _refreshRequests.tryEmit(Unit)
+                                _refreshRequests.trySend(Unit)
                                 loadCandidates(current.deposit)
                             }
                             RefundRefusalFollowUp.CLOSE_AND_REFRESH -> {
                                 closePicker()
-                                _refreshRequests.tryEmit(Unit)
+                                _refreshRequests.trySend(Unit)
                             }
                         }
                     }
@@ -405,7 +411,7 @@ class RefundLinkViewModel @Inject constructor(
 
     private fun finishLinkAndClose() {
         closePicker()
-        _refreshRequests.tryEmit(Unit)
+        _refreshRequests.trySend(Unit)
     }
 
     private fun reenableConfirm() {
@@ -451,7 +457,7 @@ class RefundLinkViewModel @Inject constructor(
                         if (result.links.isEmpty()) {
                             // Stale row (race with an unlink or delete): close and refresh, no message.
                             _details.value = RefundDetailsUiState.Idle
-                            _refreshRequests.tryEmit(Unit)
+                            _refreshRequests.trySend(Unit)
                         } else {
                             _details.value = buildDetailsState(subject, result)
                         }
@@ -492,26 +498,36 @@ class RefundLinkViewModel @Inject constructor(
     }
 
     fun requestUnlink(link: RefundLinkRowUi) {
-        val subject = when (val state = _details.value) {
-            is RefundDetailsUiState.Content -> state.subject
-            else -> return
-        }
+        val content = _details.value as? RefundDetailsUiState.Content ?: return
+        val subject = content.subject
         // The purchase is the subject itself on a purchase sheet, the counterpart on a deposit sheet.
         val purchaseMerchant: String
         val purchaseAmount: MoneyAmount
-        val purchaseRefunded: MoneyAmount
         if (subject.isDeposit) {
             purchaseMerchant = link.merchant
             purchaseAmount = link.counterpartAmount
-            purchaseRefunded = link.counterpartRefunded
         } else {
             purchaseMerchant = subject.merchant
             purchaseAmount = subject.amount
-            purchaseRefunded = subject.refunded
         }
         val currency = purchaseAmount.currency.code
-        val stillRefunded = RefundUiMoney.subtract(purchaseRefunded.amount, link.applied.amount, currency) ?: return
-        val shown = RefundUiMoney.subtract(purchaseAmount.amount, stillRefunded, currency) ?: return
+        val stillRefunded: Double
+        if (subject.isDeposit) {
+            // The counterpart purchase row was read live with the details; remove this link's share.
+            stillRefunded = RefundUiMoney.subtract(link.counterpartRefunded.amount, link.applied.amount, currency)
+                ?: run { emitDetailsUnavailable(); return }
+        } else {
+            // Purchase sheet: the list row's refunded figure can be stale, so sum the other live links instead.
+            val scale = RefundUiMoney.scaleOf(currency) ?: run { emitDetailsUnavailable(); return }
+            var others = BigDecimal.ZERO
+            for (other in content.links) {
+                if (other.linkId == link.linkId) continue
+                others = others.add(BigDecimal.valueOf(other.applied.amount).setScale(scale, RoundingMode.HALF_EVEN))
+            }
+            stillRefunded = others.toDouble()
+        }
+        val shown = RefundUiMoney.subtract(purchaseAmount.amount, stillRefunded, currency)
+            ?: run { emitDetailsUnavailable(); return }
         _unlinkConfirm.value = RefundUnlinkConfirmUiState(
             link = link,
             refundDepositId = if (subject.isDeposit) subject.expenseId else link.counterpartId,
@@ -520,6 +536,10 @@ class RefundLinkViewModel @Inject constructor(
             lastLink = stillRefunded == 0.0,
             submitting = false
         )
+    }
+
+    private fun emitDetailsUnavailable() {
+        _error.tryEmit(UiText.from(R.string.refund_details_unavailable))
     }
 
     fun dismissUnlink() {
@@ -541,7 +561,7 @@ class RefundLinkViewModel @Inject constructor(
                     is RefundUnlinkResult.Unlinked, is RefundUnlinkResult.NotLinked -> {
                         _successMessage.tryEmit(UiText.from(R.string.refund_unlinked))
                         _unlinkConfirm.value = null
-                        _refreshRequests.tryEmit(Unit)
+                        _refreshRequests.trySend(Unit)
                         reloadDetailsAfterUnlink(subjectId)
                     }
                     is RefundUnlinkResult.Failed -> {

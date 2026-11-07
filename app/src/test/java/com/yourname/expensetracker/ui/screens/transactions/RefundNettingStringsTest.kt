@@ -14,7 +14,7 @@ import java.util.Locale
 import javax.xml.parsers.DocumentBuilderFactory
 
 /**
- * Refund netting S4 (ux-flows sections 7 and 9): the 43 new keys exist in values, values-es and values-el;
+ * Refund netting S4 (ux-flows sections 7 and 9): the 44 new keys exist in values, values-es and values-el;
  * every es and el entry is flagged DRAFT directly above it (owner native sign-off pending); format
  * placeholders are identical across the locales; the reworded likelihood notice (strings.xml) exists in all
  * three locales with a DRAFT flag on es and el.
@@ -46,6 +46,7 @@ class RefundNettingStringsTest {
         "refund_confirm_partial_format",
         "refund_confirm_action",
         "refund_done_format",
+        "refund_done_plain_format",
         "refund_already_applied",
         "refund_refused_nothing_to_apply",
         "refund_refused_linked_elsewhere",
@@ -84,6 +85,7 @@ class RefundNettingStringsTest {
         "refund_confirm_effect_format" to 3,
         "refund_confirm_partial_format" to 2,
         "refund_done_format" to 2,
+        "refund_done_plain_format" to 1,
         "refund_details_remove_cd_format" to 2,
         "refund_unlink_body_format" to 3,
         "refund_unlink_body_remaining_format" to 3
@@ -127,13 +129,13 @@ class RefundNettingStringsTest {
     // ---- presence ------------------------------------------------------------------------------
 
     @Test
-    fun `there are 43 distinct new keys`() {
-        assertEquals(43, keys.size)
-        assertEquals(43, keys.toSet().size)
+    fun `there are 44 distinct new keys`() {
+        assertEquals(44, keys.size)
+        assertEquals(44, keys.toSet().size)
     }
 
     @Test
-    fun `all 43 keys are present in values values-es and values-el`() {
+    fun `all 44 keys are present in values values-es and values-el`() {
         for (folder in allFolders) {
             val doc = parse(folder)
             for (key in keys) {
@@ -143,7 +145,7 @@ class RefundNettingStringsTest {
     }
 
     @Test
-    fun `each locale file defines exactly the 43 keys and no duplicates`() {
+    fun `each locale file defines exactly the 44 keys and no duplicates`() {
         for (folder in allFolders) {
             val names = elements(parse(folder), "string").map { it.getAttribute("name") }
             assertEquals("$folder defines duplicate or extra keys", keys.sorted(), names.sorted())

@@ -5,6 +5,10 @@ import android.content.Context
 import androidx.activity.ComponentActivity
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Column
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.and
 import androidx.compose.ui.test.assertCountEquals
@@ -408,6 +412,55 @@ class TransactionsRefundUiTest {
         composeRule.waitForIdle()
         composeRule.onNodeWithText("Remove link").assertIsNotEnabled()
         composeRule.onNodeWithText(s(R.string.cancel_button)).assertIsNotEnabled()
+    }
+
+    // ---- stacked dialog buttons (ux-flows 6/9) -------------------------------------------------------
+
+    private fun showWithFontScale(fontScale: Float, content: @Composable () -> Unit) {
+        composeRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, fontScale)) { content() }
+        }
+        composeRule.waitForIdle()
+    }
+
+    private fun assertStacked(primaryText: String, stacked: Boolean) {
+        val primary = composeRule.onNodeWithText(primaryText).fetchSemanticsNode().boundsInRoot
+        val cancel = composeRule.onNodeWithText(s(R.string.cancel_button)).fetchSemanticsNode().boundsInRoot
+        if (stacked) {
+            assertTrue("cancel sits below the primary action", cancel.top >= primary.bottom - 1f)
+            assertEquals("both actions have the same width", primary.width, cancel.width, 1f)
+            assertEquals("both actions start at the same x", primary.left, cancel.left, 1f)
+        } else {
+            assertTrue("actions share one row", kotlin.math.abs(cancel.top - primary.top) < 2f)
+        }
+    }
+
+    @Test
+    fun `confirm dialog stacks its buttons full width at font scale 1_3`() {
+        showWithFontScale(1.3f) { RefundConfirmDialog(state = confirmState(), onConfirm = {}, onDismiss = {}) }
+        assertStacked(s(R.string.refund_confirm_action), stacked = true)
+    }
+
+    @Test
+    fun `confirm dialog keeps its buttons in one row below font scale 1_3`() {
+        showWithFontScale(1.0f) { RefundConfirmDialog(state = confirmState(), onConfirm = {}, onDismiss = {}) }
+        assertStacked(s(R.string.refund_confirm_action), stacked = false)
+    }
+
+    @Test
+    fun `unlink dialog stacks its buttons full width at font scale 1_3 and both still act`() {
+        var confirmed = 0
+        var dismissed = 0
+        showWithFontScale(1.3f) {
+            RefundUnlinkDialog(unlinkState(lastLink = true, shown = 100.0), onConfirm = { confirmed++ }, onDismiss = { dismissed++ })
+        }
+        assertStacked("Remove link", stacked = true)
+        composeRule.onNodeWithText("Remove link").performClick()
+        composeRule.onNodeWithText(s(R.string.cancel_button)).performClick()
+        composeRule.runOnIdle {
+            assertEquals(1, confirmed)
+            assertEquals(1, dismissed)
+        }
     }
 
     // ---- delete dialog extra line ---------------------------------------------------------------

@@ -269,6 +269,12 @@
     <string name="receipt_currency_unverified_warning">Δεν μπορέσαμε να διαβάσουμε το νόμισμα της απόδειξης. Ελέγξτε το πριν την αποθήκευση.</string>
     <!-- MC 1a-3b: Transactions amount ordering. Best-effort translation, pending owner review. -->
     <string name="action_got_it">Εντάξει</string>
+    <!-- action_ok: DRAFT: owner native sign-off pending -->
+    <string name="action_ok">Εντάξει</string>
+    <!-- a11y_close: DRAFT: owner native sign-off pending -->
+    <string name="a11y_close">Κλείσιμο</string>
+    <!-- uncategorized_label: DRAFT: owner native sign-off pending -->
+    <string name="uncategorized_label">Χωρίς κατηγορία</string>
     <string name="transactions_filter_min_money_format">Ελάχ.: %1$s</string>
     <string name="transactions_filter_max_money_format">Μέγ.: %1$s</string>
     <string name="transactions_filter_paused_suffix">" (σε παύση)"</string>
